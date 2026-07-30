@@ -19,3 +19,32 @@ TEAMS = sorted(DIVISION.keys())
 TEAM_INDEX = {code: i for i, code in enumerate(TEAMS)}
 
 assert len(TEAMS) == N_TEAMS
+
+TEAM_NAMES = {
+    "ARI": "Arizona Cardinals", "ATL": "Atlanta Falcons", "BAL": "Baltimore Ravens",
+    "BUF": "Buffalo Bills", "CAR": "Carolina Panthers", "CHI": "Chicago Bears",
+    "CIN": "Cincinnati Bengals", "CLE": "Cleveland Browns", "DAL": "Dallas Cowboys",
+    "DEN": "Denver Broncos", "DET": "Detroit Lions", "GB": "Green Bay Packers",
+    "HOU": "Houston Texans", "IND": "Indianapolis Colts", "JAX": "Jacksonville Jaguars",
+    "KC": "Kansas City Chiefs", "LA": "Los Angeles Rams", "LAC": "Los Angeles Chargers",
+    "LV": "Las Vegas Raiders", "MIA": "Miami Dolphins", "MIN": "Minnesota Vikings",
+    "NE": "New England Patriots", "NO": "New Orleans Saints", "NYG": "New York Giants",
+    "NYJ": "New York Jets", "PHI": "Philadelphia Eagles", "PIT": "Pittsburgh Steelers",
+    "SEA": "Seattle Seahawks", "SF": "San Francisco 49ers", "TB": "Tampa Bay Buccaneers",
+    "TEN": "Tennessee Titans", "WAS": "Washington Commanders",
+}
+
+_ALIASES = {}
+for _code, _full in TEAM_NAMES.items():
+    _ALIASES[_code.lower()] = _code
+    _ALIASES[_full.lower()] = _code
+    _ALIASES[_full.split()[-1].lower()] = _code  # nickname (last word)
+
+
+def resolve(name):
+    if not name:
+        return None
+    key = str(name).strip().lower()
+    if key.upper() in TEAM_INDEX:
+        return key.upper()
+    return _ALIASES.get(key)
