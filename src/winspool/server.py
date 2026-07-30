@@ -17,7 +17,7 @@ from pydantic import BaseModel
 
 from .analysis import team_attributes
 from .data import load_win_totals
-from .draft import DraftState, PICK_ORDER, pwin
+from .draft import DraftState, PICK_ORDER, player_totals, pwin
 from .mock import auto_draft
 from .opponents import chalk_power, entropy, greedy_self
 from .recommend import (build_wins, naive_recommend, pwin_after_playout,
@@ -219,6 +219,65 @@ def advance(req: AdvanceReq):
         "my_turn": (not st.done) and st.current_player == req.slot,
         "done": st.done,
     }
+
+
+class ResultsReq(BaseModel):
+    slot: int
+    taken: list[str] = []
+
+
+@app.post("/api/results")
+def results(req: ResultsReq):
+    """Final standings from the joint season sim: each player's projected
+    combined wins, P(win the pool), and a 10th–90th pct range."""
+    _ensure_ready()
+    wins = _STATE["wins"]
+    rosters = _state_from(req.slot, req.taken).rosters()
+    totals = player_totals(rosters, wins)          # (N, N_PLAYERS)
+    rowmax = totals.max(axis=1)
+    out = []
+    for p in range(1, N_PLAYERS + 1):
+        col = totals[:, p - 1]
+        out.append({
+            "player": p,
+            "is_me": p == req.slot,
+            "teams": [TEAMS[t] for t in rosters[p]],
+            "exp_wins": round(float(col.mean()), 1),
+            "pwin": round(float((col >= rowmax).mean()), 3),
+            "p10": int(np.percentile(col, 10)),
+            "p90": int(np.percentile(col, 90)),
+        })
+    out.sort(key=lambda r: r["exp_wins"], reverse=True)
+    return {"standings": out}
+
+
+class SampleReq(BaseModel):
+    slot: int
+    taken: list[str] = []
+    seed: int = 0
+
+
+@app.post("/api/sample_season")
+def sample_season(req: SampleReq):
+    """Play out ONE concrete season sampled from the joint distribution (so the
+    correlated, teams-play-each-other structure shows up in a single outcome)."""
+    _ensure_ready()
+    wins = _STATE["wins"]
+    rng = np.random.default_rng(req.seed)
+    row = int(rng.integers(0, wins.shape[0]))
+    season = wins[row]
+    rosters = _state_from(req.slot, req.taken).rosters()
+    out = []
+    for p in range(1, N_PLAYERS + 1):
+        teams = [{"code": TEAMS[t], "wins": int(season[t])} for t in rosters[p]]
+        out.append({
+            "player": p, "is_me": p == req.slot,
+            "teams": sorted(teams, key=lambda x: x["wins"], reverse=True),
+            "total_wins": int(sum(t["wins"] for t in teams)),
+        })
+    out.sort(key=lambda r: r["total_wins"], reverse=True)
+    top = out[0]["total_wins"] if out else 0
+    return {"standings": out, "winners": [r["player"] for r in out if r["total_wins"] == top]}
 
 
 _DIST = REPO_ROOT / "web" / "dist"

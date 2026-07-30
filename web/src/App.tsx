@@ -6,6 +6,7 @@ import Header from './components/Header';
 import Board from './components/Board';
 import Rosters from './components/Rosters';
 import Recommendations from './components/Recommendations';
+import Results from './components/Results';
 import AutosimView from './components/AutosimView';
 
 const PICKS_PER_PLAYER = 6;
@@ -190,11 +191,15 @@ export default function App() {
       {tab === 'draft' ? (
         <main className="main-layout">
           <div className="main-left">
-            <Recommendations
-              recommend={recommend}
-              loading={recLoading || advancing}
-              teamNames={teamNames}
-            />
+            {recommend?.done ? (
+              <Results slot={slot} taken={taken} />
+            ) : (
+              <Recommendations
+                recommend={recommend}
+                loading={recLoading || advancing}
+                teamNames={teamNames}
+              />
+            )}
             <Rosters
               rosters={recommend?.rosters ?? {}}
               mySlot={slot}

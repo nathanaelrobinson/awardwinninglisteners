@@ -49,6 +49,50 @@ export async function advanceOpponents(
   return res.json();
 }
 
+export interface StandingRow {
+  player: number;
+  is_me: boolean;
+  teams: string[];
+  exp_wins: number;
+  pwin: number;
+  p10: number;
+  p90: number;
+}
+
+export async function fetchResults(slot: number, taken: string[]): Promise<{ standings: StandingRow[] }> {
+  const res = await fetch('/api/results', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ slot, taken }),
+  });
+  if (!res.ok) throw new Error(`POST /api/results failed: ${res.status}`);
+  return res.json();
+}
+
+export interface SeasonTeam {
+  code: string;
+  wins: number;
+}
+export interface SeasonRow {
+  player: number;
+  is_me: boolean;
+  teams: SeasonTeam[];
+  total_wins: number;
+}
+export async function sampleSeason(
+  slot: number,
+  taken: string[],
+  seed: number
+): Promise<{ standings: SeasonRow[]; winners: number[] }> {
+  const res = await fetch('/api/sample_season', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ slot, taken, seed }),
+  });
+  if (!res.ok) throw new Error(`POST /api/sample_season failed: ${res.status}`);
+  return res.json();
+}
+
 export async function fetchAutosim(req: AutosimRequest): Promise<AutosimResponse> {
   const res = await fetch('/api/autosim', {
     method: 'POST',
