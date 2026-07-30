@@ -76,20 +76,15 @@ export default function Header({
         </div>
 
         <div className="header-actions">
-          <label className="auto-toggle" title="Bots draft the other seats until it's your turn">
-            <input
-              type="checkbox"
-              checked={autoDraft}
-              onChange={(e) => onAutoDraftChange(e.target.checked)}
-            />
-            Auto-draft opponents
-          </label>
-          {autoDraft && (
+          <label
+            className="opp-strategy-label"
+            title="How your league drafts — used both to auto-draft the bots and to model opponents in the recommendations (survival / what falls to you)"
+          >
+            Field:
             <select
               className="opp-strategy"
               value={oppStrategy}
               onChange={(e) => onOppStrategyChange(e.target.value)}
-              title="How the bot opponents draft"
             >
               {OPP_STRATEGIES.map((s) => (
                 <option key={s} value={s}>
@@ -97,7 +92,15 @@ export default function Header({
                 </option>
               ))}
             </select>
-          )}
+          </label>
+          <label className="auto-toggle" title="Bots draft the other seats until it's your turn">
+            <input
+              type="checkbox"
+              checked={autoDraft}
+              onChange={(e) => onAutoDraftChange(e.target.checked)}
+            />
+            Auto-draft
+          </label>
           <button className="btn" onClick={onUndo} disabled={!canUndo}>
             Undo
           </button>

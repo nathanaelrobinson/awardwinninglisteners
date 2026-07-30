@@ -77,6 +77,21 @@ def _strategy_policy(name):
     raise ValueError(f"unknown strategy: {name}")
 
 
+def _recommend_policies(opp_model):
+    """(opponent, self) pick policies used in the recommender's rollouts.
+    Opponents draft per the chosen field model (chalky, with some noise so
+    survival is a real probability); I draft chalky by our ensemble strength."""
+    strengths, totals = _STATE["strengths"], _STATE["totals"]
+    if opp_model == "power":
+        opp = entropy(strengths, temperature=3.0)
+    elif opp_model == "random":
+        opp = entropy(strengths, temperature=20.0)
+    else:  # "market" (default): the field drafts chalky by Vegas O/U
+        opp = entropy(totals, temperature=2.0)
+    me = entropy(strengths, temperature=2.5)
+    return opp, me
+
+
 @app.get("/api/teams")
 def teams():
     _ensure_ready()
@@ -96,7 +111,8 @@ def teams():
 class RecReq(BaseModel):
     slot: int
     taken: list[str] = []
-    mode: str = "rollout"   # "rollout" (opponent-aware) | "naive" (instant)
+    mode: str = "rollout"       # "rollout" (opponent-aware) | "naive" (instant)
+    opp_model: str = "market"   # how the field drafts: market | power | random
     seed: int = 0
 
 
@@ -106,12 +122,13 @@ def recommend(req: RecReq):
     wins, wins_fast, strengths = _STATE["wins"], _STATE["wins_fast"], _STATE["strengths"]
     state = _state_from(req.slot, req.taken)
     rng = np.random.default_rng(req.seed)
-    # Symmetric fill: model every remaining pick (mine and opponents') with the
-    # same high-entropy policy, so P(win) reflects the edge from picks already
-    # made rather than a rigged self-advantage. Candidate ranking still works
-    # because only the tentatively-taken team differs between candidates.
-    opp = entropy(strengths, temperature=8.0)
-    self_fast = opp
+    # Opponent model (draft-mechanics exploit): assume the field drafts the way
+    # you say they do — "market" = chalky by Vegas O/U (the default, since your
+    # league drafts off the number). This drives survival ("will it fall to
+    # me?") and the rollout, so the tool grabs scarce teams and lets value come
+    # back. I draft chalky by OUR ensemble view, so where the ensemble and the
+    # market disagree, the recommender exploits what the field lets slide.
+    opp, self_fast = _recommend_policies(req.opp_model)
 
     rosters = state.rosters()
     my_turn = (not state.done) and state.current_player == req.slot

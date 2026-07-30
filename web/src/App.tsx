@@ -80,7 +80,7 @@ export default function App() {
   useEffect(() => {
     let cancelled = false;
     setRecLoading(true);
-    fetchRecommend(slot, taken)
+    fetchRecommend(slot, taken, oppStrategy)
       .then((data) => {
         if (!cancelled) {
           setRecommend(data);
@@ -96,7 +96,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [slot, taken]);
+  }, [slot, taken, oppStrategy]);
 
   const takenBy = useMemo(() => {
     const map: Record<string, number> = {};

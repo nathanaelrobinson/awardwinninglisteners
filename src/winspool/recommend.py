@@ -62,12 +62,22 @@ def playout(state, wins, self_policy, opp_policy, rng):
     return st
 
 def survival_probs(state, wins, self_policy, opp_policy, *, n_rollouts, rng):
-    """Fraction of rollouts in which each available team is still on the board at
-    my next pick (opponents pick via opp_policy in between). 1.0 for every team
-    when it is already my turn."""
+    """Fraction of rollouts in which each available team is still on the board
+    when I NEXT pick. If it's my turn right now, this looks a full round-trip
+    ahead — "if I pass now, will it come back to me at my next pick?" — which is
+    the actual take-now-or-wait question (a plain 'to my next pick' would be 0
+    steps on my turn and report 100% for everything)."""
     me = state.my_player
     board = state.board()
-    until = state.picks_until_my_next()
+    n = len(PICK_ORDER)
+    i = len(state.picks)
+    until = 0
+    if i < n and PICK_ORDER[i] == me:      # my turn: consume this pick first
+        i += 1
+        until += 1
+    while i < n and PICK_ORDER[i] != me:   # then count opponents to my next turn
+        i += 1
+        until += 1
     survive = {t: 0 for t in board}
     for _ in range(n_rollouts):
         st = state.copy()

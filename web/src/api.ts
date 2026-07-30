@@ -11,13 +11,14 @@ export async function fetchTeams(): Promise<TeamsResponse> {
 export async function fetchRecommend(
   slot: number,
   taken: string[],
+  oppModel: string = 'market',
   mode: Mode = 'rollout',
   seed?: number
 ): Promise<RecommendResponse> {
   const res = await fetch('/api/recommend', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ slot, taken, mode, seed }),
+    body: JSON.stringify({ slot, taken, mode, opp_model: oppModel, seed }),
   });
   if (!res.ok) {
     throw new Error(`POST /api/recommend failed: ${res.status}`);
