@@ -53,15 +53,19 @@ def main(argv=None):
     if args.cmd == "fetch":
         import datetime
         import json
+        import os
 
         from .fetch.pipeline import refresh
         from .fetch.registry import default_sources
-        with open(args.config) as f:
-            config = json.load(f)
+        config = {}
+        if os.path.exists(args.config):
+            with open(args.config) as f:
+                config = json.load(f)
         sources = default_sources(config)
         if not sources:
             print("No sources configured. See src/winspool/fetch/registry.py.")
             return 1
+        print(f"fetching {len(sources)} sources (nfelo renders headless, ~slow)…")
         now = datetime.datetime.now().isoformat(timespec="seconds")
         meta = refresh(sources, args.cache, now=now)
         for m in meta:

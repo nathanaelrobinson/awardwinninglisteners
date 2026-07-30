@@ -39,10 +39,15 @@ app.add_middleware(
 _STATE: dict = {}
 
 
+POWER = CACHE / "power_ratings.csv"
+
+
 def _ensure_ready():
     if _STATE:
         return
-    wins, strengths = build_wins(str(SCHEDULE), str(TOTALS), n_seasons=N_SEASONS, seed=0)
+    power_path = str(POWER) if POWER.exists() else None
+    wins, strengths = build_wins(str(SCHEDULE), str(TOTALS), n_seasons=N_SEASONS,
+                                 seed=0, power_path=power_path)
     _STATE["wins"] = wins
     _STATE["strengths"] = strengths
     _STATE["attrs"] = {a["team"]: a for a in team_attributes(wins)}
