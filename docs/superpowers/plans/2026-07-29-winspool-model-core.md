@@ -838,10 +838,17 @@ from winspool.data import load_schedule, schedule_matchups, load_win_totals
 from winspool.ratings import backout_market
 from winspool.game import expected_wins, HFA, SCALE
 
+# NOTE: calibration needs an INTERNALLY CONSISTENT fixture — posted win totals
+# must sum to the number of games (each game yields exactly one win). The tiny
+# schedule_2026.csv fixture (7 games) can't satisfy arbitrary posted totals, so
+# use a dedicated closed round-robin fixture: 4 teams, home-and-away (12 games),
+# totals BUF=5, NYJ=1, KC=4, LV=2 (sum = 12 = games).
+#   tests/fixtures/schedule_calibration.csv  (BUF/NYJ/KC/LV round robin, REG)
+#   tests/fixtures/win_totals_calibration.csv (BUF,5 / NYJ,1 / KC,4 / LV,2)
 def test_backout_reproduces_posted_totals():
-    df = load_schedule("tests/fixtures/schedule_2026.csv")
+    df = load_schedule("tests/fixtures/schedule_calibration.csv")
     home, away = schedule_matchups(df)
-    totals = load_win_totals("tests/fixtures/win_totals.csv")
+    totals = load_win_totals("tests/fixtures/win_totals_calibration.csv")
     s = backout_market(totals, home, away, hfa=HFA, scale=SCALE)
     ew = expected_wins(s, home, away)
     # only teams that actually appear in the fixture schedule are constrained
