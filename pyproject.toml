@@ -2,13 +2,14 @@
 name = "winspool"
 version = "0.1.0"
 requires-python = ">=3.11"
-dependencies = ["numpy", "pandas", "scipy", "nfl_data_py"]
+dependencies = ["numpy", "pandas", "scipy", "nfl_data_py", "fastapi", "uvicorn[standard]"]
 
 [project.optional-dependencies]
-dev = ["pytest"]
+dev = ["pytest", "httpx"]
 
 [project.scripts]
 winspool = "winspool.cli:main"
+winspool-serve = "winspool.server:main"
 
 [build-system]
 requires = ["setuptools>=61"]
