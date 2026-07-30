@@ -163,6 +163,50 @@ def parse_clay_page(text):
     return code, float(m_win.group(1))
 
 
+# --- EPA efficiency rating (our own, from nflverse play-by-play) ----------
+
+EPA_SEASONS = (2025, 2024)     # try most recent complete season first
+EPA_POINTS_SCALE = 50.0        # net EPA/play -> rough points scale
+
+
+def epa_from_pbp(pbp):
+    """Team net EPA/play (offense EPA − defense EPA allowed) from a play-by-play
+    frame, as a mean-centered points strength. A DVOA-family efficiency signal:
+    backward-looking, so it diverges from the forward projections."""
+    if "pass" in pbp.columns and "rush" in pbp.columns:
+        p = pbp[(pbp["pass"] == 1) | (pbp["rush"] == 1)]
+    else:
+        p = pbp
+    p = p.dropna(subset=["epa", "posteam", "defteam"])
+    off = p.groupby("posteam")["epa"].mean()
+    deff = p.groupby("defteam")["epa"].mean()          # lower = better defense
+    net = off.sub(deff, fill_value=0.0)
+    out = {}
+    for team, val in net.items():
+        code = resolve(str(team))
+        if code is not None:
+            out[code] = float(val)
+    if not out:
+        return {}
+    mean = sum(out.values()) / len(out)
+    return {c: (v - mean) * EPA_POINTS_SCALE for c, v in out.items()}
+
+
+def epa_ratings():
+    """Compute our own efficiency rating from nflverse play-by-play (free)."""
+    import nfl_data_py as nfl
+    for yr in EPA_SEASONS:
+        try:
+            pbp = nfl.import_pbp_data([yr], downcast=True)
+        except Exception:
+            continue
+        if len(pbp):
+            out = epa_from_pbp(pbp)
+            if out:
+                return out
+    return {}
+
+
 # --- PFF projected win totals -------------------------------------------
 
 PFF_URL = ("https://www.pff.com/news/"

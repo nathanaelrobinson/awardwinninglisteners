@@ -87,3 +87,17 @@ def test_parse_pff_handles_abbrevs():
     assert out["ARI"] == 4.33     # ARZ -> ARI
     assert out["CLE"] == 6.07     # CLV -> CLE
     assert out["SEA"] == 10.96
+
+
+def test_epa_from_pbp():
+    import pandas as pd
+    from winspool.fetch.scrapers import epa_from_pbp
+    df = pd.DataFrame({
+        "posteam": ["KC", "KC", "NYJ", "NYJ"],
+        "defteam": ["NYJ", "NYJ", "KC", "KC"],
+        "epa": [0.5, 0.5, -0.5, -0.5],
+        "pass": [1, 1, 1, 0], "rush": [0, 0, 0, 1],
+    })
+    out = epa_from_pbp(df)
+    assert out["KC"] > out["NYJ"]                 # KC efficient, NYJ not
+    assert abs(out["KC"] + out["NYJ"]) < 1e-6     # mean-centered
