@@ -1,32 +1,46 @@
 # Data sources
 
-Concrete free sources to wire into the ingestion pipeline (Milestone E, Tasks 12–13).
-Each becomes a `Source` in `src/winspool/fetch/registry.py`, configured via
-`data/cache/sources.json`. Selectors/endpoints are brittle and MUST be confirmed with a
-live smoke test (each source should return ~32 teams) before a pre-draft refresh.
+`winspool fetch` pulls live data into `data/cache/` via `winspool.fetch.registry`.
+Parse logic lives in `winspool/fetch/scrapers.py` (unit-tested against fixtures);
+network fetchers are validated by the live smoke test (`winspool fetch`).
 
-## Win totals (kind: "totals")
-Multiple books → the pipeline averages them per team into `win_totals.csv`.
+## Wired & live (`winspool fetch`)
 
-- Oddspedia — https://oddspedia.com/insights/american-football/nfl-win-totals-odds
-- Covers — https://www.covers.com/nfl/nfl-odds-win-totals
-- BetMGM (blog) — https://sports.betmgm.com/en/blog/nfl/nfl-odds-predictions-season-win-totals-bm16/
+| Source | Kind | Method | Notes |
+|--------|------|--------|-------|
+| Covers | win totals | requests + bs4 (HTML table) | nicknames |
+| BetMGM | win totals | requests + bs4 (HTML table) | full names |
+| ESPN FPI | power | JSON API (`site.web.api.espn.com/.../powerindex`) | `fpi` value = points vs avg |
+| nfelo | power | headless Chromium (playwright) + bs4 | Elo → points (÷25); JS-rendered |
 
-## Power ratings / projections (kind: "power")
-Each becomes one column in `power_ratings.csv`; the blend averages all columns.
+Win-total sources are averaged per team into `win_totals.csv`; each power source
+becomes a column in `power_ratings.csv` (points scale, so the blend averages them
+coherently). Provenance + timestamps in `sources_meta.json`.
 
-- ESPN FPI — https://www.espn.com/nfl/fpi/_/view/projections/sort/projections.probwintitle/dir/desc
-  (FPI is a points power rating; the projections view also carries projected wins / win-title prob.)
-- The Analyst (Opta) — https://theanalyst.com/nfl-predictions
-  (projected final records / power predictions)
+## Available but not auto-wired
+
+- **Mike Clay projections (ESPN)** — distributed as a PDF
+  (`g.espncdn.com/s/ffldraftkit/26/NFLDK2026_CS_ClayProjections2026.pdf`), page 61 =
+  projected standings (per-team projected wins). Reputable. Not yet auto-fetched
+  (needs PDF parsing); can be added with a download+parse fetcher.
+
+## Blocked / not accessible
+
+- **Oddspedia** — HTTP 403 to non-browser clients (Cloudflare).
+- **The Analyst (Opta)** — JS-rendered landing; would need the Opta data API or headless.
+- **Sagarin** (sagarin.com) — TLS certificate expired.
+- **TeamRankings, DRatings, Massey** — HTTP 403 to non-browser clients.
+
+Oddspedia / TeamRankings / DRatings could likely be scraped with the same headless
+(playwright) path used for nfelo — a follow-up if more sources are wanted.
 
 ## Schedule
-- nflverse via `nfl_data_py` (already implemented in `scripts/fetch_data.py`).
 
-## Notes
-- Win-total pages usually list posted O/U per team → map team name via `teams.resolve`.
-- FPI / projection pages may express strength as projected wins or as a points rating;
-  normalize each into `{team_code: value}` in its registry fetcher. If a source gives
-  projected wins rather than a points rating, it can still feed the blend as its own
-  column (points and wins are monotonically related for the averaging heuristic), but a
-  wins→points conversion in the fetcher is cleaner — decide per source during Task 13.
+`scripts/fetch_data.py` pulls the real 2026 schedule via `nfl_data_py` into
+`data/cache/schedule_2026.csv`.
+
+## Adding a source
+
+Write a `parse_*` (pure, testable) + a fetch wrapper in `scrapers.py` returning
+`{team_code: value}` (resolve names with `winspool.teams.resolve`), then append a
+`Source(name, "totals"|"power", fetch)` in `registry.default_sources()`.
