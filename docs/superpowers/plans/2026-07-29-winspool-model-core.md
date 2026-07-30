@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** A working Python package (`winspool`) that simulates the NFL season and, given a live draft state, recommends draft picks that maximize P(I finish 1st) in a 6-player winner-take-all wins pool.
+**Goal:** A working Python package (`winspool`) that simulates the NFL season and, given a live draft state, recommends draft picks that maximize P(I finish 1st) in a 5-player winner-take-all wins pool (each player drafts 6 teams).
 
 **Architecture:** Data (CSV cache) → strength ratings → Monte Carlo season sim producing an N×32 win matrix → draft brain that reads that matrix to rank picks. Built MVP-first: a crude end-to-end recommender runs by Task 6, then calibration, variance analysis, rollout lookahead, and mock studies are layered on. Backend (Plan 2) and React UI (Plan 3) come later.
 
@@ -14,8 +14,8 @@
 - **Team indexing is stable and global:** `winspool.teams.TEAMS` is the 32 nflverse team codes sorted alphabetically; a team's column index in every matrix is its position in `TEAMS`. Never reorder.
 - **Determinism:** all randomness goes through an explicitly-passed `numpy.random.Generator` (`np.random.default_rng(seed)`). No global `np.random` calls, no `Date.now`-style nondeterminism. Tests seed the RNG and assert reproducibility.
 - **No network in tests.** `nfl_data_py` is used only in `scripts/fetch_data.py`. All tests read small CSV fixtures under `tests/fixtures/`.
-- Player slots are 1–6 (matching the draft table); internally a player's column index is `player - 1`.
-- Constants: 32 teams, 6 players, 5 teams/player, 30 picks. `HFA = 2.0` pts, `SCALE = 13.5` pts (margin-of-victory SD).
+- Player slots are 1–5 (matching the draft table); internally a player's column index is `player - 1`.
+- Constants: 32 teams, 5 players, 6 teams/player, 30 picks. `HFA = 2.0` pts, `SCALE = 13.5` pts (margin-of-victory SD).
 - Commit after every task with a `feat:`/`test:`/`chore:` message. Do not push (no remote configured).
 
 ---
@@ -98,8 +98,8 @@ Expected: FAIL (`ModuleNotFoundError: winspool.teams`).
 ```python
 # src/winspool/teams.py
 N_TEAMS = 32
-N_PLAYERS = 6
-ROSTER_SIZE = 5
+N_PLAYERS = 5
+ROSTER_SIZE = 6
 N_PICKS = 30
 
 _DIVISIONS = {
@@ -486,7 +486,7 @@ git commit -m "feat: Monte Carlo season simulation to N x 32 win matrix"
 **Interfaces:**
 - Consumes: `N_TEAMS`, `N_PLAYERS`, `N_PICKS`.
 - Produces:
-  - `draft.PICK_ORDER: list[int]` (length 30, player 1–6 picking at each pick index).
+  - `draft.PICK_ORDER: list[int]` (length 30, player 1–5 picking at each pick index).
   - `draft.DraftState(my_player)` with: `.picks: list[tuple[int,int]]`, `.board() -> list[int]`, `.rosters() -> dict[int,list[int]]`, `.current_player -> int|None`, `.done -> bool`, `.apply_pick(team_idx)`, `.copy()`, `.picks_until_my_next() -> int`.
   - `draft.player_totals(rosters, wins) -> ndarray(n, N_PLAYERS)`.
   - `draft.pwin(rosters, wins, player) -> float` (ties count as a win — co-champion rule).
@@ -503,9 +503,9 @@ from winspool.draft import (PICK_ORDER, DraftState, player_totals, pwin, greedy_
 def test_pick_order_valid():
     assert len(PICK_ORDER) == 30
     counts = Counter(PICK_ORDER)
-    assert set(counts) == {1, 2, 3, 4, 5, 6}
-    assert all(v == 5 for v in counts.values())
-    assert PICK_ORDER[:6] == [1, 2, 3, 4, 5, 6]
+    assert set(counts) == {1, 2, 3, 4, 5}
+    assert all(v == 6 for v in counts.values())
+    assert PICK_ORDER[:5] == [1, 2, 3, 4, 5]
 
 def test_state_tracks_board_and_current_player():
     st = DraftState(my_player=3)
@@ -548,8 +548,8 @@ import numpy as np
 from .teams import N_TEAMS, N_PLAYERS, N_PICKS
 
 # Fixed "optimized" order: player picking at each of the 30 picks (1-indexed players).
-PICK_ORDER = [1, 2, 3, 4, 5, 6, 5, 6, 4, 6, 3, 1, 4, 2, 5,
-              2, 3, 5, 3, 1, 6, 2, 1, 4, 3, 2, 4, 5, 6, 1]
+PICK_ORDER = [1, 2, 3, 4, 5, 5, 4, 3, 2, 1, 4, 1, 3, 2, 5,
+              2, 3, 4, 5, 1, 3, 5, 2, 1, 4, 1, 5, 4, 2, 3]
 assert len(PICK_ORDER) == N_PICKS
 
 class DraftState:
@@ -1357,7 +1357,7 @@ git commit -m "feat: opponent-aware rollout recommender with survival probabilit
 **Interfaces:**
 - Produces:
   - `mock.auto_draft(wins, policies: dict[int, Policy], my_player, rng) -> DraftState` — runs a full draft; `policies[p]` drives seat `p`.
-  - `mock.positional_study(wins, self_policy, opp_policy, *, k=200, rng) -> dict[int, float]` — for each slot 1–6, run `k` auto-drafts with me in that slot (opponents share `opp_policy`), return mean `pwin` by slot.
+  - `mock.positional_study(wins, self_policy, opp_policy, *, k=200, rng) -> dict[int, float]` — for each slot 1–5, run `k` auto-drafts with me in that slot (opponents share `opp_policy`), return mean `pwin` by slot.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -1386,7 +1386,7 @@ def test_positional_study_returns_all_slots():
     strengths = np.linspace(12, 4, 32)
     res = positional_study(wins, greedy_self(wins), entropy(strengths, 8.0),
                            k=15, rng=np.random.default_rng(3))
-    assert set(res) == {1, 2, 3, 4, 5, 6}
+    assert set(res) == {1, 2, 3, 4, 5}
     assert all(0.0 <= v <= 1.0 for v in res.values())
 ```
 

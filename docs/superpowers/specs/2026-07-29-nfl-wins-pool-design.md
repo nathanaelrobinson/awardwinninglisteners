@@ -5,12 +5,12 @@
 
 ## 1. Problem & Objective
 
-Six players run a season-long NFL wins pool. Each drafts **5 teams** (30 of 32 teams
+Five players run a season-long NFL wins pool. Each drafts **6 teams** (30 of 32 teams
 drafted; 2 left on the board) via a fixed, "optimized" snake order. At season's end the
-player whose 5 teams have the **most combined regular-season wins** takes a
+player whose 6 teams have the **most combined regular-season wins** takes a
 **winner-take-all** liquor prize.
 
-**North-star objective:** maximize **P(I finish 1st of 6)** — *not* expected combined
+**North-star objective:** maximize **P(I finish 1st of 5)** — *not* expected combined
 wins. In a winner-take-all contest the correct target is probability of finishing first,
 which makes the optimal strategy variance-seeking when trailing the field and
 variance-averse when ahead. This is standard tournament / contest theory (the same math
@@ -19,24 +19,23 @@ that governs large-field DFS lineup construction). Applying it to a snake draft 
 
 ### Draft order (fixed pattern)
 
-On draft day each player is randomly assigned a slot P1–P6. From that moment the entire
+On draft day each player is randomly assigned a slot P1–P5. From that moment the entire
 pick sequence is deterministic and known:
 
 | Player | Pick numbers |
 |--------|--------------|
-| P1 | 1, 12, 20, 23, 30 |
-| P2 | 2, 14, 16, 22, 26 |
-| P3 | 3, 11, 17, 19, 25 |
-| P4 | 4, 9, 13, 24, 27 |
-| P5 | 5, 7, 15, 18, 28 |
-| P6 | 6, 8, 10, 21, 29 |
+| P1 | 1, 10, 12, 20, 24, 26 |
+| P2 | 2, 9, 14, 16, 23, 29 |
+| P3 | 3, 8, 13, 17, 21, 30 |
+| P4 | 4, 7, 11, 18, 25, 28 |
+| P5 | 5, 6, 15, 19, 22, 27 |
 
-Covers picks 1–30 exactly once. Because the order is fully known, at any point in the
+Covers picks 1–30 exactly once (5 players × 6 picks). Because the order is fully known, at any point in the
 draft we know exactly which picks come before our next turn and who makes them.
 
 ### Pool scoring & tie rules
 
-- Score = combined regular-season **wins** of a player's 5 teams (17 games/team → 85
+- Score = combined regular-season **wins** of a player's 6 teams (17 games/team → 102
   games/player).
 - **Pool tie** (equal combined wins): both players are **co-champions** — both credited
   as winners. No least-losses tiebreak needed; scoring requires win totals only.
@@ -120,9 +119,9 @@ Vegas O/U; surfaced in the Setup screen for eyeball verification before trusting
 
 ### Why it's tractable
 
-In sim season *s*, a player's pool score = sum of their 5 teams' win-columns in row *s*.
+In sim season *s*, a player's pool score = sum of their 6 teams' win-columns in row *s*.
 A player's whole outcome distribution is a length-N vector = sum of 5 columns. Comparing
-all 6 players across N sims is one vectorized `argmax` over an N×6 array — so "who wins the
+all 5 players across N sims is one vectorized `argmax` over an N×5 array — so "who wins the
 pool" is cheap for *any* full roster assignment, which makes the rollout affordable.
 
 ### Objective evaluation (full assignment)
@@ -201,7 +200,7 @@ Same brain, driven programmatically. Reuses the sim matrix (layer 3) and ranking
 opponent policy.
 
 1. **Positional-value study (pure sim).** Run K full auto-drafts where *I* draft optimally
-   from each slot P1…P6 while the other five seats use a chosen opponent model. Aggregate
+   from each slot P1…P5 while the other four seats use a chosen opponent model. Aggregate
    my P(win) by starting slot → "which draft position is best, and how much does the slot I
    randomly draw actually matter?"
 2. **Interactive practice draft.** I play a full mock; the brain advises my picks; the other
@@ -224,7 +223,7 @@ responses are small JSON.
 
 Disposable/iterable without touching the model.
 
-1. **Setup** — choose my drawn slot (P1–P6); confirm the 32-team board and ratings;
+1. **Setup** — choose my drawn slot (P1–P5); confirm the 32-team board and ratings;
    calibration check of each team's simulated win distribution vs. Vegas O/U.
 2. **Live draft** (primary) — board of all 32 teams color-coded (available / mine / each
    opponent); the fixed pick order with a marker on whose clock it is and a countdown to my
@@ -255,7 +254,7 @@ Screens will be iterated once reached.
 - **Sim:** calibration invariants (7-pt favorite ≈ 70%); each team's mean sim wins tracks
   its Vegas O/U; division rivals show negative win-total correlation.
 - **Draft brain:** additive-scoring vectorization matches a brute-force reference on a small
-  case; P(win) sums sensibly across 6 players; variance-seeking behavior appears when
+  case; P(win) sums sensibly across 5 players; variance-seeking behavior appears when
   trailing in a constructed scenario.
 - **Mock harness:** deterministic under a fixed RNG seed; positional study is reproducible.
 
