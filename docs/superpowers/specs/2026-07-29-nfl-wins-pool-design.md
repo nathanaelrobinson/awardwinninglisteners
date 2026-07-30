@@ -204,7 +204,7 @@ opponent policy.
    my P(win) by starting slot → "which draft position is best, and how much does the slot I
    randomly draw actually matter?"
 2. **Interactive practice draft.** I play a full mock; the brain advises my picks; the other
-   five seats are either auto-piloted by a selectable scoring model or manually entered by
+   four seats are either auto-piloted by a selectable scoring model or manually entered by
    me to rehearse a specific scenario.
 
 ## 8. Backend API (FastAPI)
