@@ -20,3 +20,10 @@ def load_win_totals(path):
     # teams with no posted number default to the mean of those posted
     totals[np.isnan(totals)] = np.nanmean(totals)
     return totals
+
+def load_power_ratings(path):
+    """Return every numeric source column, indexed by team code.
+    Any number of source columns is supported (fpi, sagarin, massey, elo_*, ...);
+    the blend averages whatever is present."""
+    df = pd.read_csv(path).set_index("team")
+    return df.select_dtypes("number")
