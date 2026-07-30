@@ -1,17 +1,17 @@
 import numpy as np
 from .data import load_schedule, schedule_matchups, load_win_totals
 from .ratings import strength_from_totals
-from .sim import simulate
+from .sim import simulate, simulate_mixture
 from .draft import player_totals, pwin, PICK_ORDER, greedy_pick
 
 def build_wins(schedule_path, totals_path, n_seasons=20000, seed=0,
-               power_path=None, tie_base=0.003, base_sigma=3.5, spread_k=2.0):
+               power_path=None, tie_base=0.003, base_sigma=4.5, spread_k=2.0):
     """Ensemble every available source into the season sim WITHOUT anchoring on
     any one. Vegas (backed out of the O/U) is just one voter alongside each power
     column (FPI, nfelo, Clay, …). The ensemble mean is the strength; cross-source
     disagreement widens a team's per-season variance (see ratings.ensemble)."""
     from .data import load_power_ratings
-    from .ratings import backout_market, ensemble
+    from .ratings import backout_market, ensemble, to_common_scale
     from .game import HFA, SCALE
     from .teams import TEAM_INDEX, N_TEAMS
     df = load_schedule(schedule_path)
@@ -26,9 +26,17 @@ def build_wins(schedule_path, totals_path, n_seasons=20000, seed=0,
             for code, val in pdf[col].items():
                 arr[TEAM_INDEX[code]] = float(val)
             sources[col] = arr
-    strengths, sigma = ensemble(sources, base_sigma=base_sigma, spread_k=spread_k)
+    # `strengths` (ensemble consensus) drives display + opponent/greedy policies.
+    strengths, _ = ensemble(sources, base_sigma=base_sigma, spread_k=spread_k)
     rng = np.random.default_rng(seed)
-    wins = simulate(strengths, sigma, home, away, n_seasons, tie_base=tie_base, rng=rng)
+    if len(sources) > 1:
+        # Mixture-of-models: each season samples which source's world is real,
+        # so teams the models disagree on get multimodal / fat-tailed outcomes.
+        wins = simulate_mixture(to_common_scale(sources), home, away, n_seasons,
+                                base_sigma=base_sigma, tie_base=tie_base, rng=rng)
+    else:
+        _, sigma = ensemble(sources, base_sigma=base_sigma, spread_k=spread_k)
+        wins = simulate(strengths, sigma, home, away, n_seasons, tie_base=tie_base, rng=rng)
     return wins, strengths
 
 def naive_recommend(state, wins):

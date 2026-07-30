@@ -1,5 +1,5 @@
 import numpy as np
-from winspool.sim import simulate
+from winspool.sim import simulate, simulate_mixture
 
 def _two_team(rng, n=20000, sig=0.0):
     # team 0 is +14 pts stronger; play each other twice, no HFA
@@ -35,3 +35,25 @@ def test_ties_reduce_total_wins():
     with_tie = simulate(s, sigma, home, away, 50000, hfa=0.0, tie_base=0.05,
                         rng=np.random.default_rng(4))
     assert with_tie.sum() < no_tie.sum()
+
+
+def test_simulate_mixture_shape_and_determinism():
+    home = np.array([0, 1]); away = np.array([1, 0])
+    mat = np.array([[7.0, -7.0], [-7.0, 7.0]])   # two opposite "worlds"
+    a = simulate_mixture(mat, home, away, 20000, base_sigma=0.0, hfa=0.0,
+                         rng=np.random.default_rng(1))
+    b = simulate_mixture(mat, home, away, 20000, base_sigma=0.0, hfa=0.0,
+                         rng=np.random.default_rng(1))
+    assert a.shape == (20000, 2) and a.dtype == np.int16
+    assert np.array_equal(a, b)
+
+def test_simulate_mixture_is_bimodal_on_disagreement():
+    # team 0 dominant in world 0, terrible in world 1 -> bimodal win total
+    home = np.array([0, 1]); away = np.array([1, 0])
+    mat = np.array([[14.0, -14.0], [-14.0, 14.0]])
+    w = simulate_mixture(mat, home, away, 20000, base_sigma=0.0, hfa=0.0,
+                         rng=np.random.default_rng(2))
+    t0 = w[:, 0]
+    frac_mid = np.mean(t0 == 1)
+    frac_ext = np.mean((t0 == 0) | (t0 == 2))
+    assert frac_ext > frac_mid   # mass piles at the extremes, not the middle

@@ -104,3 +104,15 @@ def ensemble(source_strengths, base_sigma=4.0, spread_k=1.0):
     spread = z.std(axis=0)                         # scale-free cross-source disagreement
     sigma = base_sigma + spread_k * spread * scale
     return strength, sigma
+
+def to_common_scale(source_strengths):
+    """Each source standardized then rescaled to one common points scale, as a
+    (n_sources, n_teams) matrix — the set of comparable 'model worlds' the
+    mixture sim samples from. Same standardization ensemble() uses."""
+    names = list(source_strengths)
+    raw = np.vstack([np.asarray(source_strengths[n], dtype=float) for n in names])
+    means = raw.mean(axis=1, keepdims=True)
+    stds = raw.std(axis=1, keepdims=True)
+    scale = float(np.mean(stds[stds > 0])) if np.any(stds > 0) else 1.0
+    z = np.where(stds > 0, (raw - means) / np.where(stds > 0, stds, 1.0), 0.0)
+    return z * scale
