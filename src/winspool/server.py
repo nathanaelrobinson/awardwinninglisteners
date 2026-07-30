@@ -235,9 +235,12 @@ def results(req: ResultsReq):
     rosters = _state_from(req.slot, req.taken).rosters()
     totals = player_totals(rosters, wins)          # (N, N_PLAYERS)
     rowmax = totals.max(axis=1)
+    lo, hi = int(totals.min()), int(totals.max())
+    xs = list(range(lo, hi + 1))
     out = []
     for p in range(1, N_PLAYERS + 1):
         col = totals[:, p - 1]
+        counts = np.bincount((col - lo).astype(int), minlength=len(xs))
         out.append({
             "player": p,
             "is_me": p == req.slot,
@@ -246,9 +249,10 @@ def results(req: ResultsReq):
             "pwin": round(float((col >= rowmax).mean()), 3),
             "p10": int(np.percentile(col, 10)),
             "p90": int(np.percentile(col, 90)),
+            "dist": (counts / counts.sum()).round(5).tolist(),  # prob per x in xs
         })
     out.sort(key=lambda r: r["exp_wins"], reverse=True)
-    return {"standings": out}
+    return {"standings": out, "x": xs, "n_sims": int(wins.shape[0])}
 
 
 class SampleReq(BaseModel):

@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { fetchResults, sampleSeason } from '../api';
 import type { SeasonRow, StandingRow } from '../api';
+import DistributionChart from './DistributionChart';
 
 interface Props {
   slot: number;
@@ -9,6 +10,8 @@ interface Props {
 
 export default function Results({ slot, taken }: Props) {
   const [standings, setStandings] = useState<StandingRow[] | null>(null);
+  const [xWins, setXWins] = useState<number[]>([]);
+  const [nSims, setNSims] = useState<number>(0);
   const [season, setSeason] = useState<{ standings: SeasonRow[]; winners: number[] } | null>(null);
   const [seed, setSeed] = useState(1);
   const [busy, setBusy] = useState(false);
@@ -16,7 +19,11 @@ export default function Results({ slot, taken }: Props) {
   useEffect(() => {
     let cancelled = false;
     fetchResults(slot, taken).then((r) => {
-      if (!cancelled) setStandings(r.standings);
+      if (!cancelled) {
+        setStandings(r.standings);
+        setXWins(r.x);
+        setNSims(r.n_sims);
+      }
     });
     return () => {
       cancelled = true;
@@ -34,8 +41,13 @@ export default function Results({ slot, taken }: Props) {
     <div className="results panel">
       <h3>Final standings</h3>
       <p className="results-sub">
-        Projected over the full season sim (teams play each other, so wins are correlated).
+        Distribution of each player's combined wins across {nSims.toLocaleString()} simulated
+        seasons (teams play each other, so wins are correlated). % = chance to win the pool.
       </p>
+
+      {standings && xWins.length > 0 && (
+        <DistributionChart standings={standings} x={xWins} />
+      )}
 
       {!standings && <p>Simulating…</p>}
       {standings && (

@@ -353,6 +353,58 @@
   margin-top: 4px;
 }
 
+/* Distribution chart */
+.dist-chart {
+  margin: 8px 0 4px;
+}
+.dist-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  margin-top: 6px;
+  font-size: 11px;
+  color: #9aa4b2;
+}
+.dist-leg-item.mine {
+  color: #e6ebf2;
+  font-weight: 600;
+}
+.dist-swatch {
+  display: inline-block;
+  width: 9px;
+  height: 9px;
+  border-radius: 2px;
+  margin-right: 4px;
+  vertical-align: middle;
+}
+.dist-xlabel {
+  font-size: 10px;
+  color: #6b7482;
+  text-align: center;
+  margin-top: 2px;
+}
+.dist-tooltip {
+  position: absolute;
+  top: 0;
+  transform: translateX(-50%);
+  background: #0f1218;
+  border: 1px solid #2a3140;
+  border-radius: 6px;
+  padding: 6px 8px;
+  font-size: 11px;
+  color: #e6ebf2;
+  pointer-events: none;
+  white-space: nowrap;
+  z-index: 5;
+}
+.dist-tt-title {
+  font-weight: 700;
+  margin-bottom: 3px;
+}
+.dist-tt-row {
+  line-height: 1.5;
+}
+
 /* Final standings / season result */
 .results-sub {
   color: #9aa4b2;

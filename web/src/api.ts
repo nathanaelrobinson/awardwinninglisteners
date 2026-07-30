@@ -57,9 +57,16 @@ export interface StandingRow {
   pwin: number;
   p10: number;
   p90: number;
+  dist: number[]; // probability per win-total in `x`
 }
 
-export async function fetchResults(slot: number, taken: string[]): Promise<{ standings: StandingRow[] }> {
+export interface ResultsResponse {
+  standings: StandingRow[];
+  x: number[];
+  n_sims: number;
+}
+
+export async function fetchResults(slot: number, taken: string[]): Promise<ResultsResponse> {
   const res = await fetch('/api/results', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
