@@ -23,6 +23,7 @@ export default function Board({ teams, takenBy, mySlot, onDraft, disabled }: Pro
           <div className="division-grid">
             {teams
               .filter((t) => t.division === div)
+              .sort((a, b) => b.mean - a.mean) // best -> worst, left to right
               .map((t) => {
                 const player = takenBy[t.code];
                 const taken = player !== undefined;
