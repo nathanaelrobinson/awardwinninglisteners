@@ -353,6 +353,72 @@
   margin-top: 4px;
 }
 
+/* Auto-sim per-seat grid */
+.autosim-seatgrid {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 12px 0;
+}
+.autosim-seat {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  border: 1px solid #2a3140;
+  border-radius: 8px;
+  background: #1a1f29;
+  min-width: 120px;
+}
+.autosim-seat.mine {
+  border-color: #7c5cff;
+  background: #7c5cff14;
+}
+.autosim-seat-label {
+  font-size: 12px;
+  color: #9aa4b2;
+}
+.autosim-seat select,
+.autosim-field select,
+.autosim-field input {
+  padding: 4px 6px;
+  background: #0f1218;
+  color: #e6ebf2;
+  border: 1px solid #2a3140;
+  border-radius: 6px;
+}
+.autosim-controls {
+  display: flex;
+  align-items: flex-end;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin: 10px 0;
+}
+.autosim-field {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.autosim-result {
+  margin-top: 12px;
+  padding: 14px;
+  border: 1px solid #2a3140;
+  border-radius: 8px;
+  background: #12161e;
+}
+.autosim-win {
+  font-size: 26px;
+  font-weight: 700;
+  color: #b39dff;
+}
+.autosim-fair,
+.autosim-range,
+.autosim-meta {
+  color: #9aa4b2;
+  font-size: 13px;
+  margin-top: 2px;
+}
+
 /* Top pick (focal best-pick card) */
 .top-pick {
   margin: 10px 0 14px;

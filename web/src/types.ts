@@ -42,6 +42,7 @@ export interface AutosimRequest {
   slot: number;
   my_strategy: MyStrategy;
   opp_strategy: OppStrategy;
+  strategies?: Record<string, string>; // per-seat: { "1": "market", "2": "random", ... }
   n_sims?: number;
   seed?: number;
 }

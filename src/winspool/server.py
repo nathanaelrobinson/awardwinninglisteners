@@ -159,6 +159,10 @@ class SimReq(BaseModel):
     slot: int
     my_strategy: str = "optimal"
     opp_strategy: str = "market"
+    # Optional per-seat strategies, e.g. {"1":"market","2":"random",...}. When
+    # given, each seat uses its own strategy (my_strategy/opp_strategy are the
+    # fallback for any seat not listed).
+    strategies: dict[str, str] | None = None
     n_sims: int = 150
     seed: int = 0
 
@@ -168,10 +172,13 @@ def autosim(req: SimReq):
     _ensure_ready()
     wins_fast = _STATE["wins_fast"]
     rng = np.random.default_rng(req.seed)
-    my_pol = _strategy_policy(req.my_strategy)
-    opp_pol = _strategy_policy(req.opp_strategy)
-    policies = {p: opp_pol for p in range(1, N_PLAYERS + 1)}
-    policies[req.slot] = my_pol
+    policies = {}
+    for p in range(1, N_PLAYERS + 1):
+        if req.strategies and str(p) in req.strategies:
+            name = req.strategies[str(p)]
+        else:
+            name = req.my_strategy if p == req.slot else req.opp_strategy
+        policies[p] = _strategy_policy(name)
 
     pwins = []
     for _ in range(req.n_sims):

@@ -171,7 +171,7 @@ export default function App() {
         </main>
       ) : (
         <main className="main-layout main-layout-single">
-          <AutosimView slot={slot} />
+          <AutosimView slot={slot} nPlayers={teamsData.n_players} />
         </main>
       )}
     </div>
