@@ -1,7 +1,9 @@
 import argparse
+import numpy as np
 from .teams import TEAMS, TEAM_INDEX
 from .draft import DraftState, PICK_ORDER
-from .recommend import build_wins, naive_recommend
+from .recommend import build_wins, naive_recommend, rollout_recommend
+from .opponents import entropy, greedy_self
 
 def _apply_taken(state, taken):
     """taken: comma-separated team codes in pick order."""
@@ -22,6 +24,8 @@ def main(argv=None):
     rec.add_argument("--totals", default="data/cache/win_totals.csv")
     rec.add_argument("--n", type=int, default=20000)
     rec.add_argument("--seed", type=int, default=0)
+    rec.add_argument("--rollouts", type=int, default=0)
+    rec.add_argument("--temp", type=float, default=8.0)
 
     ana = sub.add_parser("analyze")
     ana.add_argument("--schedule", default="data/cache/schedule_2026.csv")
@@ -44,15 +48,25 @@ def main(argv=None):
         return 0
 
     if args.cmd == "recommend":
-        wins, _ = build_wins(args.schedule, args.totals, args.n, args.seed)
+        wins, strengths = build_wins(args.schedule, args.totals, args.n, args.seed)
         state = DraftState(my_player=args.slot)
         _apply_taken(state, args.taken)
-        recs = naive_recommend(state, wins)
         on_clock = state.current_player
         print(f"Slot {args.slot} | on the clock: player {on_clock} | "
               f"your next pick in {state.picks_until_my_next()} picks")
-        print(f"{'team':<5}{'pwin':>8}{'dWins':>8}")
-        for r in recs[:15]:
-            print(f"{TEAMS[r['team']]:<5}{r['pwin']:>8.3f}{r['delta_wins']:>8.2f}")
+        if args.rollouts > 0:
+            opp_policy = entropy(strengths, temperature=args.temp)
+            self_policy = greedy_self(wins)
+            recs = rollout_recommend(state, wins, self_policy, opp_policy,
+                                      n_rollouts=args.rollouts,
+                                      rng=np.random.default_rng(args.seed))
+            print(f"{'team':<5}{'pwin':>8}{'survival':>10}")
+            for r in recs[:15]:
+                print(f"{TEAMS[r['team']]:<5}{r['pwin']:>8.3f}{r['survival']:>10.3f}")
+        else:
+            recs = naive_recommend(state, wins)
+            print(f"{'team':<5}{'pwin':>8}{'dWins':>8}")
+            for r in recs[:15]:
+                print(f"{TEAMS[r['team']]:<5}{r['pwin']:>8.3f}{r['delta_wins']:>8.2f}")
         return 0
     return 1
