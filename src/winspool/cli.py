@@ -44,7 +44,29 @@ def main(argv=None):
     pos.add_argument("--k", type=int, default=200)
     pos.add_argument("--temp", type=float, default=8.0)
 
+    fet = sub.add_parser("fetch")
+    fet.add_argument("--config", default="data/cache/sources.json")
+    fet.add_argument("--cache", default="data/cache")
+
     args = parser.parse_args(argv)
+
+    if args.cmd == "fetch":
+        import datetime
+        import json
+
+        from .fetch.pipeline import refresh
+        from .fetch.registry import default_sources
+        with open(args.config) as f:
+            config = json.load(f)
+        sources = default_sources(config)
+        if not sources:
+            print("No sources configured. See src/winspool/fetch/registry.py.")
+            return 1
+        now = datetime.datetime.now().isoformat(timespec="seconds")
+        meta = refresh(sources, args.cache, now=now)
+        for m in meta:
+            print(f"{m['name']:<12}{m['kind']:<8}{m['n_teams']} teams  @ {m['fetched_at']}")
+        return 0
 
     if args.cmd == "analyze":
         from .analysis import team_attributes
