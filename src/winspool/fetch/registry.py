@@ -16,7 +16,8 @@ Add a working one by writing a parse_* + fetch in scrapers.py and appending a
 Source below.
 """
 from .pipeline import Source
-from .scrapers import betmgm_totals, clay_projections, covers_totals, espn_fpi, nfelo_power
+from .scrapers import (betmgm_totals, clay_projections, covers_totals, espn_fpi,
+                       nfelo_power, pff_projections)
 
 
 def default_sources(config=None):
@@ -26,4 +27,5 @@ def default_sources(config=None):
         Source("espn_fpi", "power", espn_fpi),
         Source("nfelo", "power", nfelo_power),   # JS-rendered via headless browser
         Source("clay", "power", clay_projections),  # ESPN PDF projections
+        Source("pff", "power", pff_projections),    # PFF grades-based sims
     ]

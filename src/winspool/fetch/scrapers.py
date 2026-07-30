@@ -163,6 +163,52 @@ def parse_clay_page(text):
     return code, float(m_win.group(1))
 
 
+# --- PFF projected win totals -------------------------------------------
+
+PFF_URL = ("https://www.pff.com/news/"
+           "bet-nfl-betting-2026-pff-projected-win-totals-for-all-32-teams")
+# PFF uses non-standard team abbreviations for a handful of teams.
+_PFF_FIX = {"ARZ": "ARI", "BLT": "BAL", "CLV": "CLE", "HST": "HOU",
+            "LAR": "LA", "WSH": "WAS", "JAC": "JAX"}
+
+
+def parse_pff(html):
+    """PFF win-totals table -> {code: PFF avg-wins projection}. The projection
+    column header contains 'Projection'; team codes are PFF's own abbreviations."""
+    soup = BeautifulSoup(html, "lxml")
+    for table in soup.find_all("table"):
+        rows = table.find_all("tr")
+        if not rows:
+            continue
+        header = [c.get_text(strip=True).lower() for c in rows[0].find_all(["th", "td"])]
+        proj_idx = next((i for i, h in enumerate(header) if "projection" in h), None)
+        if proj_idx is None:
+            continue
+        out = {}
+        for tr in rows[1:]:
+            cells = [c.get_text(strip=True) for c in tr.find_all(["th", "td"])]
+            if len(cells) <= proj_idx or not cells:
+                continue
+            abbr = cells[0].upper()
+            code = _PFF_FIX.get(abbr) or resolve(abbr)
+            val = _num(cells[proj_idx])
+            if code and val is not None:
+                out[code] = val
+        if len(out) >= 20:
+            return out
+    return {}
+
+
+def pff_projections():
+    """PFF projected wins per team -> mean-centered points strength."""
+    from ..ratings import WINS_PER_POINT
+    wins = parse_pff(_get(PFF_URL).text)
+    if not wins:
+        return {}
+    mean = sum(wins.values()) / len(wins)
+    return {code: (w - mean) / WINS_PER_POINT for code, w in wins.items()}
+
+
 def clay_projections():
     """Clay's projected wins per team, converted to a mean-centered points
     strength. Downloads the PDF and reads the per-team pages."""

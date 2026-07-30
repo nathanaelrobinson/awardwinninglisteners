@@ -68,3 +68,22 @@ def test_parse_clay_page():
     assert parse_clay_page(text) == ("ARI", 3.6)
     # a non-team page (e.g. the standings page) yields nothing
     assert parse_clay_page("2026 Projected Standings\nBuffalo Bills 10 7") is None
+
+
+def test_parse_pff_handles_abbrevs():
+    from winspool.fetch.scrapers import parse_pff
+    rows = [("LAR", "11.13"), ("SEA", "10.96"), ("BLT", "10.80"), ("HST", "9.85"),
+            ("ARZ", "4.33"), ("CLV", "6.07")]
+    filler = [(a, "8.0") for a in ["ATL","BUF","CAR","CHI","CIN","DAL","DEN","DET",
+              "GB","IND","JAX","KC","LV","LAC","MIA","MIN"]]
+    body = "".join(f"<tr><td>{a}</td><td>3</td><td>{w}</td><td>9.5</td></tr>"
+                   for a, w in rows + filler)
+    html = (f"<table><tr><th>Team</th><th>SoS</th><th>PFF Avg Wins Projection</th>"
+            f"<th>Win Total</th></tr>{body}</table>")
+    out = parse_pff(html)
+    assert out["LA"] == 11.13     # LAR -> LA
+    assert out["BAL"] == 10.80    # BLT -> BAL
+    assert out["HOU"] == 9.85     # HST -> HOU
+    assert out["ARI"] == 4.33     # ARZ -> ARI
+    assert out["CLE"] == 6.07     # CLV -> CLE
+    assert out["SEA"] == 10.96
