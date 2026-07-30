@@ -63,12 +63,20 @@ def pwin(rosters, wins, player):
     return float(np.mean(totals[:, player - 1] >= rowmax))
 
 def greedy_pick(state, wins, player):
-    best_team, best_score = None, -1.0
+    # Rank by P(win); break ties by marginal expected wins. Early in a draft
+    # most rosters are empty, so many candidates tie on P(win) (everyone is a
+    # co-leader under the >= rule) — the marginal-wins tiebreak keeps the choice
+    # meaningful and order-independent instead of falling to iteration order.
+    best_team, best_key = None, None
     rosters = state.rosters()
     for t in state.board():
         rosters[player].append(t)
-        score = pwin(rosters, wins, player)
+        totals = player_totals(rosters, wins)
+        col = totals[:, player - 1]
+        score = float(np.mean(col >= totals.max(axis=1)))
+        mean_wins = float(col.mean())
         rosters[player].pop()
-        if score >= best_score:
-            best_score, best_team = score, t
+        key = (score, mean_wins)
+        if best_key is None or key > best_key:
+            best_key, best_team = key, t
     return best_team
