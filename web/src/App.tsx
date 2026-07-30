@@ -146,7 +146,7 @@ export default function App() {
   if (!teamsData) {
     return (
       <div className="app-loading">
-        <p>Loading teams…</p>
+        <p>Loading… (first launch builds the season simulation — a few seconds)</p>
       </div>
     );
   }

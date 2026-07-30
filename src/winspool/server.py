@@ -43,17 +43,51 @@ app.add_middleware(
 _STATE: dict = {}
 
 
-def _ensure_ready():
-    if _STATE:
-        return
-    power_path = str(POWER) if POWER.exists() else None
-    wins, strengths = build_wins(str(SCHEDULE), str(TOTALS), n_seasons=N_SEASONS,
-                                 seed=0, power_path=power_path)
+MATRIX_CACHE = CACHE / "sim_matrix.npz"
+
+
+def _cache_key():
+    """Signature of the inputs the sim depends on — rebuild when any changes."""
+    parts = [str(N_SEASONS)]
+    for f in (SCHEDULE, TOTALS, POWER):
+        parts.append(str(f.stat().st_mtime_ns) if f.exists() else "0")
+    return "|".join(parts)
+
+
+def _populate(wins, strengths):
     _STATE["wins"] = wins
     _STATE["wins_fast"] = wins[:FAST_ROWS]
     _STATE["strengths"] = strengths
     _STATE["totals"] = load_win_totals(str(TOTALS))
     _STATE["attrs"] = {a["team"]: a for a in team_attributes(wins)}
+
+
+def _ensure_ready():
+    if _STATE:
+        return
+    key = _cache_key()
+    if MATRIX_CACHE.exists():
+        try:
+            z = np.load(MATRIX_CACHE, allow_pickle=False)
+            if str(z["key"]) == key:
+                _populate(z["wins"], z["strengths"])
+                return
+        except Exception:
+            pass  # stale/corrupt cache -> rebuild
+    power_path = str(POWER) if POWER.exists() else None
+    wins, strengths = build_wins(str(SCHEDULE), str(TOTALS), n_seasons=N_SEASONS,
+                                 seed=0, power_path=power_path)
+    try:
+        np.savez(MATRIX_CACHE, wins=wins, strengths=strengths, key=np.array(key))
+    except Exception:
+        pass
+    _populate(wins, strengths)
+
+
+@app.on_event("startup")
+def _startup():
+    # Build (or load cached) the sim during boot so the first page load is instant.
+    _ensure_ready()
 
 
 def _state_from(slot, taken):
