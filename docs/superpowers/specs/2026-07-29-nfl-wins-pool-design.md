@@ -168,6 +168,27 @@ Because the objective is P(1st), the ranking automatically tilts toward variance
 rollouts show me trailing and toward hedges when I'm ahead — visible as the Δσ column
 flipping sign as the draft progresses.
 
+### Differentiating teams the market treats as equal
+
+A key use case: Vegas frequently clusters many teams at the same win total (e.g. 8 teams
+at 10.0), at which point the O/U offers no basis to choose. This is exactly where the sim
+carries signal the market number discards. For every team we expose **standalone
+attributes** (independent of my current roster, computed once from the sim matrix +
+ratings), so that within an equal-O/U tier the tool can still rank:
+
+- **Own win-total SD / consistency** — spread of that team's own outcomes across the N
+  sims. Two 10-win teams can have very different floors and ceilings.
+- **Ceiling / floor** — e.g. P(≥ 12 wins) and P(≤ 6 wins), the practical handles for
+  "high-upside" vs "safe" picks.
+- **Strength of schedule** — average opponent strength, and expected wins on the team's
+  actual schedule vs. a neutral one ("plays weak teams" quantified).
+- **Market-vs-power gap** — where the blended power ratings disagree with the Vegas O/U,
+  which is both a mild edge signal and an uncertainty flag.
+
+The board groups teams into expected-win tiers and lets me sort a tier by any of these, so
+"which of these eight 10-win teams do I want" becomes a data question (lowest variance for a
+safe anchor, highest ceiling when I need upside) rather than a gut call.
+
 ### Cost
 
 ~20 candidates × ~300 rollouts × O(N) vectorized ≈ well under a second per turn; trivial to
@@ -209,6 +230,9 @@ Disposable/iterable without touching the model.
    opponent); the fixed pick order with a marker on whose clock it is and a countdown to my
    next pick; on my turn, the ranked recommendation table; one click logs any pick and the
    board updates; a running **"P(I win the pool)"** at the top that moves with every pick.
+   Available teams are groupable into expected-win tiers and sortable within a tier by the
+   standalone attributes (consistency/SD, ceiling P(≥12), floor P(≤6), strength of schedule,
+   market-vs-power gap) — the differentiator view for when Vegas has teams tied.
 3. **Mock lab** — positional-value study (bar chart of P(win) by starting slot) and the
    interactive practice draft.
 
