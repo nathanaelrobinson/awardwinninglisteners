@@ -1,5 +1,6 @@
 import numpy as np
 from .draft import DraftState, pwin
+from .teams import N_PLAYERS
 
 def auto_draft(wins, policies, my_player, rng):
     st = DraftState(my_player=my_player)
@@ -10,8 +11,8 @@ def auto_draft(wins, policies, my_player, rng):
 
 def positional_study(wins, self_policy, opp_policy, *, k=200, rng):
     results = {}
-    for slot in range(1, 7):
-        pols = {p: opp_policy for p in range(1, 7)}
+    for slot in range(1, N_PLAYERS + 1):
+        pols = {p: opp_policy for p in range(1, N_PLAYERS + 1)}
         pols[slot] = self_policy
         total = 0.0
         for _ in range(k):

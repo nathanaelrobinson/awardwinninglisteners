@@ -2,8 +2,8 @@ import numpy as np
 from .teams import N_TEAMS, N_PLAYERS, N_PICKS
 
 # Fixed "optimized" order: player picking at each of the 30 picks (1-indexed players).
-PICK_ORDER = [1, 2, 3, 4, 5, 6, 5, 6, 4, 6, 3, 1, 4, 2, 5,
-              2, 3, 5, 3, 1, 6, 2, 1, 4, 3, 2, 4, 5, 6, 1]
+PICK_ORDER = [1, 2, 3, 4, 5, 5, 4, 3, 2, 1, 4, 1, 3, 2, 5,
+              2, 3, 4, 5, 1, 3, 5, 2, 1, 4, 1, 5, 4, 2, 3]
 assert len(PICK_ORDER) == N_PICKS
 
 class DraftState:

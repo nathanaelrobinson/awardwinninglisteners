@@ -7,7 +7,7 @@ import Board from './components/Board';
 import Rosters from './components/Rosters';
 import Recommendations from './components/Recommendations';
 
-const PICKS_PER_PLAYER = 5;
+const PICKS_PER_PLAYER = 6;
 
 export default function App() {
   const [slot, setSlot] = useState<number>(1);

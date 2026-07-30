@@ -5,9 +5,9 @@ from winspool.draft import (PICK_ORDER, DraftState, player_totals, pwin, greedy_
 def test_pick_order_valid():
     assert len(PICK_ORDER) == 30
     counts = Counter(PICK_ORDER)
-    assert set(counts) == {1, 2, 3, 4, 5, 6}
-    assert all(v == 5 for v in counts.values())
-    assert PICK_ORDER[:6] == [1, 2, 3, 4, 5, 6]
+    assert set(counts) == {1, 2, 3, 4, 5}
+    assert all(v == 6 for v in counts.values())
+    assert PICK_ORDER[:5] == [1, 2, 3, 4, 5]
 
 def test_state_tracks_board_and_current_player():
     st = DraftState(my_player=3)
@@ -20,13 +20,13 @@ def test_state_tracks_board_and_current_player():
 def test_pwin_ties_count_as_win():
     # 2 sims, 2 players, identical totals -> both "win" every sim
     wins = np.array([[3, 3], [4, 4]], dtype=np.int16)  # cols are teams 0,1
-    rosters = {1: [0], 2: [1], 3: [], 4: [], 5: [], 6: []}
+    rosters = {1: [0], 2: [1], 3: [], 4: [], 5: []}
     assert pwin(rosters, wins, 1) == 1.0
     assert pwin(rosters, wins, 2) == 1.0
 
 def test_pwin_strict_winner():
     wins = np.array([[5, 1], [5, 1]], dtype=np.int16)
-    rosters = {1: [0], 2: [1], 3: [], 4: [], 5: [], 6: []}
+    rosters = {1: [0], 2: [1], 3: [], 4: [], 5: []}
     assert pwin(rosters, wins, 1) == 1.0
     assert pwin(rosters, wins, 2) == 0.0
 
