@@ -1,4 +1,4 @@
-from winspool.fetch.scrapers import parse_win_total_table, parse_espn_fpi
+from winspool.fetch.scrapers import parse_win_total_table, parse_espn_fpi, parse_clay_page
 
 ESPN_JSON = {
     "teams": [
@@ -59,3 +59,12 @@ def test_parse_espn_fpi():
     assert out["LA"] == 5.574     # first fpi value; displayName resolves
     assert out["ARI"] == -4.2
     assert len(out) == 2
+
+
+def test_parse_clay_page():
+    text = ("2026 Arizona Cardinals Projections\n"
+            "... lots of stats ...\n"
+            "PROJECTED WINS: 3.6 (NFL RANK: 31)\n")
+    assert parse_clay_page(text) == ("ARI", 3.6)
+    # a non-team page (e.g. the standings page) yields nothing
+    assert parse_clay_page("2026 Projected Standings\nBuffalo Bills 10 7") is None

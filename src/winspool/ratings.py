@@ -77,3 +77,30 @@ def blend(market, power, w=0.65):
     market = np.asarray(market) - np.asarray(market).mean()
     power = np.asarray(power) - np.asarray(power).mean()
     return w * market + (1.0 - w) * power
+
+def ensemble(source_strengths, base_sigma=4.0, spread_k=1.0):
+    """Combine independent source strength estimates (each a length-32 points
+    vector — Vegas, FPI, nfelo, Clay, …) WITHOUT anchoring on any one.
+
+    Returns (strength, sigma):
+      - strength = equal-weight mean across sources (each source mean-centered
+        first so no source biases the overall level).
+      - sigma = base_sigma + spread_k * (cross-source std per team). Teams the
+        sources DISAGREE on get a wider preseason draw → fatter win-total tails
+        → they read as the high-ceiling, high-variance picks that matter in a
+        winner-take-all pool. Disagreement, not consensus, drives the variance.
+    """
+    names = list(source_strengths)
+    raw = np.vstack([np.asarray(source_strengths[n], dtype=float) for n in names])
+    means = raw.mean(axis=1, keepdims=True)
+    stds = raw.std(axis=1, keepdims=True)
+    # Standardize each source to z-scores so sources on different native scales
+    # (FPI points vs Elo-derived vs Clay-derived) each vote EQUALLY on the
+    # ranking — otherwise the widest-scale source silently dominates and inflates
+    # apparent disagreement.
+    scale = float(np.mean(stds[stds > 0])) if np.any(stds > 0) else 1.0
+    z = np.where(stds > 0, (raw - means) / np.where(stds > 0, stds, 1.0), 0.0)
+    strength = z.mean(axis=0) * scale             # consensus ranking, rescaled to points
+    spread = z.std(axis=0)                         # scale-free cross-source disagreement
+    sigma = base_sigma + spread_k * spread * scale
+    return strength, sigma

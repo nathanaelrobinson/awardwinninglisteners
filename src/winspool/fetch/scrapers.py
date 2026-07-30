@@ -139,3 +139,44 @@ def nfelo_power():
         return {}
     mean = sum(elos.values()) / len(elos)
     return {code: (elo - mean) / ELO_PER_POINT for code, elo in elos.items()}
+
+
+# --- Mike Clay projections (ESPN PDF) -------------------------------------
+
+CLAY_URL = ("https://g.espncdn.com/s/ffldraftkit/26/"
+            "NFLDK2026_CS_ClayProjections2026.pdf")
+
+
+def parse_clay_page(text):
+    """One team page of Clay's PDF -> (code, projected_wins) or None.
+    Title looks like '2026 Arizona Cardinals Projections'; the box reads
+    'PROJECTED WINS: 3.6 (NFL RANK: 31)'."""
+    if not text:
+        return None
+    m_team = re.search(r"20\d\d\s+(.+?)\s+Projections", text)
+    m_win = re.search(r"PROJECTED WINS:\s*([\d.]+)", text)
+    if not (m_team and m_win):
+        return None
+    code = resolve(m_team.group(1))
+    if code is None:
+        return None
+    return code, float(m_win.group(1))
+
+
+def clay_projections():
+    """Clay's projected wins per team, converted to a mean-centered points
+    strength. Downloads the PDF and reads the per-team pages."""
+    import io
+    import pdfplumber
+    from ..ratings import WINS_PER_POINT
+    raw = _get(CLAY_URL).content
+    wins = {}
+    with pdfplumber.open(io.BytesIO(raw)) as pdf:
+        for page in pdf.pages[1:33]:            # team pages (2–33)
+            parsed = parse_clay_page(page.extract_text() or "")
+            if parsed:
+                wins[parsed[0]] = parsed[1]
+    if not wins:
+        return {}
+    mean = sum(wins.values()) / len(wins)
+    return {code: (w - mean) / WINS_PER_POINT for code, w in wins.items()}

@@ -5,22 +5,28 @@ from .sim import simulate
 from .draft import player_totals, pwin, PICK_ORDER, greedy_pick
 
 def build_wins(schedule_path, totals_path, n_seasons=20000, seed=0,
-               power_path=None, w=0.65, tie_base=0.003):
+               power_path=None, tie_base=0.003, base_sigma=3.5, spread_k=2.0):
+    """Ensemble every available source into the season sim WITHOUT anchoring on
+    any one. Vegas (backed out of the O/U) is just one voter alongside each power
+    column (FPI, nfelo, Clay, …). The ensemble mean is the strength; cross-source
+    disagreement widens a team's per-season variance (see ratings.ensemble)."""
     from .data import load_power_ratings
-    from .ratings import (backout_market, power_strength, blend, team_sigma,
-                          strength_from_totals)
+    from .ratings import backout_market, ensemble
     from .game import HFA, SCALE
+    from .teams import TEAM_INDEX, N_TEAMS
     df = load_schedule(schedule_path)
     home, away = schedule_matchups(df)
     totals = load_win_totals(totals_path)
     market = backout_market(totals, home, away, hfa=HFA, scale=SCALE)
+    sources = {"vegas": market}
     if power_path:
         pdf = load_power_ratings(power_path)
-        strengths = blend(market, power_strength(pdf), w=w)
-        sigma = team_sigma(pdf)
-    else:
-        strengths = market
-        sigma = np.full(strengths.size, 6.0)
+        for col in pdf.columns:
+            arr = np.zeros(N_TEAMS)
+            for code, val in pdf[col].items():
+                arr[TEAM_INDEX[code]] = float(val)
+            sources[col] = arr
+    strengths, sigma = ensemble(sources, base_sigma=base_sigma, spread_k=spread_k)
     rng = np.random.default_rng(seed)
     wins = simulate(strengths, sigma, home, away, n_seasons, tie_base=tie_base, rng=rng)
     return wins, strengths
