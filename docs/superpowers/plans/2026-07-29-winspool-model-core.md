@@ -800,8 +800,8 @@ git commit -m "feat: MVP naive recommender and CLI (end-to-end runnable)"
 
 **Interfaces:**
 - Produces:
-  - `data.load_power_ratings(path) -> pandas.DataFrame` (index aligned to TEAMS order via a `(32, k)` array is overkill; return columns `fpi, sagarin, massey` as a DataFrame indexed by team code).
-  - `ratings.power_strength(power_df) -> ndarray(32,)` (mean of centered sources, points).
+  - `data.load_power_ratings(path) -> pandas.DataFrame` — every numeric source column, indexed by team code (supports any number of sources, e.g. `fpi, sagarin, massey, elo_*`).
+  - `ratings.power_strength(power_df) -> ndarray(32,)` (mean of ALL centered source columns present, points).
   - `ratings.backout_market(win_totals, home_idx, away_idx, *, hfa, scale, iters=60, tol=1e-4) -> ndarray(32,)` — strengths whose `expected_wins` match `win_totals`, mean-centered.
   - `ratings.blend(market, power, w=0.65) -> ndarray(32,)`.
   - `ratings.team_sigma(power_df, base=5.0, disagreement_weight=1.0) -> ndarray(32,)` (preseason SD per team = base + weight·std of the team's source strengths).
@@ -871,8 +871,11 @@ Expected: FAIL (`load_power_ratings`/`backout_market` undefined).
 ```python
 # src/winspool/data.py  (append)
 def load_power_ratings(path):
+    """Return every numeric source column, indexed by team code.
+    Any number of source columns is supported (fpi, sagarin, massey, elo_*, ...);
+    the blend averages whatever is present."""
     df = pd.read_csv(path).set_index("team")
-    return df[["fpi", "sagarin", "massey"]]
+    return df.select_dtypes("number")
 ```
 
 ```python
@@ -883,19 +886,23 @@ from .teams import TEAMS, TEAM_INDEX, N_TEAMS
 from .game import expected_wins, HFA, SCALE
 
 def power_strength(power_df):
+    """Mean of centered source columns. Averages ALL numeric columns present,
+    so adding a new Elo/power source needs no code change."""
+    cols = list(power_df.columns)
     s = np.zeros(N_TEAMS)
-    for col in ["fpi", "sagarin", "massey"]:
+    for col in cols:
         col_arr = np.zeros(N_TEAMS)
         for code, val in power_df[col].items():
-            col_arr[TEAM_INDEX[code]] = val
+            col_arr[TEAM_INDEX[code]] = float(val)
         s += col_arr - col_arr.mean()
-    return s / 3.0
+    return s / len(cols)
 
 def team_sigma(power_df, base=5.0, disagreement_weight=1.0):
+    """Preseason SD per team = base + weight * SD across the team's source values."""
     sig = np.full(N_TEAMS, base)
     for code, row in power_df.iterrows():
-        sig[TEAM_INDEX[code]] = base + disagreement_weight * np.std(
-            [row["fpi"], row["sagarin"], row["massey"]])
+        sig[TEAM_INDEX[code]] = base + disagreement_weight * float(
+            np.std(row.to_numpy(dtype=float)))
     return sig
 
 def _team_games(home_idx, away_idx, n_teams):
@@ -1413,12 +1420,354 @@ git commit -m "feat: mock-draft harness (positional study + auto draft)"
 
 ---
 
+## Milestone E — Multi-source data ingestion pipeline (Tasks 12–13)
+
+Refreshable scrape/fetch layer that populates the cache CSVs the model reads. The model
+never changes when sources are added. Testable offline: all *logic* (name resolution,
+multi-source aggregation) is unit-tested with fixtures/fake sources; only the thin network
+fetchers in `registry.py` require a live smoke test (documented, not unit-tested).
+
+### Task 12: Team-name resolver + rating-table parsers
+
+**Files:**
+- Modify: `src/winspool/teams.py` (add `TEAM_NAMES`, `resolve`)
+- Create: `src/winspool/fetch/__init__.py`
+- Create: `src/winspool/fetch/parsers.py`
+- Create: `tests/fixtures/power_table.csv`
+- Test: `tests/test_parsers.py`
+
+**Interfaces:**
+- Produces:
+  - `teams.TEAM_NAMES: dict[str,str]` (code → full name).
+  - `teams.resolve(name: str) -> str | None` — map a code / nickname / full name (case-insensitive) to a canonical code; `None` if unresolvable.
+  - `parsers.parse_rating_table(rows: list[dict], name_key, value_key) -> dict[str,float]` — resolve each row's team, coerce value to float, silently skip unresolved rows and non-numeric values.
+  - `parsers.parse_csv_ratings(text: str, name_col, value_col) -> dict[str,float]` — parse CSV text then `parse_rating_table`.
+
+- [ ] **Step 1: Write fixture + failing tests**
+
+```csv
+# tests/fixtures/power_table.csv
+name,rating
+Kansas City Chiefs,6.0
+Buffalo Bills,6.5
+Not A Real Team,9.9
+```
+
+```python
+# tests/test_parsers.py
+from winspool.teams import resolve
+from winspool.fetch.parsers import parse_rating_table, parse_csv_ratings
+
+def test_resolve_code_nickname_and_full_name():
+    assert resolve("KC") == "KC"
+    assert resolve("chiefs") == "KC"
+    assert resolve("Kansas City Chiefs") == "KC"
+    assert resolve("  Buffalo Bills ") == "BUF"
+
+def test_resolve_unknown_is_none():
+    assert resolve("Not A Real Team") is None
+    assert resolve("") is None
+
+def test_parse_rating_table_resolves_and_skips_unknown():
+    rows = [{"name": "Chiefs", "r": "6.0"},
+            {"name": "Bogus", "r": "1.0"},
+            {"name": "Bills", "r": "not_a_number"}]
+    out = parse_rating_table(rows, "name", "r")
+    assert out == {"KC": 6.0}  # Bogus skipped (unresolved), Bills skipped (bad value)
+
+def test_parse_csv_ratings_from_text():
+    text = open("tests/fixtures/power_table.csv").read()
+    out = parse_csv_ratings(text, "name", "rating")
+    assert out == {"KC": 6.0, "BUF": 6.5}  # bogus row dropped
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run: `pytest tests/test_parsers.py -v`
+Expected: FAIL (`resolve`/`winspool.fetch` undefined).
+
+- [ ] **Step 3: Write the implementation**
+
+```python
+# src/winspool/teams.py  (append)
+TEAM_NAMES = {
+    "ARI": "Arizona Cardinals", "ATL": "Atlanta Falcons", "BAL": "Baltimore Ravens",
+    "BUF": "Buffalo Bills", "CAR": "Carolina Panthers", "CHI": "Chicago Bears",
+    "CIN": "Cincinnati Bengals", "CLE": "Cleveland Browns", "DAL": "Dallas Cowboys",
+    "DEN": "Denver Broncos", "DET": "Detroit Lions", "GB": "Green Bay Packers",
+    "HOU": "Houston Texans", "IND": "Indianapolis Colts", "JAX": "Jacksonville Jaguars",
+    "KC": "Kansas City Chiefs", "LA": "Los Angeles Rams", "LAC": "Los Angeles Chargers",
+    "LV": "Las Vegas Raiders", "MIA": "Miami Dolphins", "MIN": "Minnesota Vikings",
+    "NE": "New England Patriots", "NO": "New Orleans Saints", "NYG": "New York Giants",
+    "NYJ": "New York Jets", "PHI": "Philadelphia Eagles", "PIT": "Pittsburgh Steelers",
+    "SEA": "Seattle Seahawks", "SF": "San Francisco 49ers", "TB": "Tampa Bay Buccaneers",
+    "TEN": "Tennessee Titans", "WAS": "Washington Commanders",
+}
+
+_ALIASES = {}
+for _code, _full in TEAM_NAMES.items():
+    _ALIASES[_code.lower()] = _code
+    _ALIASES[_full.lower()] = _code
+    _ALIASES[_full.split()[-1].lower()] = _code  # nickname (last word)
+
+def resolve(name):
+    if not name:
+        return None
+    key = str(name).strip().lower()
+    if key.upper() in TEAM_INDEX:
+        return key.upper()
+    return _ALIASES.get(key)
+```
+
+```python
+# src/winspool/fetch/__init__.py
+# (empty; package marker)
+```
+
+```python
+# src/winspool/fetch/parsers.py
+import csv
+import io
+from ..teams import resolve
+
+def parse_rating_table(rows, name_key, value_key):
+    out = {}
+    for row in rows:
+        code = resolve(row.get(name_key, ""))
+        if code is None:
+            continue
+        try:
+            out[code] = float(row[value_key])
+        except (TypeError, ValueError, KeyError):
+            continue
+    return out
+
+def parse_csv_ratings(text, name_col, value_col):
+    reader = csv.DictReader(io.StringIO(text))
+    return parse_rating_table(list(reader), name_col, value_col)
+```
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+Run: `pytest tests/test_parsers.py -v` → Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/winspool/teams.py src/winspool/fetch/__init__.py src/winspool/fetch/parsers.py \
+        tests/fixtures/power_table.csv tests/test_parsers.py
+git commit -m "feat: team-name resolver and rating-table parsers"
+```
+
+---
+
+### Task 13: Fetch orchestration + refresh CLI
+
+**Files:**
+- Create: `src/winspool/fetch/pipeline.py`
+- Create: `src/winspool/fetch/registry.py`
+- Modify: `src/winspool/cli.py` (add `fetch` subcommand)
+- Test: `tests/test_fetch_pipeline.py`
+
+**Interfaces:**
+- Produces:
+  - `pipeline.Source(name: str, kind: str, fetch: Callable[[], dict[str,float]])` — `kind` is `"totals"` or `"power"`; `fetch()` returns `{team_code: value}`.
+  - `pipeline.refresh(sources, cache_dir, now="unknown") -> list[dict]` — fetches every source; writes `win_totals.csv` (mean across all `totals` sources, columns `team,win_total`), `power_ratings.csv` (one column per `power` source, plus `team`), and `sources_meta.json` (provenance list); returns the meta list. Raises `ValueError` on an unknown `kind`.
+  - `registry.http_json(url)`, `registry.http_text(url)` — stdlib `urllib` helpers (no `requests` dependency).
+  - `registry.default_sources(config: dict) -> list[Source]` — builds network Sources from a config dict (API keys / URLs). **Network; not unit-tested — verify with a live smoke test.**
+
+**Consumes:** `parsers.parse_csv_ratings`, `teams.resolve`.
+
+- [ ] **Step 1: Write the failing tests**
+
+```python
+# tests/test_fetch_pipeline.py
+import json
+import pandas as pd
+import pytest
+from winspool.fetch.pipeline import Source, refresh
+
+def test_refresh_aggregates_totals_and_columns_power(tmp_path):
+    srcs = [
+        Source("book_a", "totals", lambda: {"BUF": 11.0, "KC": 10.0}),
+        Source("book_b", "totals", lambda: {"BUF": 12.0, "KC": 10.0}),
+        Source("fpi", "power", lambda: {"BUF": 6.0, "KC": 5.0}),
+        Source("sagarin", "power", lambda: {"BUF": 6.5, "KC": 4.5}),
+    ]
+    meta = refresh(srcs, str(tmp_path), now="2026-08-20")
+
+    wt = pd.read_csv(tmp_path / "win_totals.csv").set_index("team")["win_total"]
+    assert wt["BUF"] == 11.5 and wt["KC"] == 10.0      # mean across books
+
+    pr = pd.read_csv(tmp_path / "power_ratings.csv").set_index("team")
+    assert set(pr.columns) == {"fpi", "sagarin"}       # one column per power source
+    assert pr.loc["BUF", "fpi"] == 6.0
+
+    assert {m["name"] for m in meta} == {"book_a", "book_b", "fpi", "sagarin"}
+    saved = json.load(open(tmp_path / "sources_meta.json"))
+    assert all(m["fetched_at"] == "2026-08-20" for m in saved)
+
+def test_refresh_rejects_unknown_kind(tmp_path):
+    with pytest.raises(ValueError):
+        refresh([Source("x", "weird", lambda: {"BUF": 1.0})], str(tmp_path))
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run: `pytest tests/test_fetch_pipeline.py -v`
+Expected: FAIL (`winspool.fetch.pipeline` undefined).
+
+- [ ] **Step 3: Write the implementation**
+
+```python
+# src/winspool/fetch/pipeline.py
+import json
+import os
+from dataclasses import dataclass
+from typing import Callable
+import pandas as pd
+
+@dataclass
+class Source:
+    name: str
+    kind: str  # "totals" | "power"
+    fetch: Callable[[], dict]
+
+def refresh(sources, cache_dir, now="unknown"):
+    os.makedirs(cache_dir, exist_ok=True)
+    totals_cols, power_cols, meta = {}, {}, []
+    for s in sources:
+        if s.kind not in ("totals", "power"):
+            raise ValueError(f"unknown source kind: {s.kind!r}")
+        data = s.fetch()
+        meta.append({"name": s.name, "kind": s.kind,
+                     "n_teams": len(data), "fetched_at": now})
+        (totals_cols if s.kind == "totals" else power_cols)[s.name] = data
+    if totals_cols:
+        win_total = pd.DataFrame(totals_cols).mean(axis=1)
+        (win_total.rename("win_total").rename_axis("team").reset_index()
+         .to_csv(os.path.join(cache_dir, "win_totals.csv"), index=False))
+    if power_cols:
+        (pd.DataFrame(power_cols).rename_axis("team").reset_index()
+         .to_csv(os.path.join(cache_dir, "power_ratings.csv"), index=False))
+    with open(os.path.join(cache_dir, "sources_meta.json"), "w") as f:
+        json.dump(meta, f, indent=2)
+    return meta
+```
+
+```python
+# src/winspool/fetch/registry.py
+"""Concrete network data sources.
+
+NOTE: These perform live HTTP and depend on external endpoints/schemas that
+change. They are NOT unit-tested. Before relying on them, run a smoke test:
+    python -c "from winspool.fetch.registry import default_sources; \
+               print([(s.name, len(s.fetch())) for s in default_sources(CONFIG)])"
+and confirm each source returns ~32 teams. Add a new source by writing a
+fetch function that returns {team_code: value} and appending a Source here."""
+import json
+import urllib.request
+from .pipeline import Source
+from .parsers import parse_csv_ratings, parse_rating_table
+
+def http_text(url, timeout=30):
+    with urllib.request.urlopen(url, timeout=timeout) as r:
+        return r.read().decode("utf-8", "replace")
+
+def http_json(url, timeout=30):
+    return json.loads(http_text(url, timeout))
+
+def _odds_api_totals(api_key):
+    """Season win totals from The Odds API. Returns {code: mean point across books}.
+    Endpoint/market key must be confirmed live; shape assumed:
+    [{"home_team": <name>, "bookmakers":[{"markets":[
+        {"key":"team_totals","outcomes":[{"name":<team>,"point":<wins>}]}]}]}]"""
+    url = (f"https://api.the-odds-api.com/v4/sports/americanfootball_nfl/odds"
+           f"?regions=us&markets=team_totals&apiKey={api_key}")
+    payload = http_json(url)
+    from collections import defaultdict
+    from ..teams import resolve
+    pts = defaultdict(list)
+    for event in payload:
+        for book in event.get("bookmakers", []):
+            for market in book.get("markets", []):
+                for o in market.get("outcomes", []):
+                    code = resolve(o.get("name", ""))
+                    if code is not None and "point" in o:
+                        pts[code].append(float(o["point"]))
+    return {code: sum(v) / len(v) for code, v in pts.items() if v}
+
+def _csv_power(url, name_col, value_col):
+    return parse_csv_ratings(http_text(url), name_col, value_col)
+
+def default_sources(config):
+    """Build sources from config, e.g.
+    {"odds_api_key": "...",
+     "power_csv": [{"name":"sagarin","url":"...","name_col":"team","value_col":"rating"}]}.
+    Missing/blank config entries are skipped so a partial config still runs."""
+    sources = []
+    if config.get("odds_api_key"):
+        key = config["odds_api_key"]
+        sources.append(Source("odds_api", "totals", lambda: _odds_api_totals(key)))
+    for spec in config.get("power_csv", []):
+        sources.append(Source(
+            spec["name"], "power",
+            lambda spec=spec: _csv_power(spec["url"], spec["name_col"], spec["value_col"])))
+    return sources
+```
+
+```python
+# src/winspool/cli.py  (add fetch subcommand)
+# Register in main():
+#     fet = sub.add_parser("fetch")
+#     fet.add_argument("--config", default="data/cache/sources.json")
+#     fet.add_argument("--cache", default="data/cache")
+# Handle it:
+#     if args.cmd == "fetch":
+#         import json, datetime
+#         from .fetch.registry import default_sources
+#         from .fetch.pipeline import refresh
+#         with open(args.config) as f:
+#             config = json.load(f)
+#         sources = default_sources(config)
+#         if not sources:
+#             print("No sources configured. See src/winspool/fetch/registry.py.")
+#             return 1
+#         now = datetime.datetime.now().isoformat(timespec="seconds")
+#         meta = refresh(sources, args.cache, now=now)
+#         for m in meta:
+#             print(f"{m['name']:<12}{m['kind']:<8}{m['n_teams']} teams  @ {m['fetched_at']}")
+#         return 0
+```
+
+(Implement the `fetch` branch in `cli.py` as real code mirroring the existing `recommend` branch.)
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+Run: `pytest tests/test_fetch_pipeline.py -v` → Expected: PASS.
+Then full suite: `pytest -v` → Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/winspool/fetch/pipeline.py src/winspool/fetch/registry.py \
+        src/winspool/cli.py tests/test_fetch_pipeline.py
+git commit -m "feat: multi-source data ingestion pipeline + fetch CLI"
+```
+
+**Milestone E note:** the ingestion *logic* is fully tested offline. The live fetchers in
+`registry.py` need a one-time network smoke test (command in the module docstring) to
+confirm each endpoint still returns ~32 teams before the pre-draft refresh.
+
+---
+
 ## Self-Review (spec coverage)
 
 - Draft order / fixed pattern → Task 5 `PICK_ORDER` (validated against the spec table).
 - Winner-take-all P(1st), ties as co-champion → Task 5 `pwin` (`>= rowmax`).
 - NFL tie games = 0 wins, small rate → Task 4 `tie_base` mechanism; Task 7 enables it (`tie_base=0.003`).
 - Data layer (schedule, Vegas, power) free/cached → Tasks 2, 7 + `scripts/fetch_data.py`.
+- Multi-source refreshable ingestion (more win/Elo sources, re-run before draft) → Tasks 12–13 (`winspool fetch`, extensible source registry, provenance in `sources_meta.json`).
 - Ratings blend market+power, `w≈0.65`, calibration back-out → Task 7.
 - Preseason strength draw, per-team σ → Task 4 (`sigma` draw), Task 7 (`team_sigma`).
 - Monte Carlo N×32 matrix, game-by-game, correlation emerges → Task 4; correlation surfaced Task 8.
