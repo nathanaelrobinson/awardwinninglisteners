@@ -196,6 +196,31 @@ def autosim(req: SimReq):
     }
 
 
+class AdvanceReq(BaseModel):
+    slot: int
+    taken: list[str] = []
+    opp_strategy: str = "market"
+    seed: int = 0
+
+
+@app.post("/api/advance")
+def advance(req: AdvanceReq):
+    """Auto-pick for the other seats (via opp_strategy) until it is my turn or
+    the draft is complete. Returns the extended taken list."""
+    _ensure_ready()
+    rng = np.random.default_rng(req.seed)
+    pol = _strategy_policy(req.opp_strategy)
+    st = _state_from(req.slot, req.taken)
+    while not st.done and st.board() and st.current_player != req.slot:
+        st.apply_pick(pol(st, st.current_player, rng))
+    return {
+        "taken": [TEAMS[t] for _, t in st.picks],
+        "current_player": st.current_player,
+        "my_turn": (not st.done) and st.current_player == req.slot,
+        "done": st.done,
+    }
+
+
 _DIST = REPO_ROOT / "web" / "dist"
 if _DIST.exists():
     app.mount("/", StaticFiles(directory=str(_DIST), html=True), name="static")

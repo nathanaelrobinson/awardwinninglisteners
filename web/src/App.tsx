@@ -1,7 +1,7 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import './App.css';
-import { fetchRecommend, fetchTeams } from './api';
-import type { Mode, RecommendResponse, TeamsResponse } from './types';
+import { advanceOpponents, fetchRecommend, fetchTeams } from './api';
+import type { RecommendResponse, TeamsResponse } from './types';
 import Header from './components/Header';
 import Board from './components/Board';
 import Rosters from './components/Rosters';
@@ -16,7 +16,11 @@ export default function App() {
   const [tab, setTab] = useState<Tab>('draft');
   const [slot, setSlot] = useState<number>(1);
   const [taken, setTaken] = useState<string[]>([]);
-  const [mode, setMode] = useState<Mode>('rollout');
+
+  // Practice-draft: let bots pick the other seats until it's my turn.
+  const [autoDraft, setAutoDraft] = useState<boolean>(true);
+  const [oppStrategy, setOppStrategy] = useState<string>('market');
+  const [advancing, setAdvancing] = useState<boolean>(false);
 
   const [teamsData, setTeamsData] = useState<TeamsResponse | null>(null);
   const [teamsError, setTeamsError] = useState<string | null>(null);
@@ -40,11 +44,42 @@ export default function App() {
     };
   }, []);
 
-  // Fetch recommendation whenever slot, taken, or mode changes.
+  const pickOrder = teamsData?.pick_order ?? [];
+  const nPicks = pickOrder.length;
+  const draftDone = nPicks > 0 && taken.length >= nPicks;
+  const currentPlayer = draftDone ? null : pickOrder[taken.length] ?? null;
+
+  // Auto-draft: whenever it's a bot's turn, have the backend pick for the other
+  // seats until it's my turn again (or the draft ends). The re-entry guard is a
+  // ref (not the `advancing` state) so toggling `advancing` doesn't re-run this
+  // effect and cancel its own in-flight request.
+  const advancingRef = useRef(false);
+  useEffect(() => {
+    if (!autoDraft || !teamsData || advancingRef.current) return;
+    if (currentPlayer === null || currentPlayer === slot) return;
+    let cancelled = false;
+    advancingRef.current = true;
+    setAdvancing(true);
+    advanceOpponents(slot, taken, oppStrategy, taken.length)
+      .then((r) => {
+        if (!cancelled) setTaken(r.taken);
+      })
+      .catch(() => {})
+      .finally(() => {
+        advancingRef.current = false;
+        if (!cancelled) setAdvancing(false);
+      });
+    return () => {
+      cancelled = true;
+      advancingRef.current = false;
+    };
+  }, [autoDraft, oppStrategy, slot, taken, teamsData, currentPlayer]);
+
+  // Fetch recommendation whenever slot or taken changes.
   useEffect(() => {
     let cancelled = false;
     setRecLoading(true);
-    fetchRecommend(slot, taken, mode)
+    fetchRecommend(slot, taken)
       .then((data) => {
         if (!cancelled) {
           setRecommend(data);
@@ -60,7 +95,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [slot, taken, mode]);
+  }, [slot, taken]);
 
   const takenBy = useMemo(() => {
     const map: Record<string, number> = {};
@@ -83,6 +118,8 @@ export default function App() {
 
   function handleDraft(code: string) {
     if (takenBy[code] !== undefined) return;
+    // In auto-draft mode, only accept my own pick (bots handle other seats).
+    if (autoDraft && currentPlayer !== slot) return;
     setTaken((prev) => [...prev, code]);
   }
 
@@ -120,8 +157,10 @@ export default function App() {
         onSlotChange={setSlot}
         nPlayers={teamsData.n_players}
         recommend={recommend}
-        mode={mode}
-        onModeChange={setMode}
+        autoDraft={autoDraft}
+        onAutoDraftChange={setAutoDraft}
+        oppStrategy={oppStrategy}
+        onOppStrategyChange={setOppStrategy}
         onReset={handleReset}
         onUndo={handleUndo}
         canUndo={taken.length > 0}
@@ -151,7 +190,11 @@ export default function App() {
       {tab === 'draft' ? (
         <main className="main-layout">
           <div className="main-left">
-            <Recommendations recommend={recommend} loading={recLoading} teamNames={teamNames} />
+            <Recommendations
+              recommend={recommend}
+              loading={recLoading || advancing}
+              teamNames={teamNames}
+            />
             <Rosters
               rosters={recommend?.rosters ?? {}}
               mySlot={slot}
@@ -165,7 +208,7 @@ export default function App() {
               takenBy={takenBy}
               mySlot={slot}
               onDraft={handleDraft}
-              disabled={false}
+              disabled={autoDraft && currentPlayer !== slot}
             />
           </div>
         </main>

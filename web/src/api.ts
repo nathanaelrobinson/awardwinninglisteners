@@ -25,6 +25,30 @@ export async function fetchRecommend(
   return res.json();
 }
 
+export interface AdvanceResponse {
+  taken: string[];
+  current_player: number;
+  my_turn: boolean;
+  done: boolean;
+}
+
+export async function advanceOpponents(
+  slot: number,
+  taken: string[],
+  oppStrategy: string,
+  seed: number
+): Promise<AdvanceResponse> {
+  const res = await fetch('/api/advance', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ slot, taken, opp_strategy: oppStrategy, seed }),
+  });
+  if (!res.ok) {
+    throw new Error(`POST /api/advance failed: ${res.status}`);
+  }
+  return res.json();
+}
+
 export async function fetchAutosim(req: AutosimRequest): Promise<AutosimResponse> {
   const res = await fetch('/api/autosim', {
     method: 'POST',

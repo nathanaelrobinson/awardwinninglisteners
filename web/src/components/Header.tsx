@@ -1,16 +1,20 @@
-import type { Mode, RecommendResponse } from '../types';
+import type { RecommendResponse } from '../types';
 
 interface Props {
   slot: number;
   onSlotChange: (slot: number) => void;
   nPlayers: number;
   recommend: RecommendResponse | null;
-  mode: Mode;
-  onModeChange: (mode: Mode) => void;
+  autoDraft: boolean;
+  onAutoDraftChange: (v: boolean) => void;
+  oppStrategy: string;
+  onOppStrategyChange: (s: string) => void;
   onReset: () => void;
   onUndo: () => void;
   canUndo: boolean;
 }
+
+const OPP_STRATEGIES = ['market', 'power', 'random'];
 
 function pct(x: number | null | undefined): string {
   if (x === null || x === undefined) return '—';
@@ -22,8 +26,10 @@ export default function Header({
   onSlotChange,
   nPlayers,
   recommend,
-  mode,
-  onModeChange,
+  autoDraft,
+  onAutoDraftChange,
+  oppStrategy,
+  onOppStrategyChange,
   onReset,
   onUndo,
   canUndo,
@@ -70,14 +76,28 @@ export default function Header({
         </div>
 
         <div className="header-actions">
-          <label className="rollout-toggle" title="Quick uses a fast naive heuristic instead of the full opponent-aware rollout">
+          <label className="auto-toggle" title="Bots draft the other seats until it's your turn">
             <input
               type="checkbox"
-              checked={mode === 'naive'}
-              onChange={(e) => onModeChange(e.target.checked ? 'naive' : 'rollout')}
+              checked={autoDraft}
+              onChange={(e) => onAutoDraftChange(e.target.checked)}
             />
-            Quick mode
+            Auto-draft opponents
           </label>
+          {autoDraft && (
+            <select
+              className="opp-strategy"
+              value={oppStrategy}
+              onChange={(e) => onOppStrategyChange(e.target.value)}
+              title="How the bot opponents draft"
+            >
+              {OPP_STRATEGIES.map((s) => (
+                <option key={s} value={s}>
+                  {s}
+                </option>
+              ))}
+            </select>
+          )}
           <button className="btn" onClick={onUndo} disabled={!canUndo}>
             Undo
           </button>
