@@ -3,13 +3,14 @@ import type { RecommendResponse } from '../types';
 interface Props {
   recommend: RecommendResponse | null;
   loading: boolean;
+  teamNames: Record<string, string>;
 }
 
 function pct(x: number): string {
   return `${(x * 100).toFixed(1)}%`;
 }
 
-export default function Recommendations({ recommend, loading }: Props) {
+export default function Recommendations({ recommend, loading, teamNames }: Props) {
   if (!recommend) {
     return (
       <div className="recommendations panel">
@@ -28,20 +29,30 @@ export default function Recommendations({ recommend, loading }: Props) {
     );
   }
 
-  if (!recommend.my_turn) {
-    return (
-      <div className="recommendations panel">
-        <h3>Recommendations</h3>
-        <p>Waiting — player {recommend.current_player} is on the clock.</p>
-      </div>
-    );
-  }
+  const title = recommend.my_turn
+    ? '★ ON THE CLOCK — your pick'
+    : `Targets — your next pick in ${recommend.my_next_in}`;
 
-  const hasSurvival = recommend.recommendations.some((r) => r.survival !== undefined);
+  const top = recommend.recommendations[0];
 
   return (
-    <div className="recommendations panel">
-      <h3>Recommendations {loading && <span className="loading-tag">updating…</span>}</h3>
+    <div className={`recommendations panel ${recommend.my_turn ? 'on-the-clock' : ''}`}>
+      <h3>
+        {title} {loading && <span className="loading-tag">updating…</span>}
+      </h3>
+
+      {top && (
+        <div className="top-pick">
+          <div className="top-pick-code">{top.code}</div>
+          <div className="top-pick-name">{teamNames[top.code] ?? ''}</div>
+          <div className="top-pick-stats">
+            <span>P(win) {pct(top.pwin)}</span>
+            <span>&Delta; wins {top.delta_wins.toFixed(1)}</span>
+            {top.survival !== undefined && <span>Survival {pct(top.survival)}</span>}
+          </div>
+        </div>
+      )}
+
       <table className="rec-table">
         <thead>
           <tr>
@@ -49,7 +60,7 @@ export default function Recommendations({ recommend, loading }: Props) {
             <th>Team</th>
             <th>P(win)</th>
             <th>&Delta; wins</th>
-            {hasSurvival && <th>Survival</th>}
+            <th>Survival</th>
           </tr>
         </thead>
         <tbody>
@@ -59,7 +70,7 @@ export default function Recommendations({ recommend, loading }: Props) {
               <td className="rec-code">{r.code}</td>
               <td>{pct(r.pwin)}</td>
               <td>{r.delta_wins.toFixed(1)}</td>
-              {hasSurvival && <td>{r.survival !== undefined ? pct(r.survival) : '—'}</td>}
+              <td>{r.survival !== undefined ? pct(r.survival) : '—'}</td>
             </tr>
           ))}
         </tbody>

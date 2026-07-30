@@ -353,6 +353,41 @@
   margin-top: 4px;
 }
 
+/* Top pick (focal best-pick card) */
+.top-pick {
+  margin: 10px 0 14px;
+  padding: 12px 14px;
+  border: 1px solid #7c5cff55;
+  border-radius: 8px;
+  background: #7c5cff14;
+}
+.top-pick-code {
+  font-size: 30px;
+  font-weight: 700;
+  line-height: 1.1;
+}
+.top-pick-name {
+  color: #9aa4b2;
+  font-size: 13px;
+  margin-bottom: 6px;
+}
+.top-pick-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+  font-size: 13px;
+  color: #cdd6e2;
+}
+.recommendations.on-the-clock {
+  border-color: #7c5cff;
+}
+.loading-tag {
+  font-size: 11px;
+  font-weight: 400;
+  color: #9aa4b2;
+  margin-left: 6px;
+}
+
 @media (max-width: 900px) {
   .main-layout {
     flex-direction: column;

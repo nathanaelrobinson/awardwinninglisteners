@@ -70,13 +70,13 @@ export default function Header({
         </div>
 
         <div className="header-actions">
-          <label className="rollout-toggle">
+          <label className="rollout-toggle" title="Quick uses a fast naive heuristic instead of the full opponent-aware rollout">
             <input
               type="checkbox"
-              checked={mode === 'rollout'}
-              onChange={(e) => onModeChange(e.target.checked ? 'rollout' : 'naive')}
+              checked={mode === 'naive'}
+              onChange={(e) => onModeChange(e.target.checked ? 'naive' : 'rollout')}
             />
-            Deep analysis (rollout)
+            Quick mode
           </label>
           <button className="btn" onClick={onUndo} disabled={!canUndo}>
             Undo

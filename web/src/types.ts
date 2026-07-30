@@ -34,3 +34,25 @@ export interface RecommendResponse {
 }
 
 export type Mode = 'naive' | 'rollout';
+
+export type MyStrategy = 'optimal' | 'power' | 'market' | 'random';
+export type OppStrategy = 'market' | 'power' | 'random';
+
+export interface AutosimRequest {
+  slot: number;
+  my_strategy: MyStrategy;
+  opp_strategy: OppStrategy;
+  n_sims?: number;
+  seed?: number;
+}
+
+export interface AutosimResponse {
+  slot: number;
+  my_strategy: MyStrategy;
+  opp_strategy: OppStrategy;
+  n_sims: number;
+  win_pct: number;
+  p10: number;
+  p90: number;
+  fair_share: number;
+}

@@ -6,13 +6,17 @@ import Header from './components/Header';
 import Board from './components/Board';
 import Rosters from './components/Rosters';
 import Recommendations from './components/Recommendations';
+import AutosimView from './components/AutosimView';
 
 const PICKS_PER_PLAYER = 6;
 
+type Tab = 'draft' | 'autosim';
+
 export default function App() {
+  const [tab, setTab] = useState<Tab>('draft');
   const [slot, setSlot] = useState<number>(1);
   const [taken, setTaken] = useState<string[]>([]);
-  const [mode, setMode] = useState<Mode>('naive');
+  const [mode, setMode] = useState<Mode>('rollout');
 
   const [teamsData, setTeamsData] = useState<TeamsResponse | null>(null);
   const [teamsError, setTeamsError] = useState<string | null>(null);
@@ -68,6 +72,15 @@ export default function App() {
     return map;
   }, [taken, teamsData]);
 
+  const teamNames = useMemo(() => {
+    const map: Record<string, string> = {};
+    if (!teamsData) return map;
+    teamsData.teams.forEach((t) => {
+      map[t.code] = t.name;
+    });
+    return map;
+  }, [teamsData]);
+
   function handleDraft(code: string) {
     if (takenBy[code] !== undefined) return;
     setTaken((prev) => [...prev, code]);
@@ -120,26 +133,47 @@ export default function App() {
         </div>
       )}
 
-      <main className="main-layout">
-        <div className="main-left">
-          <Recommendations recommend={recommend} loading={recLoading} />
-          <Rosters
-            rosters={recommend?.rosters ?? {}}
-            mySlot={slot}
-            nPlayers={teamsData.n_players}
-            picksPerPlayer={PICKS_PER_PLAYER}
-          />
-        </div>
-        <div className="main-right">
-          <Board
-            teams={teamsData.teams}
-            takenBy={takenBy}
-            mySlot={slot}
-            onDraft={handleDraft}
-            disabled={recLoading}
-          />
-        </div>
-      </main>
+      <div className="tab-bar">
+        <button
+          className={`tab-btn ${tab === 'draft' ? 'active' : ''}`}
+          onClick={() => setTab('draft')}
+        >
+          Draft
+        </button>
+        <button
+          className={`tab-btn ${tab === 'autosim' ? 'active' : ''}`}
+          onClick={() => setTab('autosim')}
+        >
+          Auto-sim
+        </button>
+      </div>
+
+      {tab === 'draft' ? (
+        <main className="main-layout">
+          <div className="main-left">
+            <Recommendations recommend={recommend} loading={recLoading} teamNames={teamNames} />
+            <Rosters
+              rosters={recommend?.rosters ?? {}}
+              mySlot={slot}
+              nPlayers={teamsData.n_players}
+              picksPerPlayer={PICKS_PER_PLAYER}
+            />
+          </div>
+          <div className="main-right">
+            <Board
+              teams={teamsData.teams}
+              takenBy={takenBy}
+              mySlot={slot}
+              onDraft={handleDraft}
+              disabled={false}
+            />
+          </div>
+        </main>
+      ) : (
+        <main className="main-layout main-layout-single">
+          <AutosimView slot={slot} />
+        </main>
+      )}
     </div>
   );
 }
