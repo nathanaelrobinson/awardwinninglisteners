@@ -22,7 +22,26 @@ def main(argv=None):
     rec.add_argument("--totals", default="data/cache/win_totals.csv")
     rec.add_argument("--n", type=int, default=20000)
     rec.add_argument("--seed", type=int, default=0)
+
+    ana = sub.add_parser("analyze")
+    ana.add_argument("--schedule", default="data/cache/schedule_2026.csv")
+    ana.add_argument("--totals", default="data/cache/win_totals.csv")
+    ana.add_argument("--power", default=None)
+    ana.add_argument("--n", type=int, default=20000)
+    ana.add_argument("--seed", type=int, default=0)
+
     args = parser.parse_args(argv)
+
+    if args.cmd == "analyze":
+        from .analysis import team_attributes
+        wins, _ = build_wins(args.schedule, args.totals, args.n, args.seed,
+                              power_path=args.power)
+        attrs = sorted(team_attributes(wins), key=lambda a: a["mean"], reverse=True)
+        print(f"{'team':<5}{'mean':>7}{'sd':>7}{'ceil':>7}{'floor':>7}")
+        for a in attrs:
+            print(f"{TEAMS[a['team']]:<5}{a['mean']:>7.2f}{a['sd']:>7.2f}"
+                  f"{a['ceiling']:>7.3f}{a['floor']:>7.3f}")
+        return 0
 
     if args.cmd == "recommend":
         wins, _ = build_wins(args.schedule, args.totals, args.n, args.seed)
