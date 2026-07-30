@@ -4,6 +4,7 @@ from .teams import TEAMS, TEAM_INDEX
 from .draft import DraftState, PICK_ORDER
 from .recommend import build_wins, naive_recommend, rollout_recommend
 from .opponents import entropy, greedy_self
+from .mock import positional_study
 
 def _apply_taken(state, taken):
     """taken: comma-separated team codes in pick order."""
@@ -33,6 +34,15 @@ def main(argv=None):
     ana.add_argument("--power", default=None)
     ana.add_argument("--n", type=int, default=20000)
     ana.add_argument("--seed", type=int, default=0)
+
+    pos = sub.add_parser("positional")
+    pos.add_argument("--schedule", default="data/cache/schedule_2026.csv")
+    pos.add_argument("--totals", default="data/cache/win_totals.csv")
+    pos.add_argument("--power", default=None)
+    pos.add_argument("--n", type=int, default=20000)
+    pos.add_argument("--seed", type=int, default=0)
+    pos.add_argument("--k", type=int, default=200)
+    pos.add_argument("--temp", type=float, default=8.0)
 
     args = parser.parse_args(argv)
 
@@ -68,5 +78,15 @@ def main(argv=None):
             print(f"{'team':<5}{'pwin':>8}{'dWins':>8}")
             for r in recs[:15]:
                 print(f"{TEAMS[r['team']]:<5}{r['pwin']:>8.3f}{r['delta_wins']:>8.2f}")
+        return 0
+
+    if args.cmd == "positional":
+        wins, strengths = build_wins(args.schedule, args.totals, args.n, args.seed,
+                                      power_path=args.power)
+        res = positional_study(wins, greedy_self(wins), entropy(strengths, args.temp),
+                                k=args.k, rng=np.random.default_rng(args.seed))
+        print(f"{'slot':<6}{'pwin':>8}")
+        for slot, p in sorted(res.items(), key=lambda kv: kv[1], reverse=True):
+            print(f"{slot:<6}{p:>8.3f}")
         return 0
     return 1
