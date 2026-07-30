@@ -733,7 +733,10 @@ def naive_recommend(state, wins):
         added = player_totals(rosters, wins)[:, me - 1].mean() - base_total
         rosters[me].pop()
         out.append({"team": t, "pwin": score, "delta_wins": added})
-    out.sort(key=lambda r: r["pwin"], reverse=True)
+    # Rank by P(win), tie-break by marginal wins. Pre-draft, P(win) is
+    # degenerate (all candidates tie at 1.0 when only my roster has picks),
+    # so delta_wins is what differentiates until opponents have teams.
+    out.sort(key=lambda r: (r["pwin"], r["delta_wins"]), reverse=True)
     return out
 ```
 
