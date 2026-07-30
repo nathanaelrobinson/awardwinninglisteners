@@ -47,11 +47,12 @@ def playout(state, wins, self_policy, opp_policy, rng):
         st.apply_pick(pol(st, player, rng))
     return st
 
-def rollout_recommend(state, wins, self_policy, opp_policy, *, n_rollouts=300, rng):
+def survival_probs(state, wins, self_policy, opp_policy, *, n_rollouts, rng):
+    """Fraction of rollouts in which each available team is still on the board at
+    my next pick (opponents pick via opp_policy in between). 1.0 for every team
+    when it is already my turn."""
     me = state.my_player
     board = state.board()
-
-    # survival: how often each team lasts to my next pick if I DON'T take it now
     until = state.picks_until_my_next()
     survive = {t: 0 for t in board}
     for _ in range(n_rollouts):
@@ -66,9 +67,33 @@ def rollout_recommend(state, wins, self_policy, opp_policy, *, n_rollouts=300, r
         for t in board:
             if t in still_up:
                 survive[t] += 1
+    return {t: survive[t] / n_rollouts for t in board}
 
+
+def pwin_after_playout(state, wins, self_policy, opp_policy, *, n_rollouts, rng):
+    """Honest P(I win) given the board so far: play the rest of the draft out
+    (me via self_policy, opponents via opp_policy) and average my P(win)."""
+    me = state.my_player
+    scores = [pwin(playout(state, wins, self_policy, opp_policy, rng).rosters(), wins, me)
+              for _ in range(n_rollouts)]
+    return float(np.mean(scores)) if scores else None
+
+
+def rollout_recommend(state, wins, self_policy, opp_policy, *, n_rollouts=300, rng,
+                      candidates=None):
+    """Rank draft picks by my resulting P(win). Must be my turn (guarded).
+    `candidates` limits which available teams are evaluated (e.g. a naive
+    prescreen of the top N) to keep it fast; defaults to the whole board."""
+    me = state.my_player
+    if state.current_player != me:
+        raise ValueError("rollout_recommend requires it to be my turn "
+                         f"(on the clock: player {state.current_player}, me: {me})")
+    board = state.board()
+    cand = [t for t in (candidates if candidates is not None else board) if t in board]
+    survive = survival_probs(state, wins, self_policy, opp_policy,
+                             n_rollouts=n_rollouts, rng=rng)
     out = []
-    for t in board:
+    for t in cand:
         scores = []
         for _ in range(n_rollouts):
             st = state.copy()
@@ -76,6 +101,6 @@ def rollout_recommend(state, wins, self_policy, opp_policy, *, n_rollouts=300, r
             final = playout(st, wins, self_policy, opp_policy, rng)
             scores.append(pwin(final.rosters(), wins, me))
         out.append({"team": t, "pwin": float(np.mean(scores)),
-                    "survival": survive[t] / n_rollouts})
+                    "survival": survive.get(t, 1.0)})
     out.sort(key=lambda r: r["pwin"], reverse=True)
     return out

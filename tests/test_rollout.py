@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 from winspool.draft import DraftState
 from winspool.opponents import chalk_power, entropy, greedy_self
 from winspool.recommend import playout, rollout_recommend
@@ -28,3 +29,21 @@ def test_rollout_returns_sorted_survival_bounded():
     assert {r["team"] for r in recs} == set(range(6))
     assert 0.0 <= recs[0]["survival"] <= 1.0
     assert recs == sorted(recs, key=lambda r: r["pwin"], reverse=True)
+
+def test_rollout_candidates_limits_evaluation():
+    wins = _wins()
+    st = DraftState(my_player=1, n_teams=6)
+    recs = rollout_recommend(st, wins, greedy_self(wins),
+                             entropy(np.arange(6)[::-1], temperature=8.0),
+                             n_rollouts=20, rng=np.random.default_rng(3),
+                             candidates=[0, 2])
+    assert {r["team"] for r in recs} == {0, 2}  # only the given candidates evaluated
+
+def test_rollout_requires_my_turn():
+    wins = _wins()
+    st = DraftState(my_player=1, n_teams=6)
+    st.apply_pick(0)  # player 1 (me) picks -> now it's player 2's turn
+    with pytest.raises(ValueError):
+        rollout_recommend(st, wins, greedy_self(wins),
+                          entropy(np.arange(6)[::-1], temperature=8.0),
+                          n_rollouts=5, rng=np.random.default_rng(4))

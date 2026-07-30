@@ -1,10 +1,10 @@
-"""FastAPI backend for the live-draft UI.
+"""FastAPI backend for the live-draft UI + auto-sim.
 
-Precomputes the season sim once at startup, then serves team metadata and
-draft-state-aware pick recommendations. The React front end (web/dist) is
-mounted at / when it has been built.
+Precomputes the season sim once at startup, then serves team metadata,
+draft-state-aware pick recommendations, an honest P(I win), and Monte-Carlo
+auto-draft simulations. The built React front end (web/dist) mounts at /.
 
-Run: uv run winspool-serve   (or: uv run uvicorn winspool.server:app)
+Run: uv run winspool-serve
 """
 import argparse
 from pathlib import Path
@@ -18,18 +18,22 @@ from pydantic import BaseModel
 from .analysis import team_attributes
 from .data import load_win_totals
 from .draft import DraftState, PICK_ORDER, pwin
-from .opponents import entropy, greedy_self
-from .recommend import build_wins, naive_recommend, rollout_recommend
+from .mock import auto_draft
+from .opponents import chalk_power, entropy, greedy_self
+from .recommend import (build_wins, naive_recommend, pwin_after_playout,
+                        rollout_recommend, survival_probs)
 from .teams import DIVISION, N_PLAYERS, TEAM_INDEX, TEAM_NAMES, TEAMS
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CACHE = REPO_ROOT / "data" / "cache"
 SCHEDULE = CACHE / "schedule_2026.csv"
 TOTALS = CACHE / "win_totals.csv"
+POWER = CACHE / "power_ratings.csv"
 
-# How many simulated seasons back the served matrix. Kept modest so startup is
-# quick and naive recommendations are instant; rollout is opt-in per request.
-N_SEASONS = 8000
+N_SEASONS = 8000     # served matrix depth
+FAST_ROWS = 5000     # subsample used for the per-request rollouts (speed)
+TOP_K = 14           # rollout only the top-K naive candidates
+ROLLOUTS = 40        # rollouts per request
 
 app = FastAPI(title="winspool")
 app.add_middleware(
@@ -39,9 +43,6 @@ app.add_middleware(
 _STATE: dict = {}
 
 
-POWER = CACHE / "power_ratings.csv"
-
-
 def _ensure_ready():
     if _STATE:
         return
@@ -49,9 +50,31 @@ def _ensure_ready():
     wins, strengths = build_wins(str(SCHEDULE), str(TOTALS), n_seasons=N_SEASONS,
                                  seed=0, power_path=power_path)
     _STATE["wins"] = wins
+    _STATE["wins_fast"] = wins[:FAST_ROWS]
     _STATE["strengths"] = strengths
-    _STATE["attrs"] = {a["team"]: a for a in team_attributes(wins)}
     _STATE["totals"] = load_win_totals(str(TOTALS))
+    _STATE["attrs"] = {a["team"]: a for a in team_attributes(wins)}
+
+
+def _state_from(slot, taken):
+    st = DraftState(my_player=slot)
+    for code in taken:
+        st.apply_pick(TEAM_INDEX[code.strip().upper()])
+    return st
+
+
+def _strategy_policy(name):
+    """Map a strategy name to an opponent/self pick policy."""
+    strengths, totals, wins = _STATE["strengths"], _STATE["totals"], _STATE["wins_fast"]
+    if name == "market":       # always take the highest posted win total
+        return chalk_power(totals)
+    if name == "power":        # highest blended power rating
+        return chalk_power(strengths)
+    if name == "random":       # chaotic, mild lean to good teams
+        return entropy(strengths, temperature=20.0)
+    if name == "optimal":      # greedy by marginal P(win)
+        return greedy_self(wins)
+    raise ValueError(f"unknown strategy: {name}")
 
 
 @app.get("/api/teams")
@@ -62,15 +85,10 @@ def teams():
     for i, code in enumerate(TEAMS):
         a = attrs[i]
         out.append({
-            "code": code,
-            "name": TEAM_NAMES[code],
-            "division": DIVISION[code],
-            "win_total": round(float(totals[i]), 1),
-            "strength": round(float(strengths[i]), 2),
-            "mean": round(a["mean"], 2),
-            "sd": round(a["sd"], 2),
-            "ceiling": round(a["ceiling"], 3),
-            "floor": round(a["floor"], 3),
+            "code": code, "name": TEAM_NAMES[code], "division": DIVISION[code],
+            "win_total": round(float(totals[i]), 1), "strength": round(float(strengths[i]), 2),
+            "mean": round(a["mean"], 2), "sd": round(a["sd"], 2),
+            "ceiling": round(a["ceiling"], 3), "floor": round(a["floor"], 3),
         })
     return {"teams": out, "pick_order": PICK_ORDER, "n_players": N_PLAYERS}
 
@@ -78,42 +96,53 @@ def teams():
 class RecReq(BaseModel):
     slot: int
     taken: list[str] = []
-    mode: str = "naive"        # "naive" (instant) | "rollout" (opponent-aware)
-    rollouts: int = 60
-    temp: float = 8.0
+    mode: str = "rollout"   # "rollout" (opponent-aware) | "naive" (instant)
     seed: int = 0
 
 
 @app.post("/api/recommend")
 def recommend(req: RecReq):
     _ensure_ready()
-    wins, strengths = _STATE["wins"], _STATE["strengths"]
-    state = DraftState(my_player=req.slot)
-    for code in req.taken:
-        state.apply_pick(TEAM_INDEX[code.strip().upper()])
+    wins, wins_fast, strengths = _STATE["wins"], _STATE["wins_fast"], _STATE["strengths"]
+    state = _state_from(req.slot, req.taken)
+    rng = np.random.default_rng(req.seed)
+    # Symmetric fill: model every remaining pick (mine and opponents') with the
+    # same high-entropy policy, so P(win) reflects the edge from picks already
+    # made rather than a rigged self-advantage. Candidate ranking still works
+    # because only the tentatively-taken team differs between candidates.
+    opp = entropy(strengths, temperature=8.0)
+    self_fast = opp
 
     rosters = state.rosters()
-    has_picks = any(rosters.values())
-    p_win_me = round(pwin(rosters, wins, req.slot), 3) if has_picks else None
+    my_turn = (not state.done) and state.current_player == req.slot
+
+    # Honest P(I win): play the remaining draft out and average my P(win).
+    p_win_me = None if state.done else round(
+        pwin_after_playout(state, wins_fast, self_fast, opp,
+                           n_rollouts=ROLLOUTS, rng=rng), 3)
+
+    naive = naive_recommend(state, wins)
+    naive_by = {r["team"]: r for r in naive}
+    surv = ({} if state.done else
+            survival_probs(state, wins_fast, self_fast, opp, n_rollouts=ROLLOUTS, rng=rng))
 
     recs = []
-    my_turn = (not state.done) and state.current_player == req.slot
-    if my_turn:
-        if req.mode == "rollout":
-            rng = np.random.default_rng(req.seed)
-            recs = rollout_recommend(
-                state, wins, greedy_self(wins), entropy(strengths, req.temp),
-                n_rollouts=req.rollouts, rng=rng,
-            )
+    if not state.done:
+        if my_turn and req.mode == "rollout":
+            top = [r["team"] for r in naive[:TOP_K]]
+            roll = rollout_recommend(state, wins_fast, self_fast, opp,
+                                     n_rollouts=ROLLOUTS, rng=rng, candidates=top)
+            recs = [{"code": TEAMS[r["team"]], "pwin": round(r["pwin"], 4),
+                     "survival": round(surv.get(r["team"], 1.0), 3),
+                     "delta_wins": round(naive_by[r["team"]]["delta_wins"], 2)}
+                    for r in roll]
         else:
-            recs = naive_recommend(state, wins)
-
-    def as_code(rec):
-        out = {"code": TEAMS[rec["team"]]}
-        for k, v in rec.items():
-            if k != "team":
-                out[k] = round(float(v), 4)
-        return out
+            # Targets watchlist (also the "quick"/naive view): rank by value,
+            # annotate how likely each is to still be there at my next pick.
+            recs = [{"code": TEAMS[r["team"]], "pwin": round(r["pwin"], 4),
+                     "survival": round(surv.get(r["team"], 1.0), 3),
+                     "delta_wins": round(r["delta_wins"], 2)}
+                    for r in naive[:20]]
 
     return {
         "current_player": state.current_player,
@@ -122,11 +151,44 @@ def recommend(req: RecReq):
         "done": state.done,
         "p_win_me": p_win_me,
         "rosters": {p: [TEAMS[t] for t in ts] for p, ts in rosters.items()},
-        "recommendations": [as_code(r) for r in recs],
+        "recommendations": recs,
     }
 
 
-# Serve the built front end at / when present (single-command experience).
+class SimReq(BaseModel):
+    slot: int
+    my_strategy: str = "optimal"
+    opp_strategy: str = "market"
+    n_sims: int = 150
+    seed: int = 0
+
+
+@app.post("/api/autosim")
+def autosim(req: SimReq):
+    _ensure_ready()
+    wins_fast = _STATE["wins_fast"]
+    rng = np.random.default_rng(req.seed)
+    my_pol = _strategy_policy(req.my_strategy)
+    opp_pol = _strategy_policy(req.opp_strategy)
+    policies = {p: opp_pol for p in range(1, N_PLAYERS + 1)}
+    policies[req.slot] = my_pol
+
+    pwins = []
+    for _ in range(req.n_sims):
+        final = auto_draft(wins_fast, policies, my_player=req.slot, rng=rng)
+        pwins.append(pwin(final.rosters(), wins_fast, req.slot))
+    arr = np.array(pwins)
+    # "win share" against a field of 5 = mean P(win); 0.20 would be neutral.
+    return {
+        "slot": req.slot, "my_strategy": req.my_strategy, "opp_strategy": req.opp_strategy,
+        "n_sims": req.n_sims,
+        "win_pct": round(float(arr.mean()) * 100, 1),
+        "p10": round(float(np.percentile(arr, 10)) * 100, 1),
+        "p90": round(float(np.percentile(arr, 90)) * 100, 1),
+        "fair_share": round(100 / N_PLAYERS, 1),
+    }
+
+
 _DIST = REPO_ROOT / "web" / "dist"
 if _DIST.exists():
     app.mount("/", StaticFiles(directory=str(_DIST), html=True), name="static")
