@@ -183,10 +183,16 @@ def recommend(req: RecReq):
             top = [r["team"] for r in naive[:TOP_K]]
             roll = rollout_recommend(state, wins_fast, self_fast, opp,
                                      n_rollouts=ROLLOUTS, rng=rng, candidates=top)
+            attrs = _STATE["attrs"]
             recs = [{"code": TEAMS[r["team"]], "pwin": round(r["pwin"], 4),
                      "survival": round(surv.get(r["team"], 1.0), 3),
-                     "delta_wins": round(naive_by[r["team"]]["delta_wins"], 2)}
+                     "delta_wins": round(naive_by[r["team"]]["delta_wins"], 2),
+                     "ceiling": round(attrs[r["team"]]["ceiling"], 3)}
                     for r in roll]
+            # Winner-take-all tie-break: among candidates whose P(win) are within
+            # ~1 pt (i.e. inside the estimator's noise), prefer the higher ceiling
+            # (positive variance) — you have to spike to win, so take the upside.
+            recs.sort(key=lambda r: (round(r["pwin"], 2), r["ceiling"]), reverse=True)
         else:
             # Targets watchlist (also the "quick"/naive view): rank by value,
             # annotate how likely each is to still be there at my next pick.

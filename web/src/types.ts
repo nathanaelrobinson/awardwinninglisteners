@@ -21,6 +21,7 @@ export interface Recommendation {
   pwin: number;
   delta_wins: number;
   survival?: number;
+  ceiling?: number;
 }
 
 export interface ForecastPick {

@@ -48,6 +48,7 @@ export default function Recommendations({ recommend, loading, teamNames }: Props
           <div className="top-pick-stats">
             {recommend.my_turn && <span>P(win) {pct(top.pwin)}</span>}
             <span>&Delta; wins {top.delta_wins.toFixed(1)}</span>
+            {top.ceiling !== undefined && <span>Ceiling {pct(top.ceiling)}</span>}
             {top.survival !== undefined && <span>Survival {pct(top.survival)}</span>}
           </div>
         </div>
@@ -60,6 +61,7 @@ export default function Recommendations({ recommend, loading, teamNames }: Props
             <th>Team</th>
             {recommend.my_turn && <th>P(win)</th>}
             <th>&Delta; wins</th>
+            {recommend.my_turn && <th>Ceil</th>}
             <th>Survival</th>
           </tr>
         </thead>
@@ -70,6 +72,7 @@ export default function Recommendations({ recommend, loading, teamNames }: Props
               <td className="rec-code">{r.code}</td>
               {recommend.my_turn && <td>{pct(r.pwin)}</td>}
               <td>{r.delta_wins.toFixed(1)}</td>
+              {recommend.my_turn && <td>{r.ceiling !== undefined ? pct(r.ceiling) : '—'}</td>}
               <td>{r.survival !== undefined ? pct(r.survival) : '—'}</td>
             </tr>
           ))}
