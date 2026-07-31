@@ -116,13 +116,20 @@ def rollout_recommend(state, wins, self_policy, opp_policy, *, n_rollouts=300, r
     cand = [t for t in (candidates if candidates is not None else board) if t in board]
     survive = survival_probs(state, wins, self_policy, opp_policy,
                              n_rollouts=n_rollouts, rng=rng)
+    # Common random numbers: evaluate EVERY candidate against the same set of
+    # random draft continuations (re-seed a fresh generator per candidate from
+    # one base seed). The only thing that differs between candidates is the team
+    # they take now, so the pwin comparison is paired — far lower variance than
+    # independent draws, which otherwise let a worse team randomly rank #1.
+    base = int(rng.integers(2**63))
     out = []
     for t in cand:
+        crng = np.random.default_rng(base)
         scores = []
         for _ in range(n_rollouts):
             st = state.copy()
             st.apply_pick(t)  # take candidate now (as me)
-            final = playout(st, wins, self_policy, opp_policy, rng)
+            final = playout(st, wins, self_policy, opp_policy, crng)
             scores.append(pwin(final.rosters(), wins, me))
         out.append({"team": t, "pwin": float(np.mean(scores)),
                     "survival": survive.get(t, 1.0)})

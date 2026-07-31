@@ -33,7 +33,7 @@ POWER = CACHE / "power_ratings.csv"
 N_SEASONS = 8000     # served matrix depth
 FAST_ROWS = 5000     # subsample used for the per-request rollouts (speed)
 TOP_K = 14           # rollout only the top-K naive candidates
-ROLLOUTS = 40        # rollouts per request
+ROLLOUTS = 150       # rollouts per request (with common-random-numbers below)
 
 app = FastAPI(title="winspool")
 app.add_middleware(
