@@ -6,13 +6,19 @@ interface Props {
   mySlot: number;
   onDraft: (code: string) => void;
   disabled: boolean;
+  survival?: Record<string, number>; // code -> P(still available at my next pick)
 }
 
 function pct(x: number): string {
   return `${(x * 100).toFixed(0)}%`;
 }
 
-export default function Board({ teams, takenBy, mySlot, onDraft, disabled }: Props) {
+// green (likely yours) -> red (likely gone)
+function survColor(s: number): string {
+  return `hsl(${Math.round(s * 120)}, 65%, 60%)`;
+}
+
+export default function Board({ teams, takenBy, mySlot, onDraft, disabled, survival }: Props) {
   const divisions = Array.from(new Set(teams.map((t) => t.division)));
 
   return (
@@ -38,10 +44,18 @@ export default function Board({ teams, takenBy, mySlot, onDraft, disabled }: Pro
                   >
                     <div className="team-card-top">
                       <span className="team-code">{t.code}</span>
-                      {taken && (
-                        <span className="team-owner">
-                          {mine ? 'YOU' : `P${player}`}
-                        </span>
+                      {taken ? (
+                        <span className="team-owner">{mine ? 'YOU' : `P${player}`}</span>
+                      ) : (
+                        survival && survival[t.code] !== undefined && (
+                          <span
+                            className="surv-badge"
+                            style={{ color: survColor(survival[t.code]) }}
+                            title="chance still available at your next pick"
+                          >
+                            {pct(survival[t.code])}
+                          </span>
+                        )
                       )}
                     </div>
                     <div className="team-stat">O/U {t.win_total.toFixed(1)}</div>

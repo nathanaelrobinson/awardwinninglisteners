@@ -353,6 +353,40 @@
   margin-top: 4px;
 }
 
+/* Board survival badge */
+.surv-badge {
+  font-size: 11px;
+  font-weight: 700;
+}
+
+/* Forecast strip */
+.forecast {
+  margin-top: 10px;
+}
+.forecast-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 8px;
+  align-items: center;
+  font-size: 12px;
+}
+.forecast-item {
+  background: #1a1f29;
+  border: 1px solid #2a3140;
+  border-radius: 6px;
+  padding: 3px 7px;
+  color: #cdd6e2;
+}
+.forecast-pick {
+  color: #9aa4b2;
+  margin-right: 5px;
+  font-size: 10px;
+}
+.forecast-you {
+  color: #b39dff;
+  font-weight: 700;
+}
+
 /* Distribution chart */
 .dist-chart {
   margin: 8px 0 4px;

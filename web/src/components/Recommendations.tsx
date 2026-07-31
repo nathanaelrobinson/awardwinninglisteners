@@ -46,7 +46,7 @@ export default function Recommendations({ recommend, loading, teamNames }: Props
           <div className="top-pick-code">{top.code}</div>
           <div className="top-pick-name">{teamNames[top.code] ?? ''}</div>
           <div className="top-pick-stats">
-            <span>P(win) {pct(top.pwin)}</span>
+            {recommend.my_turn && <span>P(win) {pct(top.pwin)}</span>}
             <span>&Delta; wins {top.delta_wins.toFixed(1)}</span>
             {top.survival !== undefined && <span>Survival {pct(top.survival)}</span>}
           </div>
@@ -58,7 +58,7 @@ export default function Recommendations({ recommend, loading, teamNames }: Props
           <tr>
             <th>#</th>
             <th>Team</th>
-            <th>P(win)</th>
+            {recommend.my_turn && <th>P(win)</th>}
             <th>&Delta; wins</th>
             <th>Survival</th>
           </tr>
@@ -68,7 +68,7 @@ export default function Recommendations({ recommend, loading, teamNames }: Props
             <tr key={r.code} className={i === 0 ? 'top-row' : ''}>
               <td>{i + 1}</td>
               <td className="rec-code">{r.code}</td>
-              <td>{pct(r.pwin)}</td>
+              {recommend.my_turn && <td>{pct(r.pwin)}</td>}
               <td>{r.delta_wins.toFixed(1)}</td>
               <td>{r.survival !== undefined ? pct(r.survival) : '—'}</td>
             </tr>

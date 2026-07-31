@@ -7,6 +7,7 @@ import Board from './components/Board';
 import Rosters from './components/Rosters';
 import Recommendations from './components/Recommendations';
 import Results from './components/Results';
+import Forecast from './components/Forecast';
 import AutosimView from './components/AutosimView';
 
 const PICKS_PER_PLAYER = 6;
@@ -194,11 +195,17 @@ export default function App() {
             {recommend?.done ? (
               <Results slot={slot} taken={taken} />
             ) : (
-              <Recommendations
-                recommend={recommend}
-                loading={recLoading || advancing}
-                teamNames={teamNames}
-              />
+              <>
+                <Recommendations
+                  recommend={recommend}
+                  loading={recLoading || advancing}
+                  teamNames={teamNames}
+                />
+                <Forecast
+                  forecast={recommend?.forecast ?? []}
+                  done={recommend?.done ?? false}
+                />
+              </>
             )}
             <Rosters
               rosters={recommend?.rosters ?? {}}
@@ -214,6 +221,7 @@ export default function App() {
               mySlot={slot}
               onDraft={handleDraft}
               disabled={autoDraft && currentPlayer !== slot}
+              survival={recommend?.survival_all}
             />
           </div>
         </main>

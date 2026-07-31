@@ -195,6 +195,22 @@ def recommend(req: RecReq):
                      "delta_wins": round(r["delta_wins"], 2)}
                     for r in naive[:20]]
 
+    # Opponents' projected ("ideal") picks between now and my next turn, so the
+    # board can show what's likely to fall to me. Uses the field model's best
+    # available pick per seat (deterministic chalk on the model's key).
+    forecast = []
+    if not state.done:
+        key = _STATE["totals"] if req.opp_model == "market" else strengths
+        fs = state.copy()
+        guard = 0
+        while (not fs.done and fs.current_player != req.slot and guard < 16):
+            b = fs.board()
+            t = max(b, key=lambda i: key[i])
+            forecast.append({"pick": len(fs.picks) + 1,
+                             "player": fs.current_player, "code": TEAMS[t]})
+            fs.apply_pick(t)
+            guard += 1
+
     return {
         "current_player": state.current_player,
         "my_turn": my_turn,
@@ -203,6 +219,8 @@ def recommend(req: RecReq):
         "p_win_me": p_win_me,
         "rosters": {p: [TEAMS[t] for t in ts] for p, ts in rosters.items()},
         "recommendations": recs,
+        "survival_all": {TEAMS[t]: round(p, 3) for t, p in surv.items()},
+        "forecast": forecast,
     }
 
 

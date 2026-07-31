@@ -23,6 +23,12 @@ export interface Recommendation {
   survival?: number;
 }
 
+export interface ForecastPick {
+  pick: number;
+  player: number;
+  code: string;
+}
+
 export interface RecommendResponse {
   current_player: number;
   my_turn: boolean;
@@ -31,6 +37,8 @@ export interface RecommendResponse {
   p_win_me: number | null;
   rosters: Record<string, string[]>;
   recommendations: Recommendation[];
+  survival_all: Record<string, number>;
+  forecast: ForecastPick[];
 }
 
 export type Mode = 'naive' | 'rollout';
