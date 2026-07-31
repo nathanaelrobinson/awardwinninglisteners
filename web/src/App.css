@@ -353,6 +353,22 @@
   margin-top: 4px;
 }
 
+/* Cannibalization warnings */
+.cannibal-warn {
+  margin: 6px 0 10px;
+  padding: 7px 10px;
+  border: 1px solid #d5a15055;
+  background: #d5a15014;
+  border-radius: 6px;
+  font-size: 12px;
+  color: #e0c088;
+}
+.rec-conflict {
+  color: #e0a050;
+  font-size: 11px;
+  font-weight: 700;
+}
+
 /* Board survival badge */
 .surv-badge {
   font-size: 11px;

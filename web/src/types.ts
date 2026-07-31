@@ -22,6 +22,7 @@ export interface Recommendation {
   delta_wins: number;
   survival?: number;
   ceiling?: number;
+  conflict?: number; // games this team plays vs your current roster
 }
 
 export interface ForecastPick {
@@ -40,6 +41,7 @@ export interface RecommendResponse {
   recommendations: Recommendation[];
   survival_all: Record<string, number>;
   forecast: ForecastPick[];
+  my_intra_games: number; // games among your own drafted teams (cannibalization)
 }
 
 export type Mode = 'naive' | 'rollout';

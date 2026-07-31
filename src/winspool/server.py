@@ -16,13 +16,13 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from .analysis import team_attributes
-from .data import load_win_totals
+from .data import load_schedule, load_win_totals, schedule_matchups
 from .draft import DraftState, PICK_ORDER, player_totals, pwin
 from .mock import auto_draft
 from .opponents import chalk_power, entropy, greedy_self
 from .recommend import (build_wins, naive_recommend, pwin_after_playout,
                         rollout_recommend, survival_probs)
-from .teams import DIVISION, N_PLAYERS, TEAM_INDEX, TEAM_NAMES, TEAMS
+from .teams import DIVISION, N_PLAYERS, N_TEAMS, TEAM_INDEX, TEAM_NAMES, TEAMS
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CACHE = REPO_ROOT / "data" / "cache"
@@ -54,12 +54,23 @@ def _cache_key():
     return "|".join(parts)
 
 
+def _plays_matrix():
+    """plays[i][j] = number of scheduled 2026 games between teams i and j."""
+    home, away = schedule_matchups(load_schedule(str(SCHEDULE)))
+    m = np.zeros((N_TEAMS, N_TEAMS), dtype=int)
+    for h, a in zip(home, away):
+        m[h][a] += 1
+        m[a][h] += 1
+    return m
+
+
 def _populate(wins, strengths):
     _STATE["wins"] = wins
     _STATE["wins_fast"] = wins[:FAST_ROWS]
     _STATE["strengths"] = strengths
     _STATE["totals"] = load_win_totals(str(TOTALS))
     _STATE["attrs"] = {a["team"]: a for a in team_attributes(wins)}
+    _STATE["plays"] = _plays_matrix()
 
 
 def _ensure_ready():
@@ -166,6 +177,14 @@ def recommend(req: RecReq):
 
     rosters = state.rosters()
     my_turn = (not state.done) and state.current_player == req.slot
+    plays = _STATE["plays"]
+    my_idx = rosters[req.slot]
+    # cannibalization: games among my own teams (each caps combined ceiling by 1)
+    my_intra = int(sum(plays[my_idx[i]][my_idx[j]]
+                       for i in range(len(my_idx)) for j in range(i + 1, len(my_idx))))
+
+    def conflict(ti):  # games team ti plays against my current roster
+        return int(sum(plays[ti][r] for r in my_idx))
 
     # Honest P(I win): play the remaining draft out and average my P(win).
     p_win_me = None if state.done else round(
@@ -187,7 +206,8 @@ def recommend(req: RecReq):
             recs = [{"code": TEAMS[r["team"]], "pwin": round(r["pwin"], 4),
                      "survival": round(surv.get(r["team"], 1.0), 3),
                      "delta_wins": round(naive_by[r["team"]]["delta_wins"], 2),
-                     "ceiling": round(attrs[r["team"]]["ceiling"], 3)}
+                     "ceiling": round(attrs[r["team"]]["ceiling"], 3),
+                     "conflict": conflict(r["team"])}
                     for r in roll]
             # Winner-take-all tie-break: among candidates whose P(win) are within
             # ~1 pt (i.e. inside the estimator's noise), prefer the higher ceiling
@@ -198,7 +218,8 @@ def recommend(req: RecReq):
             # annotate how likely each is to still be there at my next pick.
             recs = [{"code": TEAMS[r["team"]], "pwin": round(r["pwin"], 4),
                      "survival": round(surv.get(r["team"], 1.0), 3),
-                     "delta_wins": round(r["delta_wins"], 2)}
+                     "delta_wins": round(r["delta_wins"], 2),
+                     "conflict": conflict(r["team"])}
                     for r in naive[:20]]
 
     # Opponents' projected ("ideal") picks between now and my next turn, so the
@@ -227,6 +248,7 @@ def recommend(req: RecReq):
         "recommendations": recs,
         "survival_all": {TEAMS[t]: round(p, 3) for t, p in surv.items()},
         "forecast": forecast,
+        "my_intra_games": my_intra,
     }
 
 
