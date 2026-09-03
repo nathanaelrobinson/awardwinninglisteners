@@ -1,7 +1,7 @@
 import json
 import numpy as np
 import pytest
-from winspool.fetch.kalshi import ladder_to_pmf, pmf_mean, pmf_sd, pmf_line
+from winspool.fetch.kalshi import ladder_to_pmf, pmf_mean, pmf_sd, pmf_line, team_from_event_ticker, events_to_distributions
 
 
 def _markets(entries):
@@ -35,3 +35,21 @@ def test_pmf_moments_and_line():
     assert pmf_sd(pmf) > 0
     # survival P(>=2)=0.5 exactly, so the 0.5-crossing O/U line resolves to 2.0
     assert pytest.approx(pmf_line(pmf), abs=1e-9) == 2.0
+
+
+def test_team_from_event_ticker_strips_season_and_maps_aliases():
+    assert team_from_event_ticker("KXNFLWINS-27BUF") == "BUF"
+    assert team_from_event_ticker("KXNFLWINS-27LAR") == "LA"    # Kalshi LAR -> our LA
+    assert team_from_event_ticker("KXNFLWINS-27JAC") == "JAX"   # Kalshi JAC -> our JAX
+    assert team_from_event_ticker("KXNFLWINS-27ZZZ") is None
+
+
+def test_events_to_distributions_from_fixture():
+    events = json.load(open("tests/fixtures/kalshi_kxnflwins.json"))["events"]
+    dists = events_to_distributions(events)
+    assert set(dists) == {"BUF", "ARI"}
+    for code, pmf in dists.items():
+        assert pmf.shape == (18,)
+        assert pytest.approx(pmf.sum(), abs=1e-6) == 1.0
+    # sanity: BUF (a good team) has a higher implied mean than ARI (a weak team)
+    assert pmf_mean(dists["BUF"]) > pmf_mean(dists["ARI"])

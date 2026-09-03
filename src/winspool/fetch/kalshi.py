@@ -3,9 +3,13 @@
 Pure functions (ladder -> PMF, moments) are unit-tested against a fixture.
 The network fetchers hit Kalshi's PUBLIC endpoint (no auth) and are smoke-tested.
 """
+import re
 import numpy as np
+from ..teams import resolve
 
 MAX_WINS = 17
+
+_KALSHI_FIX = {"LAR": "LA", "JAC": "JAX"}
 
 
 def _price(m):
@@ -68,3 +72,21 @@ def pmf_line(pmf):
         if surv[k - 1] >= 0.5 >= surv[k] and surv[k - 1] != surv[k]:
             return float((k - 1) + (surv[k - 1] - 0.5) / (surv[k - 1] - surv[k]))
     return pmf_mean(pmf)
+
+
+def team_from_event_ticker(ticker):
+    raw = re.sub(r"^\d+", "", ticker.split("-")[-1])   # "27BUF" -> "BUF"
+    return _KALSHI_FIX.get(raw) or resolve(raw)
+
+
+def events_to_distributions(events):
+    out = {}
+    for e in events:
+        code = team_from_event_ticker(e.get("event_ticker", ""))
+        markets = e.get("markets", [])
+        if not code or not markets:
+            continue
+        pmf = ladder_to_pmf(markets)
+        if pmf.sum() > 0:
+            out[code] = pmf
+    return out
