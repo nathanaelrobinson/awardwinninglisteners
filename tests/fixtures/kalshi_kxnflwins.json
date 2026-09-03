@@ -1,0 +1,334 @@
+{
+  "events": [
+    {
+      "available_on_brokers": false,
+      "category": "Sports",
+      "collateral_return_type": "",
+      "event_ticker": "KXNFLWINS-27BUF",
+      "exchange_index": 0,
+      "last_updated_ts": "2026-09-02T17:59:50.770722Z",
+      "markets": [
+        {
+          "ticker": "KXNFLWINS-27BUF-1",
+          "yes_ask_dollars": "1.0000",
+          "event_ticker": "KXNFLWINS-27BUF",
+          "last_price_dollars": "0.9600",
+          "floor_strike": 1,
+          "yes_bid_dollars": "0.9900"
+        },
+        {
+          "ticker": "KXNFLWINS-27BUF-2",
+          "yes_ask_dollars": "1.0000",
+          "event_ticker": "KXNFLWINS-27BUF",
+          "last_price_dollars": "0.9900",
+          "floor_strike": 2,
+          "yes_bid_dollars": "0.9600"
+        },
+        {
+          "ticker": "KXNFLWINS-27BUF-3",
+          "yes_ask_dollars": "1.0000",
+          "event_ticker": "KXNFLWINS-27BUF",
+          "last_price_dollars": "0.9900",
+          "floor_strike": 3,
+          "yes_bid_dollars": "0.9500"
+        },
+        {
+          "ticker": "KXNFLWINS-27BUF-4",
+          "yes_ask_dollars": "1.0000",
+          "event_ticker": "KXNFLWINS-27BUF",
+          "last_price_dollars": "0.9900",
+          "floor_strike": 4,
+          "yes_bid_dollars": "0.9500"
+        },
+        {
+          "ticker": "KXNFLWINS-27BUF-5",
+          "yes_ask_dollars": "1.0000",
+          "event_ticker": "KXNFLWINS-27BUF",
+          "last_price_dollars": "0.0000",
+          "floor_strike": 5,
+          "yes_bid_dollars": "0.9500"
+        },
+        {
+          "ticker": "KXNFLWINS-27BUF-6",
+          "yes_ask_dollars": "1.0000",
+          "event_ticker": "KXNFLWINS-27BUF",
+          "last_price_dollars": "0.9700",
+          "floor_strike": 6,
+          "yes_bid_dollars": "0.9500"
+        },
+        {
+          "ticker": "KXNFLWINS-27BUF-7",
+          "yes_ask_dollars": "0.9500",
+          "event_ticker": "KXNFLWINS-27BUF",
+          "last_price_dollars": "0.9300",
+          "floor_strike": 7,
+          "yes_bid_dollars": "0.9100"
+        },
+        {
+          "ticker": "KXNFLWINS-27BUF-8",
+          "yes_ask_dollars": "0.8700",
+          "event_ticker": "KXNFLWINS-27BUF",
+          "last_price_dollars": "0.8800",
+          "floor_strike": 8,
+          "yes_bid_dollars": "0.8400"
+        },
+        {
+          "ticker": "KXNFLWINS-27BUF-9",
+          "yes_ask_dollars": "0.8300",
+          "event_ticker": "KXNFLWINS-27BUF",
+          "last_price_dollars": "0.7400",
+          "floor_strike": 9,
+          "yes_bid_dollars": "0.7500"
+        },
+        {
+          "ticker": "KXNFLWINS-27BUF-10",
+          "yes_ask_dollars": "0.7100",
+          "event_ticker": "KXNFLWINS-27BUF",
+          "last_price_dollars": "0.6700",
+          "floor_strike": 10,
+          "yes_bid_dollars": "0.6600"
+        },
+        {
+          "ticker": "KXNFLWINS-27BUF-11",
+          "yes_ask_dollars": "0.5700",
+          "event_ticker": "KXNFLWINS-27BUF",
+          "last_price_dollars": "0.5600",
+          "floor_strike": 11,
+          "yes_bid_dollars": "0.5600"
+        },
+        {
+          "ticker": "KXNFLWINS-27BUF-12",
+          "yes_ask_dollars": "0.3900",
+          "event_ticker": "KXNFLWINS-27BUF",
+          "last_price_dollars": "0.3900",
+          "floor_strike": 12,
+          "yes_bid_dollars": "0.3800"
+        },
+        {
+          "ticker": "KXNFLWINS-27BUF-13",
+          "yes_ask_dollars": "0.2600",
+          "event_ticker": "KXNFLWINS-27BUF",
+          "last_price_dollars": "0.2600",
+          "floor_strike": 13,
+          "yes_bid_dollars": "0.2200"
+        },
+        {
+          "ticker": "KXNFLWINS-27BUF-14",
+          "yes_ask_dollars": "0.1600",
+          "event_ticker": "KXNFLWINS-27BUF",
+          "last_price_dollars": "0.1600",
+          "floor_strike": 14,
+          "yes_bid_dollars": "0.1100"
+        },
+        {
+          "ticker": "KXNFLWINS-27BUF-15",
+          "yes_ask_dollars": "0.1300",
+          "event_ticker": "KXNFLWINS-27BUF",
+          "last_price_dollars": "0.1300",
+          "floor_strike": 15,
+          "yes_bid_dollars": "0.0400"
+        },
+        {
+          "ticker": "KXNFLWINS-27BUF-16",
+          "yes_ask_dollars": "0.0500",
+          "event_ticker": "KXNFLWINS-27BUF",
+          "last_price_dollars": "0.0500",
+          "floor_strike": 16,
+          "yes_bid_dollars": "0.0200"
+        },
+        {
+          "ticker": "KXNFLWINS-27BUF-17",
+          "yes_ask_dollars": "0.0200",
+          "event_ticker": "KXNFLWINS-27BUF",
+          "last_price_dollars": "0.0200",
+          "floor_strike": 17,
+          "yes_bid_dollars": "0.0000"
+        }
+      ],
+      "mutually_exclusive": false,
+      "product_metadata": {
+        "competition": "Pro Football",
+        "competition_scope": "Win Totals"
+      },
+      "series_ticker": "KXNFLWINS",
+      "settlement_sources": [
+        {
+          "name": "the Governing League",
+          "url": "https://www.nfl.com/"
+        },
+        {
+          "name": "ESPN",
+          "url": "https://www.espn.com/"
+        }
+      ],
+      "strike_period": "",
+      "sub_title": "Buffalo 2026-27",
+      "title": "Pro Football: Buffalo Total Wins"
+    },
+    {
+      "available_on_brokers": false,
+      "category": "Sports",
+      "collateral_return_type": "",
+      "event_ticker": "KXNFLWINS-27ARI",
+      "exchange_index": 0,
+      "last_updated_ts": "2026-09-02T17:59:50.757728Z",
+      "markets": [
+        {
+          "ticker": "KXNFLWINS-27ARI-1",
+          "yes_ask_dollars": "0.9700",
+          "event_ticker": "KXNFLWINS-27ARI",
+          "last_price_dollars": "0.9500",
+          "floor_strike": 1,
+          "yes_bid_dollars": "0.9500"
+        },
+        {
+          "ticker": "KXNFLWINS-27ARI-2",
+          "yes_ask_dollars": "0.8900",
+          "event_ticker": "KXNFLWINS-27ARI",
+          "last_price_dollars": "0.8900",
+          "floor_strike": 2,
+          "yes_bid_dollars": "0.7900"
+        },
+        {
+          "ticker": "KXNFLWINS-27ARI-3",
+          "yes_ask_dollars": "0.7100",
+          "event_ticker": "KXNFLWINS-27ARI",
+          "last_price_dollars": "0.7200",
+          "floor_strike": 3,
+          "yes_bid_dollars": "0.6800"
+        },
+        {
+          "ticker": "KXNFLWINS-27ARI-4",
+          "yes_ask_dollars": "0.5700",
+          "event_ticker": "KXNFLWINS-27ARI",
+          "last_price_dollars": "0.5500",
+          "floor_strike": 4,
+          "yes_bid_dollars": "0.5600"
+        },
+        {
+          "ticker": "KXNFLWINS-27ARI-5",
+          "yes_ask_dollars": "0.4100",
+          "event_ticker": "KXNFLWINS-27ARI",
+          "last_price_dollars": "0.4100",
+          "floor_strike": 5,
+          "yes_bid_dollars": "0.3900"
+        },
+        {
+          "ticker": "KXNFLWINS-27ARI-6",
+          "yes_ask_dollars": "0.2600",
+          "event_ticker": "KXNFLWINS-27ARI",
+          "last_price_dollars": "0.2600",
+          "floor_strike": 6,
+          "yes_bid_dollars": "0.2500"
+        },
+        {
+          "ticker": "KXNFLWINS-27ARI-7",
+          "yes_ask_dollars": "0.1600",
+          "event_ticker": "KXNFLWINS-27ARI",
+          "last_price_dollars": "0.1800",
+          "floor_strike": 7,
+          "yes_bid_dollars": "0.1100"
+        },
+        {
+          "ticker": "KXNFLWINS-27ARI-8",
+          "yes_ask_dollars": "0.0900",
+          "event_ticker": "KXNFLWINS-27ARI",
+          "last_price_dollars": "0.1300",
+          "floor_strike": 8,
+          "yes_bid_dollars": "0.0500"
+        },
+        {
+          "ticker": "KXNFLWINS-27ARI-9",
+          "yes_ask_dollars": "0.1100",
+          "event_ticker": "KXNFLWINS-27ARI",
+          "last_price_dollars": "0.0900",
+          "floor_strike": 9,
+          "yes_bid_dollars": "0.0900"
+        },
+        {
+          "ticker": "KXNFLWINS-27ARI-10",
+          "yes_ask_dollars": "0.0400",
+          "event_ticker": "KXNFLWINS-27ARI",
+          "last_price_dollars": "0.0500",
+          "floor_strike": 10,
+          "yes_bid_dollars": "0.0300"
+        },
+        {
+          "ticker": "KXNFLWINS-27ARI-11",
+          "yes_ask_dollars": "0.0500",
+          "event_ticker": "KXNFLWINS-27ARI",
+          "last_price_dollars": "0.0300",
+          "floor_strike": 11,
+          "yes_bid_dollars": "0.0100"
+        },
+        {
+          "ticker": "KXNFLWINS-27ARI-12",
+          "yes_ask_dollars": "0.0200",
+          "event_ticker": "KXNFLWINS-27ARI",
+          "last_price_dollars": "0.0200",
+          "floor_strike": 12,
+          "yes_bid_dollars": "0.0100"
+        },
+        {
+          "ticker": "KXNFLWINS-27ARI-13",
+          "yes_ask_dollars": "0.0100",
+          "event_ticker": "KXNFLWINS-27ARI",
+          "last_price_dollars": "0.0100",
+          "floor_strike": 13,
+          "yes_bid_dollars": "0.0000"
+        },
+        {
+          "ticker": "KXNFLWINS-27ARI-14",
+          "yes_ask_dollars": "0.0400",
+          "event_ticker": "KXNFLWINS-27ARI",
+          "last_price_dollars": "0.0100",
+          "floor_strike": 14,
+          "yes_bid_dollars": "0.0000"
+        },
+        {
+          "ticker": "KXNFLWINS-27ARI-15",
+          "yes_ask_dollars": "0.0500",
+          "event_ticker": "KXNFLWINS-27ARI",
+          "last_price_dollars": "0.0000",
+          "floor_strike": 15,
+          "yes_bid_dollars": "0.0000"
+        },
+        {
+          "ticker": "KXNFLWINS-27ARI-16",
+          "yes_ask_dollars": "0.0500",
+          "event_ticker": "KXNFLWINS-27ARI",
+          "last_price_dollars": "0.0000",
+          "floor_strike": 16,
+          "yes_bid_dollars": "0.0000"
+        },
+        {
+          "ticker": "KXNFLWINS-27ARI-17",
+          "yes_ask_dollars": "0.0500",
+          "event_ticker": "KXNFLWINS-27ARI",
+          "last_price_dollars": "0.0000",
+          "floor_strike": 17,
+          "yes_bid_dollars": "0.0000"
+        }
+      ],
+      "mutually_exclusive": false,
+      "product_metadata": {
+        "competition": "Pro Football",
+        "competition_scope": "Win Totals"
+      },
+      "series_ticker": "KXNFLWINS",
+      "settlement_sources": [
+        {
+          "name": "the Governing League",
+          "url": "https://www.nfl.com/"
+        },
+        {
+          "name": "ESPN",
+          "url": "https://www.espn.com/"
+        }
+      ],
+      "strike_period": "",
+      "sub_title": "Arizona 2026-27",
+      "title": "Pro Football: Arizona Total Wins"
+    }
+  ]
+}
