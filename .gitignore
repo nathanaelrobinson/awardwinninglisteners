@@ -5,3 +5,7 @@ node_modules/
 data/cache/
 *.npy
 .DS_Store
+venv/
+web/node_modules/
+web/dist/
+*.egg-info/

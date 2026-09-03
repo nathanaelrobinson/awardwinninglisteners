@@ -1,0 +1,26 @@
+[project]
+name = "winspool"
+version = "0.1.0"
+requires-python = ">=3.11"
+dependencies = ["numpy", "pandas", "scipy", "nfl_data_py", "fastapi", "uvicorn[standard]",
+                "requests", "beautifulsoup4", "lxml", "playwright", "pdfplumber"]
+
+[project.optional-dependencies]
+dev = ["pytest", "httpx"]
+
+[project.scripts]
+winspool = "winspool.cli:main"
+winspool-serve = "winspool.server:main"
+
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]
+markers = ["network: hits live external endpoints (deselect with -m 'not network')"]
+addopts = "-m 'not network'"
