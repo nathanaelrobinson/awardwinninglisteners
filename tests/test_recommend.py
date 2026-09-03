@@ -72,3 +72,35 @@ def test_build_wins_variance_tracks_kalshi_sd(tmp_path):
     hi = sim_sd[k_sd > 1.0].mean()
     lo = sim_sd[k_sd == 0.0].mean()
     assert hi > lo
+
+
+def test_build_wins_kalshi_none_degrades_to_phase1_variance(tmp_path):
+    """Absent Kalshi path (kalshi_dist_path=None) must NOT calibrate per-team
+    variance to Kalshi SD -- that's the Phase-1 behavior the np.any(~np.isnan
+    (target_sd)) gate in build_wins is supposed to preserve. With the file, the
+    per-team sim SD should clearly track Kalshi's per-team SD; without it,
+    the correlation should collapse."""
+    from winspool.fetch.kalshi import pmf_sd
+    from winspool.market import load_distributions
+
+    kp = _kalshi_csv(tmp_path)
+    codes, mat = load_distributions(kp)
+    k_sd = np.zeros(N_TEAMS)
+    for code, row in zip(codes, mat):
+        k_sd[TEAM_INDEX[code]] = pmf_sd(row)
+
+    wins_with, _ = build_wins("data/cache/schedule_2026.csv", "data/cache/win_totals.csv",
+                              n_seasons=6000, seed=0, power_path="data/cache/power_ratings.csv",
+                              kalshi_dist_path=kp)
+    wins_without, _ = build_wins("data/cache/schedule_2026.csv", "data/cache/win_totals.csv",
+                                 n_seasons=6000, seed=0, power_path="data/cache/power_ratings.csv",
+                                 kalshi_dist_path=None)
+
+    sd_with = wins_with.std(axis=0)
+    sd_without = wins_without.std(axis=0)
+
+    corr_with = np.corrcoef(sd_with, k_sd)[0, 1]
+    corr_without = np.corrcoef(sd_without, k_sd)[0, 1]
+
+    assert corr_with > corr_without + 0.3, (
+        f"corr_with={corr_with:.3f} corr_without={corr_without:.3f}")

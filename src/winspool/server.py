@@ -29,6 +29,7 @@ CACHE = REPO_ROOT / "data" / "cache"
 SCHEDULE = CACHE / "schedule_2026.csv"
 TOTALS = CACHE / "win_totals.csv"
 POWER = CACHE / "power_ratings.csv"
+KALSHI = CACHE / "kalshi_distributions.csv"
 
 N_SEASONS = 8000     # served matrix depth
 FAST_ROWS = 5000     # subsample used for the per-request rollouts (speed)
@@ -49,7 +50,7 @@ MATRIX_CACHE = CACHE / "sim_matrix.npz"
 def _cache_key():
     """Signature of the inputs the sim depends on — rebuild when any changes."""
     parts = [str(N_SEASONS)]
-    for f in (SCHEDULE, TOTALS, POWER):
+    for f in (SCHEDULE, TOTALS, POWER, KALSHI):
         parts.append(str(f.stat().st_mtime_ns) if f.exists() else "0")
     return "|".join(parts)
 
@@ -86,8 +87,10 @@ def _ensure_ready():
         except Exception:
             pass  # stale/corrupt cache -> rebuild
     power_path = str(POWER) if POWER.exists() else None
+    kalshi_path = str(KALSHI) if KALSHI.exists() else None
     wins, strengths = build_wins(str(SCHEDULE), str(TOTALS), n_seasons=N_SEASONS,
-                                 seed=0, power_path=power_path)
+                                 seed=0, power_path=power_path,
+                                 kalshi_dist_path=kalshi_path)
     try:
         np.savez(MATRIX_CACHE, wins=wins, strengths=strengths, key=np.array(key))
     except Exception:
