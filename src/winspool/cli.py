@@ -48,6 +48,9 @@ def main(argv=None):
     fet.add_argument("--config", default="data/cache/sources.json")
     fet.add_argument("--cache", default="data/cache")
 
+    mkt = sub.add_parser("market")
+    mkt.add_argument("--dist", default="data/cache/kalshi_distributions.csv")
+
     args = parser.parse_args(argv)
 
     if args.cmd == "fetch":
@@ -122,5 +125,14 @@ def main(argv=None):
         print(f"{'slot':<6}{'pwin':>8}")
         for slot, p in sorted(res.items(), key=lambda kv: kv[1], reverse=True):
             print(f"{slot:<6}{p:>8.3f}")
+        return 0
+
+    if args.cmd == "market":
+        from .market import load_distributions, summarize
+        codes, mat = load_distributions(args.dist)
+        rows = sorted(summarize(codes, mat), key=lambda r: r["mean"], reverse=True)
+        print(f"{'team':<5}{'line':>7}{'mean':>7}{'sd':>7}")
+        for r in rows:
+            print(f"{r['team']:<5}{r['line']:>7.2f}{r['mean']:>7.2f}{r['sd']:>7.2f}")
         return 0
     return 1
