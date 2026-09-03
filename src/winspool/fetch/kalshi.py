@@ -3,13 +3,21 @@
 Pure functions (ladder -> PMF, moments) are unit-tested against a fixture.
 The network fetchers hit Kalshi's PUBLIC endpoint (no auth) and are smoke-tested.
 """
+import os
 import re
+import requests
 import numpy as np
+import pandas as pd
 from ..teams import resolve
 
 MAX_WINS = 17
 
 _KALSHI_FIX = {"LAR": "LA", "JAC": "JAX"}
+
+SERIES = "KXNFLWINS"
+BASE = "https://external-api.kalshi.com/trade-api/v2"
+HEADERS = {"User-Agent": "Mozilla/5.0", "Accept": "application/json"}
+TIMEOUT = 30
 
 
 def _price(m):
@@ -90,3 +98,28 @@ def events_to_distributions(events):
         if pmf.sum() > 0:
             out[code] = pmf
     return out
+
+
+def fetch_events():
+    r = requests.get(f"{BASE}/events", headers=HEADERS, timeout=TIMEOUT,
+                     params={"series_ticker": SERIES, "with_nested_markets": "true", "limit": 200})
+    r.raise_for_status()
+    return r.json().get("events", [])
+
+
+def kalshi_distributions():
+    return events_to_distributions(fetch_events())
+
+
+def kalshi_totals():
+    return {code: pmf_line(pmf) for code, pmf in kalshi_distributions().items()}
+
+
+def write_distributions(dists, cache_dir):
+    os.makedirs(cache_dir, exist_ok=True)
+    cols = [f"p{k}" for k in range(MAX_WINS + 1)]
+    rows = [{"team": code, **{c: float(v) for c, v in zip(cols, pmf)}}
+            for code, pmf in sorted(dists.items())]
+    path = os.path.join(cache_dir, "kalshi_distributions.csv")
+    pd.DataFrame(rows, columns=["team", *cols]).to_csv(path, index=False)
+    return path

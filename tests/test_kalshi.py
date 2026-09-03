@@ -1,7 +1,8 @@
 import json
 import numpy as np
+import pandas as pd
 import pytest
-from winspool.fetch.kalshi import ladder_to_pmf, pmf_mean, pmf_sd, pmf_line, team_from_event_ticker, events_to_distributions
+from winspool.fetch.kalshi import ladder_to_pmf, pmf_mean, pmf_sd, pmf_line, team_from_event_ticker, events_to_distributions, write_distributions
 
 
 def _markets(entries):
@@ -53,3 +54,20 @@ def test_events_to_distributions_from_fixture():
         assert pytest.approx(pmf.sum(), abs=1e-6) == 1.0
     # sanity: BUF (a good team) has a higher implied mean than ARI (a weak team)
     assert pmf_mean(dists["BUF"]) > pmf_mean(dists["ARI"])
+
+
+def test_write_distributions_roundtrip(tmp_path):
+    dists = {"BUF": np.full(18, 1 / 18), "ARI": np.eye(18)[4]}
+    path = write_distributions(dists, str(tmp_path))
+    df = pd.read_csv(path).set_index("team")
+    assert list(df.columns) == [f"p{k}" for k in range(18)]
+    assert pytest.approx(df.loc["BUF"].sum(), abs=1e-9) == 1.0
+    assert pytest.approx(df.loc["ARI", "p4"], abs=1e-9) == 1.0
+
+
+@pytest.mark.network
+def test_kalshi_totals_live_smoke():
+    from winspool.fetch.kalshi import kalshi_totals
+    totals = kalshi_totals()
+    assert len(totals) == 32
+    assert all(0.0 <= v <= 17.0 for v in totals.values())

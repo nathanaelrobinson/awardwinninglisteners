@@ -22,3 +22,5 @@ where = ["src"]
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
+markers = ["network: hits live external endpoints (deselect with -m 'not network')"]
+addopts = "-m 'not network'"
