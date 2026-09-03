@@ -24,8 +24,9 @@ The tool reads two files from `data/cache/`:
   seeded; replace with real numbers. (A multi-source `winspool fetch` pipeline exists —
   see `docs/data-sources.md` — but its live scrapers need endpoint verification first.)
 - `kalshi_distributions.csv` — Kalshi `KXNFLWINS` market-implied per-team win
-  distributions (public API, no auth). Its implied line is blended into
-  `win_totals.csv` alongside covers; the full distribution powers `winspool market`.
+  distributions (public API, no auth). Kalshi is its own forecast voice (not blended
+  into `win_totals.csv`); the full distribution calibrates the sim's per-team season
+  variance to match Kalshi's implied volatility, and powers `winspool market`.
 
 ## Run the draft app
 

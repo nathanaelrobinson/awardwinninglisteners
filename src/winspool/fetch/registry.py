@@ -15,7 +15,6 @@ Other reputable sources and why they aren't wired here yet:
 Add a working one by writing a parse_* + fetch in scrapers.py and appending a
 Source below.
 """
-from .kalshi import kalshi_totals
 from .pipeline import Source
 from .scrapers import (betmgm_totals, clay_projections, covers_totals, epa_ratings,
                        espn_fpi, nfelo_power, pff_projections)
@@ -25,7 +24,6 @@ def default_sources(config=None):
     return [
         Source("covers", "totals", covers_totals),
         Source("betmgm", "totals", betmgm_totals),
-        Source("kalshi", "totals", kalshi_totals),   # Kalshi KXNFLWINS implied line
         Source("espn_fpi", "power", espn_fpi),
         Source("nfelo", "power", nfelo_power),   # JS-rendered via headless browser
         Source("clay", "power", clay_projections),  # ESPN PDF projections

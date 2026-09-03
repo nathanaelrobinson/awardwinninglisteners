@@ -1,24 +1,20 @@
+import os
 import numpy as np
 from .data import load_schedule, schedule_matchups, load_win_totals
 from .ratings import strength_from_totals
 from .sim import simulate, simulate_mixture
 from .draft import player_totals, pwin, PICK_ORDER, greedy_pick
 
-def build_wins(schedule_path, totals_path, n_seasons=20000, seed=0,
-               power_path=None, tie_base=0.003, base_sigma=4.5, spread_k=2.0):
-    """Ensemble every available source into the season sim WITHOUT anchoring on
-    any one. Vegas (backed out of the O/U) is just one voter alongside each power
-    column (FPI, nfelo, Clay, …). The ensemble mean is the strength; cross-source
-    disagreement widens a team's per-season variance (see ratings.ensemble)."""
+def _assemble_sources(totals_path, power_path, home, away, kalshi_dist_path):
+    """Build the {name: strength} source dict for the mixture, plus a per-team
+    Kalshi target-SD array (NaN where the market has no data). Adds a distinct
+    'kalshi' voice (backed out of the implied line) when the dist file exists."""
     from .data import load_power_ratings
-    from .ratings import backout_market, ensemble, to_common_scale
+    from .ratings import backout_market
     from .game import HFA, SCALE
     from .teams import TEAM_INDEX, N_TEAMS
-    df = load_schedule(schedule_path)
-    home, away = schedule_matchups(df)
     totals = load_win_totals(totals_path)
-    market = backout_market(totals, home, away, hfa=HFA, scale=SCALE)
-    sources = {"vegas": market}
+    sources = {"vegas": backout_market(totals, home, away, hfa=HFA, scale=SCALE)}
     if power_path:
         pdf = load_power_ratings(power_path)
         for col in pdf.columns:
@@ -26,14 +22,43 @@ def build_wins(schedule_path, totals_path, n_seasons=20000, seed=0,
             for code, val in pdf[col].items():
                 arr[TEAM_INDEX[code]] = float(val)
             sources[col] = arr
-    # `strengths` (ensemble consensus) drives display + opponent/greedy policies.
+    target_sd = np.full(N_TEAMS, np.nan)
+    if kalshi_dist_path and os.path.exists(kalshi_dist_path):
+        from .market import load_distributions
+        from .fetch.kalshi import pmf_line, pmf_sd
+        codes, mat = load_distributions(kalshi_dist_path)
+        line = np.full(N_TEAMS, np.nan)
+        for code, row in zip(codes, mat):
+            if code in TEAM_INDEX:
+                line[TEAM_INDEX[code]] = pmf_line(row)
+                target_sd[TEAM_INDEX[code]] = pmf_sd(row)
+        line[np.isnan(line)] = np.nanmean(line)          # mirror load_win_totals
+        sources["kalshi"] = backout_market(line, home, away, hfa=HFA, scale=SCALE)
+    return sources, target_sd
+
+
+def build_wins(schedule_path, totals_path, n_seasons=20000, seed=0,
+               power_path=None, tie_base=0.003, base_sigma=4.5, spread_k=2.0,
+               kalshi_dist_path="data/cache/kalshi_distributions.csv"):
+    """Ensemble every available source into the season sim WITHOUT anchoring on
+    any one. Vegas (covers, backed out of the O/U), Kalshi (its own voice), and
+    each power column vote equally. The mixture samples which world is real; the
+    per-team season variance is calibrated to Kalshi's implied SD when available
+    (see ratings.calibrate_sigma), else a flat base_sigma."""
+    from .ratings import ensemble, to_common_scale, calibrate_sigma
+    df = load_schedule(schedule_path)
+    home, away = schedule_matchups(df)
+    sources, target_sd = _assemble_sources(totals_path, power_path, home, away,
+                                           kalshi_dist_path)
     strengths, _ = ensemble(sources, base_sigma=base_sigma, spread_k=spread_k)
     rng = np.random.default_rng(seed)
     if len(sources) > 1:
-        # Mixture-of-models: each season samples which source's world is real,
-        # so teams the models disagree on get multimodal / fat-tailed outcomes.
+        sigma = base_sigma
+        if np.any(~np.isnan(target_sd)):
+            sigma = calibrate_sigma(strengths, home, away, target_sd,
+                                    sigma_ref=base_sigma, tie_base=tie_base, seed=seed)
         wins = simulate_mixture(to_common_scale(sources), home, away, n_seasons,
-                                base_sigma=base_sigma, tie_base=tie_base, rng=rng)
+                                base_sigma=sigma, tie_base=tie_base, rng=rng)
     else:
         _, sigma = ensemble(sources, base_sigma=base_sigma, spread_k=spread_k)
         wins = simulate(strengths, sigma, home, away, n_seasons, tie_base=tie_base, rng=rng)

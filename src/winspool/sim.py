@@ -40,11 +40,19 @@ def simulate_mixture(source_matrix, home_idx, away_idx, n_seasons, *,
     samples ONE source ("which model is right this year") and draws team
     strengths around that world with Normal(0, base_sigma) season noise.
 
+    `base_sigma` may be a scalar or a per-team vector (length n_teams) — the
+    latter lets each team's season noise be calibrated independently (see
+    `ratings.calibrate_sigma`).
+
     Teams the sources AGREE on stay unimodal; teams they DISAGREE on become
     genuinely multimodal (fat / bimodal tails) — the honest picture of model
     uncertainty, and where winner-take-all upside lives."""
     source_matrix = np.asarray(source_matrix, dtype=float)
     n_sources, n_teams = source_matrix.shape
     picks = rng.integers(0, n_sources, size=n_seasons)          # world per season
+    base_sigma = np.asarray(base_sigma, dtype=float)
+    if base_sigma.ndim == 1 and base_sigma.size != n_teams:
+        raise ValueError(
+            f"base_sigma vector length {base_sigma.size} != n_teams {n_teams}")
     S = source_matrix[picks] + rng.standard_normal((n_seasons, n_teams)) * base_sigma
     return _play(S, home_idx, away_idx, hfa=hfa, scale=scale, tie_base=tie_base, rng=rng)

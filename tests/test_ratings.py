@@ -1,5 +1,6 @@
 import numpy as np
-from winspool.ratings import strength_from_totals
+from winspool.ratings import strength_from_totals, calibrate_sigma
+from winspool.sim import simulate
 
 def test_higher_total_gets_higher_strength():
     totals = np.array([11.5, 6.5, 9.0])
@@ -49,3 +50,56 @@ def test_ensemble_standardizes_so_scale_doesnt_dominate():
     strength, sigma = ensemble({"big": big, "small": small}, base_sigma=4.0, spread_k=1.0)
     assert np.allclose(sigma, 4.0, atol=0.2)          # agreement -> ~base sigma
     assert strength[0] > strength[1] > strength[2]    # ranking preserved
+
+
+def _toy_schedule():
+    # 4 teams, round-robin home/away (each pair twice), no HFA in the sim calls
+    home, away = [], []
+    for i in range(4):
+        for j in range(4):
+            if i != j:
+                home.append(i); away.append(j)
+    return np.array(home), np.array(away)
+
+
+def test_calibrate_sigma_nan_target_falls_back_to_ref():
+    home, away = _toy_schedule()
+    strength = np.zeros(4)
+    target = np.array([np.nan, np.nan, np.nan, np.nan])
+    sig = calibrate_sigma(strength, home, away, target, sigma_ref=4.5, n_seasons=4000)
+    assert np.allclose(sig, 4.5)
+
+
+def test_calibrate_sigma_reproduces_a_higher_target_sd():
+    # Use the REAL 17-game schedule (the toy 6-game one saturates win-SD below
+    # any useful target). Let hfa default so the verification sim matches the
+    # assumptions calibrate_sigma uses in its own internal reference sims.
+    from winspool.data import load_schedule, schedule_matchups
+    df = load_schedule("data/cache/schedule_2026.csv")
+    home, away = schedule_matchups(df)
+    n = 32
+    strength = np.zeros(n)
+    base = simulate(strength, np.zeros(n), home, away, 8000,
+                    tie_base=0.0, rng=np.random.default_rng(0))
+    base_sd = base.std(axis=0).mean()
+    target_val = base_sd + 1.0
+    target = np.full(n, target_val)
+    sig = calibrate_sigma(strength, home, away, target, sigma_ref=4.5,
+                          n_seasons=8000, tie_base=0.0)
+    assert (sig > 0).all()
+    w = simulate(strength, sig, home, away, 20000, tie_base=0.0,
+                 rng=np.random.default_rng(1))
+    realized = w.std(axis=0).mean()
+    assert abs(realized - target_val) < 0.4
+
+
+def test_calibrate_sigma_clips_to_max_and_zeros_below_baseline():
+    home, away = _toy_schedule()
+    strength = np.zeros(4)
+    # target below the schedule-only baseline -> sigma 0; absurd target -> clipped
+    low = calibrate_sigma(strength, home, away, np.full(4, 0.1),
+                          sigma_ref=4.5, sigma_max=12.0, n_seasons=4000, tie_base=0.0)
+    high = calibrate_sigma(strength, home, away, np.full(4, 50.0),
+                           sigma_ref=4.5, sigma_max=12.0, n_seasons=4000, tie_base=0.0)
+    assert np.allclose(low, 0.0)
+    assert np.allclose(high, 12.0)
