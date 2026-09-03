@@ -26,9 +26,16 @@ def refresh(sources, cache_dir, now="unknown"):
     for s in sources:
         if s.kind not in ("totals", "power"):
             raise ValueError(f"unknown source kind: {s.kind!r}")
-        data = s.fetch()
-        meta.append({"name": s.name, "kind": s.kind,
-                     "n_teams": len(data), "fetched_at": now})
+        try:
+            data = s.fetch()
+        except Exception as e:  # one dead source (e.g. HTTP 520) must not abort the run
+            print(f"  WARNING: source {s.name!r} failed, skipping: "
+                  f"{type(e).__name__}: {e}")
+            meta.append({"name": s.name, "kind": s.kind, "n_teams": 0,
+                         "fetched_at": now, "ok": False, "error": f"{type(e).__name__}: {e}"})
+            continue
+        meta.append({"name": s.name, "kind": s.kind, "n_teams": len(data),
+                     "fetched_at": now, "ok": True, "error": None})
         (totals_cols if s.kind == "totals" else power_cols)[s.name] = data
     if totals_cols:
         win_total = pd.DataFrame(totals_cols).mean(axis=1)
