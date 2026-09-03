@@ -23,6 +23,9 @@ The tool reads two files from `data/cache/`:
 - `win_totals.csv` — Vegas season win totals (`team,win_total`). A placeholder set is
   seeded; replace with real numbers. (A multi-source `winspool fetch` pipeline exists —
   see `docs/data-sources.md` — but its live scrapers need endpoint verification first.)
+- `kalshi_distributions.csv` — Kalshi `KXNFLWINS` market-implied per-team win
+  distributions (public API, no auth). Its implied line is blended into
+  `win_totals.csv` alongside covers; the full distribution powers `winspool market`.
 
 ## Run the draft app
 
@@ -42,6 +45,7 @@ another (Vite proxies `/api` to `:8000`).
 uv run winspool recommend --slot 3 --taken KC,BUF,PHI --rollouts 200
 uv run winspool analyze                 # per-team variance / ceiling / floor / SOS
 uv run winspool positional              # which draft slot is best for you
+uv run winspool market                  # per-team market-implied line / mean / SD (confidence)
 ```
 
 ## Tests
