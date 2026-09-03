@@ -11,6 +11,7 @@ import pandas as pd
 from ..teams import resolve
 
 MAX_WINS = 17
+MIN_PRICED_RUNGS = 3
 
 _KALSHI_FIX = {"LAR": "LA", "JAC": "JAX"}
 
@@ -33,6 +34,22 @@ def _price(m):
     return last
 
 
+def n_priced_rungs(markets):
+    """Count rungs with both a valid floor_strike (0..17) and a usable price."""
+    n = 0
+    for m in markets:
+        strike = m.get("floor_strike")
+        if strike is None:
+            continue
+        try:
+            k = int(strike)
+        except (TypeError, ValueError):
+            continue
+        if 0 <= k <= MAX_WINS and _price(m) is not None:
+            n += 1
+    return n
+
+
 def ladder_to_pmf(markets):
     """A team's 17-rung ladder -> normalized PMF over wins 0..17 (length 18).
 
@@ -42,7 +59,10 @@ def ladder_to_pmf(markets):
     surv = np.full(MAX_WINS + 1, np.nan)   # surv[k] = P(W >= k)
     surv[0] = 1.0
     for m in markets:
-        k = int(m["floor_strike"])
+        strike = m.get("floor_strike")
+        if strike is None:
+            continue
+        k = int(strike)
         p = _price(m)
         if p is not None and 0 <= k <= MAX_WINS:
             surv[k] = p
@@ -94,9 +114,12 @@ def events_to_distributions(events):
         markets = e.get("markets", [])
         if not code or not markets:
             continue
+        n = n_priced_rungs(markets)
+        if n < MIN_PRICED_RUNGS:
+            print(f"  WARNING: kalshi {code}: only {n} priced rungs (<{MIN_PRICED_RUNGS}), omitting")
+            continue
         pmf = ladder_to_pmf(markets)
-        if pmf.sum() > 0:
-            out[code] = pmf
+        out[code] = pmf
     return out
 
 

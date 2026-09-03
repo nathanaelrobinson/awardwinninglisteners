@@ -65,6 +65,39 @@ def test_write_distributions_roundtrip(tmp_path):
     assert pytest.approx(df.loc["ARI", "p4"], abs=1e-9) == 1.0
 
 
+def test_events_to_distributions_omits_thin_ladder():
+    # ARI: all rungs unpriced (bid/ask/last all None) -> 0 priced rungs, omitted
+    unpriced = [{"floor_strike": k, "yes_bid_dollars": None,
+                 "yes_ask_dollars": None, "last_price_dollars": None}
+                for k in range(1, 4)]
+    # BUF: only 2 priced rungs -> below MIN_PRICED_RUNGS, omitted
+    thin = _markets([(1, 0.9, 0.9), (2, 0.5, 0.5)]) + [
+        {"floor_strike": 3, "yes_bid_dollars": None,
+         "yes_ask_dollars": None, "last_price_dollars": None}
+    ]
+    # KC: 3 priced rungs -> meets MIN_PRICED_RUNGS, kept
+    healthy = _markets([(1, 1.0, 1.0), (2, 0.5, 0.5), (3, 0.0, 0.0)])
+    events = [
+        {"event_ticker": "KXNFLWINS-27ARI", "markets": unpriced},
+        {"event_ticker": "KXNFLWINS-27BUF", "markets": thin},
+        {"event_ticker": "KXNFLWINS-27KC", "markets": healthy},
+    ]
+    dists = events_to_distributions(events)
+    assert "ARI" not in dists
+    assert "BUF" not in dists
+    assert "KC" in dists
+    assert pytest.approx(dists["KC"].sum(), abs=1e-9) == 1.0
+
+
+def test_ladder_to_pmf_skips_market_missing_floor_strike():
+    markets = _markets([(1, 1.0, 1.0), (2, 0.5, 0.5), (3, 0.0, 0.0)])
+    markets.append({"yes_bid_dollars": "0.2", "yes_ask_dollars": "0.2",
+                     "last_price_dollars": None})  # no floor_strike key
+    pmf = ladder_to_pmf(markets)  # must not raise
+    assert pmf.shape == (18,)
+    assert pytest.approx(pmf.sum(), abs=1e-9) == 1.0
+
+
 @pytest.mark.network
 def test_kalshi_totals_live_smoke():
     from winspool.fetch.kalshi import kalshi_totals
