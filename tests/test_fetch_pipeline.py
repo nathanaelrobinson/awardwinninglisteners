@@ -53,3 +53,11 @@ def test_refresh_skips_a_failing_source_and_keeps_the_rest(tmp_path):
     by_name = {m["name"]: m for m in meta}
     assert by_name["betmgm"]["ok"] is False and "520" in by_name["betmgm"]["error"]
     assert by_name["covers"]["ok"] is True and by_name["covers"]["n_teams"] == 2
+
+
+def test_default_sources_includes_kalshi():
+    from winspool.fetch.registry import default_sources
+    names = {s.name for s in default_sources()}
+    assert "kalshi" in names
+    kal = next(s for s in default_sources() if s.name == "kalshi")
+    assert kal.kind == "totals"

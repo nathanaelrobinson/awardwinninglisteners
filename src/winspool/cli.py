@@ -70,6 +70,14 @@ def main(argv=None):
         meta = refresh(sources, args.cache, now=now)
         for m in meta:
             print(f"{m['name']:<12}{m['kind']:<8}{m['n_teams']} teams  @ {m['fetched_at']}")
+        try:
+            from .fetch.kalshi import kalshi_distributions, write_distributions
+            dists = kalshi_distributions()
+            path = write_distributions(dists, args.cache)
+            print(f"kalshi distributions: {len(dists)} teams -> {path}")
+        except Exception as e:
+            print(f"  WARNING: kalshi distributions failed, skipping: "
+                  f"{type(e).__name__}: {e}")
         return 0
 
     if args.cmd == "analyze":
