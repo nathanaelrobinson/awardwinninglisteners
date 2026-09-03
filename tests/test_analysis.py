@@ -1,5 +1,22 @@
 import numpy as np
-from winspool.analysis import team_attributes, win_correlation, strength_of_schedule
+from winspool.analysis import (team_attributes, win_correlation,
+                               strength_of_schedule, roster_ceiling)
+
+def test_roster_ceiling_penalizes_cannibalization():
+    # Two candidates with IDENTICAL marginal distribution to pair with a held team:
+    #   - cannibal is perfectly anti-correlated with held (like a division rival
+    #     that plays it head-to-head) -> the combined total is pinned, no upside
+    #   - indep is independent -> the combined total has a real upper tail
+    # A winner-take-all tiebreak must prefer the roster with the higher spike.
+    rng = np.random.default_rng(0)
+    n = 20000
+    held = rng.integers(0, 2, n) + rng.integers(0, 2, n)   # mean 1, spread 0..2
+    cannibal = 2 - held                                     # same marginal, anti-correlated
+    indep = rng.integers(0, 2, n) + rng.integers(0, 2, n)   # same marginal, independent
+    wins = np.column_stack([held, cannibal, indep]).astype(np.int16)
+    # held+cannibal is a constant (2); held+indep has a genuine upper tail
+    assert roster_ceiling(wins, [0, 2]) > roster_ceiling(wins, [0, 1])
+    assert roster_ceiling(wins, []) == 0.0                 # empty roster -> no ceiling
 
 def test_attributes_basic():
     wins = np.array([[12, 4], [13, 5], [11, 6]], dtype=np.int16)

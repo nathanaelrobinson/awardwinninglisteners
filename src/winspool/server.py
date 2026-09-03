@@ -15,7 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from .analysis import team_attributes
+from .analysis import team_attributes, roster_ceiling
 from .data import load_schedule, load_win_totals, schedule_matchups
 from .draft import DraftState, PICK_ORDER, player_totals, pwin
 from .mock import auto_draft
@@ -210,12 +210,18 @@ def recommend(req: RecReq):
                      "survival": round(surv.get(r["team"], 1.0), 3),
                      "delta_wins": round(naive_by[r["team"]]["delta_wins"], 2),
                      "ceiling": round(attrs[r["team"]]["ceiling"], 3),
+                     "roster_ceiling": round(roster_ceiling(wins, my_idx + [r["team"]]), 2),
                      "conflict": conflict(r["team"])}
                     for r in roll]
             # Winner-take-all tie-break: among candidates whose P(win) are within
-            # ~1 pt (i.e. inside the estimator's noise), prefer the higher ceiling
-            # (positive variance) — you have to spike to win, so take the upside.
-            recs.sort(key=lambda r: (round(r["pwin"], 2), r["ceiling"]), reverse=True)
+            # ~1 pt (i.e. inside the estimator's noise), prefer the higher ROSTER
+            # ceiling — the upper tail of my combined total WITH this team added.
+            # Roster-aware, so a division rival whose solo upside is capped by
+            # head-to-head games (cannibalization) is NOT rewarded for it; this
+            # keeps the ranking consistent with the `conflict` warning instead of
+            # contradicting it. Early in the draft P(win) is degenerate (a small
+            # roster co-leads most seasons), so this tiebreak carries the ranking.
+            recs.sort(key=lambda r: (round(r["pwin"], 2), r["roster_ceiling"]), reverse=True)
         else:
             # Targets watchlist (also the "quick"/naive view): rank by value,
             # annotate how likely each is to still be there at my next pick.

@@ -14,6 +14,24 @@ def team_attributes(wins, ceiling_at=12, floor_at=6):
         })
     return out
 
+def roster_ceiling(wins, roster_idx, q=0.90):
+    """Upper-tail MEAN of a roster's COMBINED win total — the average outcome in
+    its best (1-q) fraction of seasons, i.e. how high the roster realistically
+    spikes. Unlike a team's standalone ceiling, this is roster-aware: teams that
+    cannibalize each other (head-to-head games cap their combined total) get a
+    thinner upper tail and score LOWER than independent teams of equal mean. It
+    captures both level and upside, and — unlike a raw quantile of an integer
+    win-total — is continuous, so it actually resolves near-ties. This is the
+    right winner-take-all tiebreak among near-equal P(win) picks: you have to
+    spike to win the pool, and a division rival's solo upside is illusory once
+    you hold its rival."""
+    roster_idx = list(roster_idx)
+    if not roster_idx:
+        return 0.0
+    total = wins[:, roster_idx].sum(axis=1)
+    tail = total[total >= np.quantile(total, q)]
+    return float(tail.mean()) if tail.size else float(total.max())
+
 def win_correlation(wins):
     return np.corrcoef(wins.T)
 
