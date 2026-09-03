@@ -116,3 +116,32 @@ def to_common_scale(source_strengths):
     scale = float(np.mean(stds[stds > 0])) if np.any(stds > 0) else 1.0
     z = np.where(stds > 0, (raw - means) / np.where(stds > 0, stds, 1.0), 0.0)
     return z * scale
+
+
+def calibrate_sigma(strength, home_idx, away_idx, target_sd, *,
+                    sigma_ref=4.5, sigma_max=12.0, n_seasons=8000,
+                    tie_base=0.003, seed=0):
+    """Per-team strength-space season-noise sigma (points) whose simulated
+    total-win SD matches each team's target win-SD.
+
+    Self-calibrated from two reference sims of THIS schedule (no hardcoded
+    wins-per-point): win-variance is ~quadratic in sigma, so a sim at sigma=0
+    and one at sigma=sigma_ref fix the per-team slope exactly. Then solve for the
+    sigma that hits target_sd**2. target_sd entries that are NaN (no market data)
+    fall back to sigma_ref. Result is clipped to [0, sigma_max]."""
+    from .sim import simulate
+    strength = np.asarray(strength, dtype=float)
+    target_sd = np.asarray(target_sd, dtype=float)
+    n = strength.size
+    base = simulate(strength, np.zeros(n), home_idx, away_idx, n_seasons,
+                    tie_base=tie_base, rng=np.random.default_rng(seed))
+    ref = simulate(strength, np.full(n, sigma_ref), home_idx, away_idx, n_seasons,
+                   tie_base=tie_base, rng=np.random.default_rng(seed + 1))
+    base_var = base.var(axis=0)
+    ref_var = ref.var(axis=0)
+    slope2 = np.maximum((ref_var - base_var) / (sigma_ref ** 2), 1e-9)
+    excess = np.maximum(target_sd ** 2 - base_var, 0.0)
+    sigma = np.sqrt(excess / slope2)
+    sigma = np.clip(sigma, 0.0, sigma_max)
+    sigma = np.where(np.isnan(target_sd), sigma_ref, sigma)
+    return sigma
