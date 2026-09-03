@@ -55,9 +55,10 @@ def test_refresh_skips_a_failing_source_and_keeps_the_rest(tmp_path):
     assert by_name["covers"]["ok"] is True and by_name["covers"]["n_teams"] == 2
 
 
-def test_default_sources_includes_kalshi():
+def test_default_sources_excludes_kalshi_totals():
+    # Phase 2: Kalshi is its own mixture voice in build_wins, NOT a win_totals
+    # totals source, so it must not appear in the fetch totals blend.
     from winspool.fetch.registry import default_sources
     names = {s.name for s in default_sources()}
-    assert "kalshi" in names
-    kal = next(s for s in default_sources() if s.name == "kalshi")
-    assert kal.kind == "totals"
+    assert "kalshi" not in names
+    assert "covers" in names  # covers remains the live totals source
