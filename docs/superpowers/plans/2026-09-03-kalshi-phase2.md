@@ -177,11 +177,23 @@ def test_mixture_rejects_wrong_length_sigma():
                          hfa=0.0, rng=np.random.default_rng(0))
 
 
+def _sigma_test_world(games=12):
+    # 3 teams, one world, equal strengths; teams 0 and 1 each play team 2 `games`
+    # times. NOT a closed 2-team system (that forces equal variance) — teams 0 and
+    # 1 never play each other, so their win-SDs are free to differ by their sigma.
+    import numpy as np
+    sm = np.zeros((1, 3))
+    home, away = [], []
+    for _ in range(games):
+        home += [0, 1]; away += [2, 2]
+    return sm, np.array(home), np.array(away)
+
+
 def test_mixture_per_team_sigma_widens_only_that_team():
     import numpy as np
-    sm, home, away = _one_world(2)
+    sm, home, away = _sigma_test_world()
     w = simulate_mixture(sm, home, away, 20000,
-                         base_sigma=np.array([0.05, 8.0]),   # team1 far noisier
+                         base_sigma=np.array([0.1, 8.0, 0.1]),   # team1 far noisier
                          hfa=0.0, tie_base=0.0, rng=np.random.default_rng(3))
     assert w[:, 1].std() > w[:, 0].std() + 0.5
 ```
