@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 from winspool.sim import simulate, simulate_mixture
 
 def _two_team(rng, n=20000, sig=0.0):
@@ -57,3 +58,37 @@ def test_simulate_mixture_is_bimodal_on_disagreement():
     frac_mid = np.mean(t0 == 1)
     frac_ext = np.mean((t0 == 0) | (t0 == 2))
     assert frac_ext > frac_mid   # mass piles at the extremes, not the middle
+
+
+def _one_world(n_teams=2):
+    # single "world": equal strengths, a 2-team home/away pair
+    sm = np.zeros((1, n_teams))
+    home = np.array([0, 1]); away = np.array([1, 0])
+    return sm, home, away
+
+
+def _sigma_test_world(games=12):
+    # 3 teams, one world, equal strengths; teams 0 and 1 each play team 2 `games`
+    # times. NOT a closed 2-team system (that forces equal variance) — teams 0 and
+    # 1 never play each other, so their win-SDs are free to differ by their sigma.
+    sm = np.zeros((1, 3))
+    home, away = [], []
+    for _ in range(games):
+        home += [0, 1]; away += [2, 2]
+    return sm, np.array(home), np.array(away)
+
+
+def test_mixture_rejects_wrong_length_sigma():
+    sm, home, away = _one_world(2)
+    with pytest.raises(ValueError, match="n_teams"):
+        simulate_mixture(sm, home, away, 100,
+                         base_sigma=np.array([1.0, 2.0, 3.0]),   # len 3 != 2 teams
+                         hfa=0.0, rng=np.random.default_rng(0))
+
+
+def test_mixture_per_team_sigma_widens_only_that_team():
+    sm, home, away = _sigma_test_world()
+    w = simulate_mixture(sm, home, away, 20000,
+                         base_sigma=np.array([0.1, 8.0, 0.1]),   # team1 far noisier
+                         hfa=0.0, tie_base=0.0, rng=np.random.default_rng(3))
+    assert w[:, 1].std() > w[:, 0].std() + 0.5
