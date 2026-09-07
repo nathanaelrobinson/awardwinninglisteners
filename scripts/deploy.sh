@@ -12,12 +12,7 @@ cleanup() { rm -rf "$TMP"; }
 trap cleanup EXIT
 
 git archive HEAD | tar -x -C "$TMP"
-mkdir -p "$TMP/data/cache"
-cp "$REPO_ROOT"/data/cache/*.csv "$REPO_ROOT"/data/cache/*.npz "$REPO_ROOT"/data/cache/*.json "$TMP/data/cache/" 2>/dev/null || true
-# Without a .gcloudignore, `gcloud run deploy --source` auto-derives one from
-# .gitignore, which would exclude the gitignored data/cache/ we just copied in.
-# Provide our own so the upload includes it (still excluding .git).
-printf '.git\n.gcloudignore\n' > "$TMP/.gcloudignore"
+printf '.git\n.gcloudignore\nweb/node_modules\n.venv\nvenv\n' > "$TMP/.gcloudignore"
 cd "$TMP"
 
 gcloud run deploy "$SERVICE" \

@@ -94,3 +94,14 @@ uv run pytest -q
 ```
 
 See `docs/superpowers/specs/` and `docs/superpowers/plans/` for the design and build plan.
+
+## CI/CD
+
+GitHub Actions (`.github/workflows/`) runs on every push and pull request: `ci.yml` runs the
+Python test suite (`uv sync --extra dev && uv run pytest -q`) and the web build/lint
+(`npm ci && npm run build && npx oxlint src`). Merging to `main` triggers `deploy.yml`, which
+deploys to Cloud Run (service `pika`, project `snowpack-pika`, region `us-west1`) using Workload
+Identity Federation — no long-lived service account key.
+
+Required repo **variables**: `GCP_WIF_PROVIDER`, `GCP_DEPLOY_SA`.
+Required repo **secrets**: `SESSION_SECRET`, `REFRESH_TOKEN` (same values as the live revision).
