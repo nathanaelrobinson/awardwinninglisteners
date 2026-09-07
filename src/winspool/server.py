@@ -25,8 +25,14 @@ from .recommend import (build_wins, naive_recommend, pwin_after_playout,
                         rollout_recommend, survival_probs)
 from .teams import DIVISION, N_PLAYERS, N_TEAMS, TEAM_INDEX, TEAM_NAMES, TEAMS
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-CACHE = REPO_ROOT / "data" / "cache"
+_data_dir_env = os.environ.get("WINSPOOL_DATA_DIR")
+if _data_dir_env:
+    # Explicit override — used in containers where the package is pip-installed
+    # into site-packages, so parents[2] below no longer points at a repo checkout.
+    CACHE = Path(_data_dir_env)
+else:
+    REPO_ROOT = Path(__file__).resolve().parents[2]
+    CACHE = REPO_ROOT / "data" / "cache"
 SCHEDULE = CACHE / "schedule_2026.csv"
 TOTALS = CACHE / "win_totals.csv"
 POWER = CACHE / "power_ratings.csv"
