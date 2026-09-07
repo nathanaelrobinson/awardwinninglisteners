@@ -2,7 +2,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import './App.css';
 import type { LeagueView, Me } from './league';
-import { getLeague, getMe } from './league';
+import { getLeague, getMe, pickTeam } from './league';
 import Login from './components/Login';
 import Lobby from './components/Lobby';
 import LiveDraft from './components/LiveDraft';
@@ -16,6 +16,7 @@ export default function App() {
   const [me, setMe] = useState<Me | null | undefined>(undefined); // undefined = checking
   const [view, setView] = useState<LeagueView | null>(null);
   const [tab, setTab] = useState<Tab>('draft');
+  const [selected, setSelected] = useState<string | null>(null);
   const tabChosen = useRef(false);
 
   const refreshMe = useCallback(() => {
@@ -47,6 +48,23 @@ export default function App() {
     return () => { alive = false; window.clearTimeout(timer); };
   }, [me]);
 
+  // Clear a selected-but-unconfirmed tile when it's no longer our turn, or once
+  // the selected team shows up in picks (someone else took it, or ours landed).
+  useEffect(() => {
+    if (!view || !me) { setSelected(null); return; }
+    const myTurn = view.status === 'drafting' && view.current_player === me.name;
+    if (!myTurn) { setSelected(null); return; }
+    if (selected && view.picks.some((p) => p.team === selected)) setSelected(null);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [view, me]);
+
+  async function confirmPick() {
+    if (!selected) return;
+    const code = selected;
+    setSelected(null);
+    try { setView(await pickTeam(code)); } catch { getLeague().then(setView).catch(() => {}); }
+  }
+
   if (me === undefined) return null;
   if (me === null) return <Login onDone={refreshMe} />;
   if (!view) return null;
@@ -65,10 +83,10 @@ export default function App() {
           <span className="tab-me">{me.name}</span>
         </div>
       </nav>
-      <StatusBar view={view} me={me} />
+      <StatusBar view={view} me={me} selected={selected} onConfirm={confirmPick} />
       {tab !== 'practice' && (
         <main className="wrap">
-          {tab === 'draft' && (view.status === 'lobby' ? <Lobby view={view} me={me} /> : <LiveDraft view={view} me={me} onChange={setView} />)}
+          {tab === 'draft' && (view.status === 'lobby' ? <Lobby view={view} me={me} /> : <LiveDraft view={view} me={me} onChange={setView} selected={selected} onSelect={setSelected} />)}
           {tab === 'standings' && <Standings me={me} view={view} />}
         </main>
       )}

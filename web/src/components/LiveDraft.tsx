@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { fetchTeams } from '../api';
 import type { Team } from '../types';
 import type { LeagueView, Me } from '../league';
-import { getLeague, pickTeam, restartDraft, undoPick } from '../league';
+import { getLeague, restartDraft, undoPick } from '../league';
 import PickStrip from './PickStrip';
 import DraftBoard from './DraftBoard';
 import LiveRosters from './LiveRosters';
@@ -13,9 +13,15 @@ import Forecast from './Forecast';
 import { fetchRecommend } from '../api';
 import type { RecommendResponse } from '../types';
 
-interface Props { view: LeagueView; me: Me; onChange: (v: LeagueView) => void }
+interface Props {
+  view: LeagueView;
+  me: Me;
+  onChange: (v: LeagueView) => void;
+  selected: string | null;
+  onSelect: (code: string | null) => void;
+}
 
-export default function LiveDraft({ view, me, onChange }: Props) {
+export default function LiveDraft({ view, me, onChange, selected, onSelect }: Props) {
   const [teams, setTeams] = useState<Team[]>([]);
   useEffect(() => {
     let alive = true;
@@ -70,7 +76,14 @@ export default function LiveDraft({ view, me, onChange }: Props) {
       </div>
       <div className="live">
         <div className="live-col">
-          <DraftBoard teams={teams} takenBy={takenBy} myName={me.name} canPick={myTurn} onPick={(c) => act(() => pickTeam(c))} />
+          <DraftBoard
+            teams={teams}
+            takenBy={takenBy}
+            myName={me.name}
+            canPick={myTurn}
+            selected={selected}
+            onPick={(c) => onSelect(selected === c ? null : c)}
+          />
           {me.is_commissioner && view.status === 'drafting' && (
             <>
               <Recommendations recommend={rec} loading={recLoading} teamNames={teamNames} />

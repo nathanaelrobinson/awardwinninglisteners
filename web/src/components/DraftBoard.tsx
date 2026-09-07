@@ -12,10 +12,11 @@ interface Props {
   takenBy: Record<string, string>; // code -> player name
   myName: string;
   canPick: boolean;
+  selected?: string | null;
   onPick: (code: string) => void;
 }
 
-export default function DraftBoard({ teams, takenBy, myName, canPick, onPick }: Props) {
+export default function DraftBoard({ teams, takenBy, myName, canPick, selected, onPick }: Props) {
   const present = new Set(teams.map((t) => t.division));
   const divisions = DIVISION_ORDER.filter((d) => present.has(d));
   const short = (n: string) => n.split(' ')[0];
@@ -33,7 +34,12 @@ export default function DraftBoard({ teams, takenBy, myName, canPick, onPick }: 
               .map((t) => {
                 const owner = takenBy[t.code];
                 const taken = owner !== undefined;
-                const cls = ['tile', taken ? 'taken' : canPick ? 'open' : '', owner === myName ? 'mine' : ''].join(' ');
+                const cls = [
+                  'tile',
+                  taken ? 'taken' : canPick ? 'open' : '',
+                  owner === myName ? 'mine' : '',
+                  !taken && canPick && t.code === selected ? 'selected' : '',
+                ].join(' ');
                 return (
                   <button key={t.code} className={cls} disabled={taken || !canPick} onClick={() => onPick(t.code)} title={t.name}>
                     <TeamLogo code={t.code} size={28} />
