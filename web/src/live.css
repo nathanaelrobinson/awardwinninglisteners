@@ -28,7 +28,7 @@
 .dboard { display: flex; flex-direction: column; gap: 4px; }
 .dboard-div { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
 .dboard-div h4 { font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; color: var(--text-dim); font-weight: 400; margin: 0; }
-.dboard-tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(96px, 1fr)); gap: 8px; }
+.dboard-tiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); max-width: 640px; gap: 8px; }
 .tile { border: 1px solid var(--border); border-radius: 4px; padding: 10px 8px; background: var(--bg-panel); color: var(--text); font-weight: 700; font-size: 16px; letter-spacing: -0.01em; text-align: left; display: flex; flex-direction: column; gap: 2px; min-width: 0; }
 .tile .owner { font-size: 11px; font-weight: 400; letter-spacing: normal; color: var(--text-dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .tile.open { cursor: pointer; border-color: var(--accent); }
@@ -66,9 +66,11 @@
   .strip { grid-template-columns: repeat(5, 1fr); }
   .strip-cell .who { font-size: 11px; }
   .strip-cell .who .nm { white-space: normal; overflow-wrap: break-word; font-size: 10px; }
-  .dboard-tiles { grid-template-columns: repeat(4, 1fr); gap: 6px; }
+  .dboard-tiles { grid-template-columns: repeat(4, 1fr); max-width: none; gap: 6px; }
   .tile { min-height: 44px; justify-content: center; width: auto; }
   .lrosters { grid-template-columns: repeat(5, minmax(60px, 1fr)); overflow-x: auto; }
   .lroster h4 { font-size: 11px; }
   .feed { height: 40vh; }
+  .btn { min-height: 44px; }
+  .login-pin, .login-name { min-height: 44px; }
 }
