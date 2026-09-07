@@ -2,7 +2,7 @@ import random
 import pytest
 from fastapi.testclient import TestClient
 
-from winspool import league, server
+from winspool import auth, league, server
 from winspool.store import InMemoryStore, set_store
 from winspool.draft import PICK_ORDER
 
@@ -86,7 +86,9 @@ def test_pick_flow_turn_enforced_and_undo(api, store):
     assert r.status_code == 200
     assert r.json()["rosters"][first] == ["KC"]
     assert c2.post("/api/league/pick", json={"team": "KC"}).status_code == 409
-    assert c2.post("/api/league/undo").status_code == 403 or second == "Nate Robinson"
+    non_commissioner = next(p for p in PLAYERS if p not in {first, "Nate Robinson"})
+    c3, _ = login(api, non_commissioner)
+    assert c3.post("/api/league/undo").status_code == 403
     assert n.post("/api/league/undo").status_code == 200
     assert store.get()["picks"] == []
 
@@ -108,6 +110,19 @@ def test_optimizer_routes_commissioner_only(api):
     assert c.post("/api/results", json={"slot": 1, "taken": []}).status_code == 403
     assert c.post("/api/advance", json={"slot": 1, "taken": []}).status_code == 403
     assert api.get("/api/teams").status_code == 200  # open
+
+
+def test_me_and_messages_503_when_league_uninitialized(monkeypatch):
+    monkeypatch.setenv("SESSION_SECRET", "test-secret")
+    set_store(InMemoryStore())
+    try:
+        c = TestClient(server.app)
+        c.cookies.set(auth.COOKIE, auth.sign("Nate Robinson"))
+        assert c.get("/api/me").status_code == 503
+        assert c.get("/api/messages").status_code == 503
+        assert c.post("/api/messages", json={"text": "hi"}).status_code == 503
+    finally:
+        set_store(None)
 
 
 def test_standings_zero_before_games_and_override(api, store, monkeypatch):

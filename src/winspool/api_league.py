@@ -42,7 +42,10 @@ def login(req: LoginReq, resp: Response):
 
 @router.get("/me")
 def me(name: str = Depends(current_user)):
-    doc = get_store().get()
+    try:
+        doc = get_store().get()
+    except LookupError:
+        raise HTTPException(503, "league not initialized")
     return {"name": name, "is_commissioner": name == doc["commissioner"],
             "slot": league.slot_of(doc, name)}
 
@@ -86,6 +89,10 @@ class MsgReq(BaseModel):
 
 @router.post("/messages")
 def post_message(req: MsgReq, name: str = Depends(current_user)):
+    try:
+        get_store().get()
+    except LookupError:
+        raise HTTPException(503, "league not initialized")
     text = req.text.strip()
     if not text or len(text) > 500:
         raise HTTPException(400, "1-500 chars")
@@ -94,6 +101,10 @@ def post_message(req: MsgReq, name: str = Depends(current_user)):
 
 @router.get("/messages")
 def get_messages(since: float | None = None, _: str = Depends(current_user)):
+    try:
+        get_store().get()
+    except LookupError:
+        raise HTTPException(503, "league not initialized")
     return get_store().messages(since)
 
 
