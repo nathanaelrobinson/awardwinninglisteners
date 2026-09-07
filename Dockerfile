@@ -14,5 +14,5 @@ COPY src/ ./src/
 RUN uv pip install --system --no-cache .
 COPY data/cache/ ./data/cache/
 COPY --from=web /web/dist ./web/dist
-ENV PORT=8080 STORE=firestore PYTHONUNBUFFERED=1 WINSPOOL_DATA_DIR=/app/data/cache
+ENV PORT=8080 STORE=firestore PYTHONUNBUFFERED=1 WINSPOOL_DATA_DIR=/app/data/cache WINSPOOL_WEB_DIST=/app/web/dist
 CMD ["sh", "-c", "winspool-serve --host 0.0.0.0 --port ${PORT}"]

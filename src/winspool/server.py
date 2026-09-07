@@ -7,6 +7,7 @@ auto-draft simulations. The built React front end (web/dist) mounts at /.
 Run: uv run winspool-serve
 """
 import argparse
+import hashlib
 import os
 from pathlib import Path
 
@@ -25,14 +26,12 @@ from .recommend import (build_wins, naive_recommend, pwin_after_playout,
                         rollout_recommend, survival_probs)
 from .teams import DIVISION, N_PLAYERS, N_TEAMS, TEAM_INDEX, TEAM_NAMES, TEAMS
 
-_data_dir_env = os.environ.get("WINSPOOL_DATA_DIR")
-if _data_dir_env:
-    # Explicit override — used in containers where the package is pip-installed
-    # into site-packages, so parents[2] below no longer points at a repo checkout.
-    CACHE = Path(_data_dir_env)
-else:
-    REPO_ROOT = Path(__file__).resolve().parents[2]
-    CACHE = REPO_ROOT / "data" / "cache"
+# In a source checkout, src/winspool/server.py -> parents[2] is the repo root.
+# When pip-installed into site-packages (as in the Cloud Run container),
+# parents[2] no longer points at a repo checkout, so data/cache and web/dist
+# locations are overridable via env vars there.
+REPO_ROOT = Path(__file__).resolve().parents[2]
+CACHE = Path(os.environ.get("WINSPOOL_DATA_DIR") or REPO_ROOT / "data" / "cache")
 SCHEDULE = CACHE / "schedule_2026.csv"
 TOTALS = CACHE / "win_totals.csv"
 POWER = CACHE / "power_ratings.csv"
@@ -82,10 +81,15 @@ MATRIX_CACHE = CACHE / "sim_matrix.npz"
 
 
 def _cache_key():
-    """Signature of the inputs the sim depends on — rebuild when any changes."""
+    """Signature of the inputs the sim depends on — rebuild when any changes.
+
+    Content-hashed rather than mtime-based: files copied by the deploy script
+    or extracted via `git archive` get fresh mtimes even when unchanged, which
+    would otherwise force a rebuild on every deploy.
+    """
     parts = [str(N_SEASONS)]
     for f in (SCHEDULE, TOTALS, POWER, KALSHI):
-        parts.append(str(f.stat().st_mtime_ns) if f.exists() else "0")
+        parts.append(hashlib.sha256(f.read_bytes()).hexdigest()[:16] if f.exists() else "0")
     return "|".join(parts)
 
 
@@ -427,7 +431,7 @@ def sample_season(req: SampleReq, _: str = Depends(require_commissioner)):
     return {"standings": out, "winners": [r["player"] for r in out if r["total_wins"] == top]}
 
 
-_DIST = REPO_ROOT / "web" / "dist"
+_DIST = Path(os.environ.get("WINSPOOL_WEB_DIST") or REPO_ROOT / "web" / "dist")
 if _DIST.exists():
     app.mount("/", StaticFiles(directory=str(_DIST), html=True), name="static")
 
