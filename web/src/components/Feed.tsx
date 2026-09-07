@@ -62,7 +62,7 @@ export default function Feed({ view, myName }: { view: LeagueView; myName: strin
       <div className="feed-list" ref={listRef}>
         {items.map((it) =>
           it.kind === 'pick' ? (
-            <div key={`p${it.n}`} className="feed-pick">{it.by} — <b>{it.team}</b></div>
+            <div key={`p${it.n}`} className="feed-pick"><span className="feed-n">{it.n}</span> {it.by} — <b>{it.team}</b></div>
           ) : (
             <div key={it.id} className="feed-msg"><span className="by">{it.by}</span>{it.text}</div>
           )

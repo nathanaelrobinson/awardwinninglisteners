@@ -9,7 +9,7 @@ const DIVISION_ORDER = [
 
 interface Props {
   teams: Team[];
-  takenBy: Record<string, string>; // code -> player name
+  takenBy: Record<string, { name: string; n: number }>; // code -> drafter + pick number
   myName: string;
   canPick: boolean;
   selected?: string | null;
@@ -37,7 +37,7 @@ export default function DraftBoard({ teams, takenBy, myName, canPick, selected, 
                 const cls = [
                   'tile',
                   taken ? 'taken' : canPick ? 'open' : '',
-                  owner === myName ? 'mine' : '',
+                  owner?.name === myName ? 'mine' : '',
                   !taken && canPick && t.code === selected ? 'selected' : '',
                 ].join(' ');
                 return (
@@ -45,7 +45,7 @@ export default function DraftBoard({ teams, takenBy, myName, canPick, selected, 
                     <TeamLogo code={t.code} size={28} />
                     <span className="tile-text">
                       {t.code}
-                      <span className="owner">{taken ? short(owner) : ' '}</span>
+                      <span className="owner">{taken ? <>#{owner.n} · {short(owner.name)}</> : ' '}</span>
                     </span>
                   </button>
                 );

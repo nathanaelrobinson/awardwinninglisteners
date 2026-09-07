@@ -8,6 +8,7 @@ import Lobby from './components/Lobby';
 import LiveDraft from './components/LiveDraft';
 import Standings from './components/Standings';
 import StatusBar from './components/StatusBar';
+import OrderTicker from './components/OrderTicker';
 import Practice from './components/Practice';
 
 type Tab = 'draft' | 'standings' | 'practice';
@@ -84,6 +85,7 @@ export default function App() {
         </div>
       </nav>
       <StatusBar view={view} me={me} selected={selected} onConfirm={confirmPick} />
+      <OrderTicker view={view} myName={me.name} />
       {tab !== 'practice' && (
         <main className="wrap">
           {tab === 'draft' && (view.status === 'lobby' ? <Lobby view={view} me={me} /> : <LiveDraft view={view} me={me} onChange={setView} selected={selected} onSelect={setSelected} />)}

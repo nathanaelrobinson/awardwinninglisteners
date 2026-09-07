@@ -66,6 +66,26 @@
 .status-next .status-next-name { font-weight: 700; font-size: 14px; }
 .status-done .status-label { color: var(--text); }
 
+/* ---------- order ticker ---------- */
+.order-ticker {
+  height: 32px;
+  background: #ffffff;
+  border-bottom: 1px solid var(--border);
+  display: flex;
+  align-items: center;
+  overflow-x: auto;
+  white-space: nowrap;
+  padding: 0 var(--s4);
+  scrollbar-width: none;
+}
+.order-ticker::-webkit-scrollbar { display: none; }
+@media (min-width: 901px) { .order-ticker { padding: 0 var(--s5); } }
+.ticker-chip { display: inline-flex; align-items: center; font-size: 13px; color: var(--text); }
+.ticker-n { font-variant-numeric: tabular-nums; color: var(--text-dim); font-size: 11px; margin-right: 4px; }
+.ticker-sep { color: var(--border-2); margin: 0 8px; }
+.ticker-chip.current { color: var(--red); text-decoration: underline; }
+.ticker-chip.mine { color: var(--navy); }
+
 /* ---------- login ---------- */
 .login {
   max-width: 400px; margin: 8vh auto;
@@ -158,6 +178,7 @@
 .feed .eyebrow { padding: 0 var(--s4); }
 .feed-list { flex: 1; overflow-y: auto; padding: 0 var(--s4) var(--s2); display: flex; flex-direction: column; gap: 6px; font-size: 14px; }
 .feed-pick { color: var(--text-dim); }
+.feed-n { font-variant-numeric: tabular-nums; font-size: 12px; color: var(--text-dim); }
 .feed-pick b { color: var(--text); }
 .feed-msg .by { color: var(--accent); font-weight: 700; margin-right: 6px; }
 .feed-compose { display: flex; gap: 8px; border-top: 1px solid var(--border); padding: 8px; }

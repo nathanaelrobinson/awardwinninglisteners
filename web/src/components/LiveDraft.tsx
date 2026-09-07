@@ -35,7 +35,7 @@ export default function LiveDraft({ view, me, onChange, selected, onSelect }: Pr
     return () => { alive = false; window.clearTimeout(timer); };
   }, []);
 
-  const takenBy = useMemo(() => Object.fromEntries(view.picks.map((p) => [p.team, p.by])), [view.picks]);
+  const takenBy = useMemo(() => Object.fromEntries(view.picks.map((p) => [p.team, { name: p.by, n: p.n }])), [view.picks]);
   const myTurn = view.status === 'drafting' && view.current_player === me.name;
   const taken = view.picks.map((p) => p.team);
   const mySlot = view.slots?.[me.name] ?? null;
