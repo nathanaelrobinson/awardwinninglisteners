@@ -181,10 +181,10 @@ headers and button labels stay. Sentences go.
   `sim_matrix.npz`). No Playwright browser install.
 - `.dockerignore` excludes `venv/`, `web/node_modules/`, `.git/`. `data/cache/` is
   git-ignored but is **not** docker-ignored; it must exist locally when building.
-- Cloud Run service `winspool`, region `us-west1`, `--min-instances=1
+- Cloud Run service `pika`, region `us-west1`, `--min-instances=1
   --max-instances=1 --memory=2Gi --cpu=2 --allow-unauthenticated`.
   Env: `STORE=firestore`, `SESSION_SECRET`, `GOOGLE_CLOUD_PROJECT`.
-- New GCP project `wins-pool-2026` (personal), billing linked to the same account as
+- New GCP project `snowpack-pika` (codename "pika"), billing linked to the same account as
   the active project. Enable Cloud Run, Artifact Registry, Cloud Build, Firestore.
   Firestore native mode, `us-west1`.
 - One-time setup via `winspool league-init` which writes the league doc. Players:
