@@ -16,12 +16,15 @@ class Store(Protocol):
     def update(self, fn: Callable[[dict], dict]) -> dict: ...
     def add_message(self, by: str, text: str) -> dict: ...
     def messages(self, since: float | None) -> list[dict]: ...
+    def get_standings(self) -> dict | None: ...
+    def put_standings(self, doc: dict) -> None: ...
 
 
 class InMemoryStore:
     def __init__(self, doc: dict | None = None):
         self._doc = doc
         self._msgs: list[dict] = []
+        self._standings: dict | None = None
         self._lock = threading.Lock()
 
     def get(self) -> dict:
@@ -47,6 +50,13 @@ class InMemoryStore:
     def messages(self, since):
         out = [m for m in self._msgs if since is None or m["ts"] > since]
         return out[-MSG_CAP:]
+
+    def get_standings(self):
+        return self._standings
+
+    def put_standings(self, doc):
+        with self._lock:
+            self._standings = doc
 
 
 class FirestoreStore:
@@ -92,6 +102,13 @@ class FirestoreStore:
             q = q.where(filter=FieldFilter("ts", ">", since))
         docs = list(q.limit_to_last(MSG_CAP).get()) if since is None else list(q.limit(MSG_CAP).get())
         return [{"id": d.id, **d.to_dict()} for d in docs]
+
+    def get_standings(self):
+        snap = self._ref.collection("cache").document("standings").get()
+        return snap.to_dict() if snap.exists else None
+
+    def put_standings(self, doc):
+        self._ref.collection("cache").document("standings").set(doc)
 
 
 _STORE: Store | None = None

@@ -1,7 +1,8 @@
+import os
 import random
 import time
 
-from fastapi import APIRouter, Depends, HTTPException, Response
+from fastapi import APIRouter, Depends, Header, HTTPException, Response
 from google.api_core import exceptions as gexc
 from pydantic import BaseModel
 
@@ -12,7 +13,7 @@ from .league import LeagueError
 from .store import get_store
 from .teams import resolve
 
-router = APIRouter(prefix="/api")
+router = APIRouter()
 
 TOUCH_EVERY = 20.0  # seconds; Lobby considers a player online if seen within 30s
 
@@ -46,7 +47,7 @@ class LoginReq(BaseModel):
     pin: str
 
 
-@router.post("/login")
+@router.post("/api/login")
 def login(req: LoginReq, resp: Response):
     doc = _doc()
     if req.name not in doc["players"] or not league.check_pin(doc, req.name, req.pin):
@@ -55,7 +56,7 @@ def login(req: LoginReq, resp: Response):
     return {"name": req.name}
 
 
-@router.get("/me")
+@router.get("/api/me")
 def me(name: str = Depends(current_user)):
     doc = _doc()
     return {"name": name, "is_commissioner": name == doc["commissioner"],
@@ -70,7 +71,7 @@ def _touch(name):
     return touch
 
 
-@router.get("/league")
+@router.get("/api/league")
 def get_league(name: str = Depends(current_user)):
     doc = _doc()
     last = (doc.get("logged_in") or {}).get(name) or 0
@@ -84,12 +85,12 @@ def get_league(name: str = Depends(current_user)):
         raise
 
 
-@router.post("/league/randomize")
+@router.post("/api/league/randomize")
 def randomize(_: str = Depends(require_commissioner)):
     return _run(lambda d: league.randomize(d, random.SystemRandom()))
 
 
-@router.post("/league/reset")
+@router.post("/api/league/reset")
 def reset(_: str = Depends(require_commissioner)):
     return _run(league.reset)
 
@@ -98,12 +99,12 @@ class PickReq(BaseModel):
     team: str
 
 
-@router.post("/league/pick")
+@router.post("/api/league/pick")
 def pick(req: PickReq, name: str = Depends(current_user)):
     return _run(lambda d: league.pick(d, name, req.team, time.time()))
 
 
-@router.post("/league/undo")
+@router.post("/api/league/undo")
 def undo(_: str = Depends(require_commissioner)):
     return _run(league.undo)
 
@@ -112,7 +113,7 @@ class MsgReq(BaseModel):
     text: str
 
 
-@router.post("/messages")
+@router.post("/api/messages")
 def post_message(req: MsgReq, name: str = Depends(current_user)):
     _doc()
     text = req.text.strip()
@@ -121,26 +122,37 @@ def post_message(req: MsgReq, name: str = Depends(current_user)):
     return get_store().add_message(name, text)
 
 
-@router.get("/messages")
+@router.get("/api/messages")
 def get_messages(since: float | None = None, _: str = Depends(current_user)):
     _doc()
     return get_store().messages(since)
 
 
-@router.get("/standings")
+STANDINGS_STALE_AFTER = 6 * 3600
+
+
+@router.get("/api/standings")
 def get_standings(refresh: int = 0, name: str = Depends(current_user)):
     doc = _doc()
+    store = get_store()
     if refresh and name != doc["commissioner"]:
         refresh = 0
-    wins, stale = _standings.fetch_wins(refresh=bool(refresh))
-    wins = _standings.apply_overrides(wins, doc.get("overrides", {}))
+    if refresh:
+        sdoc = _standings.refresh_standings(store)
+    else:
+        sdoc = store.get_standings()
+        if sdoc is None:
+            sdoc = _standings.refresh_standings(store)
+    wins = _standings.apply_overrides(sdoc["wins"], doc.get("overrides", {}))
     rosters = league.view(doc)["rosters"]
     rows = [{"player": p,
              "teams": [{"code": t, "wins": wins[t]} for t in teams],
              "total": sum(wins[t] for t in teams)}
             for p, teams in rosters.items()]
     rows.sort(key=lambda r: r["total"], reverse=True)
-    return {"rows": rows, "stale": stale, "overrides": doc.get("overrides", {})}
+    stale = (not sdoc["ok"]) or (time.time() - sdoc["fetched_at"] > STANDINGS_STALE_AFTER)
+    return {"rows": rows, "stale": stale, "overrides": doc.get("overrides", {}),
+            "fetched_at": sdoc["fetched_at"]}
 
 
 class OverrideReq(BaseModel):
@@ -148,7 +160,7 @@ class OverrideReq(BaseModel):
     wins: int | None   # None clears
 
 
-@router.post("/standings/override")
+@router.post("/api/standings/override")
 def set_override(req: OverrideReq, _: str = Depends(require_commissioner)):
     code = resolve(req.team)
     if code is None:
@@ -164,3 +176,15 @@ def set_override(req: OverrideReq, _: str = Depends(require_commissioner)):
         return d
     _run(fn)
     return {"overrides": _doc()["overrides"]}
+
+
+@router.post("/internal/refresh-standings", include_in_schema=False)
+def internal_refresh_standings(x_refresh_token: str | None = Header(default=None)):
+    expected = os.environ.get("REFRESH_TOKEN")
+    if not expected:
+        raise HTTPException(503, "refresh token not configured")
+    if not x_refresh_token or x_refresh_token != expected:
+        raise HTTPException(403, "forbidden")
+    doc = _standings.refresh_standings(get_store())
+    return {"ok": doc["ok"], "fetched_at": doc["fetched_at"],
+            "teams_with_wins": sum(1 for w in doc["wins"].values() if w > 0)}

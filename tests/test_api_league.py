@@ -147,7 +147,10 @@ def test_me_and_messages_503_when_league_uninitialized(monkeypatch):
 
 def test_standings_zero_before_games_and_override(api, store, monkeypatch):
     from winspool import standings
-    monkeypatch.setattr(standings, "fetch_wins", lambda refresh=False: ({t: 0 for t in standings.TEAMS}, False))
+    import pandas as pd
+    empty = pd.DataFrame([], columns=["game_type", "home_team", "away_team",
+                                       "home_score", "away_score"])
+    monkeypatch.setattr(standings, "_load_schedule", lambda: empty)
     n, _ = login(api, "Nate Robinson")
     n.post("/api/league/randomize")
     doc = store.get()
@@ -226,6 +229,45 @@ def test_standings_and_commissioner_routes_503_when_uninitialized(monkeypatch):
         assert c.post("/api/league/randomize").status_code == 503
     finally:
         set_store(None)
+
+
+def test_standings_response_has_fetched_at(api, store, monkeypatch):
+    from winspool import standings
+    import pandas as pd
+    empty = pd.DataFrame([], columns=["game_type", "home_team", "away_team",
+                                       "home_score", "away_score"])
+    monkeypatch.setattr(standings, "_load_schedule", lambda: empty)
+    n, _ = login(api, "Nate Robinson")
+    r = n.get("/api/standings").json()
+    assert isinstance(r["fetched_at"], float)
+    assert r["stale"] is False
+
+
+def test_internal_refresh_standings_requires_token(api, store, monkeypatch):
+    from winspool import standings
+    import pandas as pd
+    df = pd.DataFrame([("REG", "KC", "BUF", 27, 20)],
+                       columns=["game_type", "home_team", "away_team",
+                                "home_score", "away_score"])
+    monkeypatch.setattr(standings, "_load_schedule", lambda: df)
+
+    monkeypatch.delenv("REFRESH_TOKEN", raising=False)
+    r = api.post("/internal/refresh-standings")
+    assert r.status_code == 503
+
+    monkeypatch.setenv("REFRESH_TOKEN", "secret-token")
+    r = api.post("/internal/refresh-standings")
+    assert r.status_code == 403
+    r = api.post("/internal/refresh-standings", headers={"X-Refresh-Token": "wrong"})
+    assert r.status_code == 403
+
+    r = api.post("/internal/refresh-standings", headers={"X-Refresh-Token": "secret-token"})
+    assert r.status_code == 200
+    body = r.json()
+    assert body["ok"] is True
+    assert isinstance(body["fetched_at"], float)
+    assert body["teams_with_wins"] == 1
+    assert store.get_standings()["wins"]["KC"] == 1
 
 
 class ExhaustingStore(InMemoryStore):

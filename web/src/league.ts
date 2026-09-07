@@ -20,7 +20,12 @@ export interface LeagueView {
 export interface Message { id: string; by: string; text: string; ts: number }
 
 export interface StandingsRow { player: string; teams: { code: string; wins: number }[]; total: number }
-export interface StandingsResponse { rows: StandingsRow[]; stale: boolean; overrides: Record<string, number> }
+export interface StandingsResponse {
+  rows: StandingsRow[];
+  stale: boolean;
+  overrides: Record<string, number>;
+  fetched_at: number;
+}
 
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, { credentials: 'same-origin', ...init });

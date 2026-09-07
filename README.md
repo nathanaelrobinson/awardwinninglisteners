@@ -71,8 +71,12 @@ person theirs. `--force` is required if picks exist. Messages live in the Firest
 **Local dev:** `uv run winspool-serve` seeds an in-memory league; every player's PIN is `1234`
 (override with `LEAGUE_DEV_PIN`).
 
-**Standings:** regular-season wins from `nfl_data_py`, refreshed hourly; the commissioner can
+**Standings:** regular-season wins from `nfl_data_py`, cached in Firestore (`leagues/2026/cache/standings`)
+so all players read one stored result instead of each triggering a live fetch; the commissioner can
 override a team's wins by clicking the number.
+
+`POST /internal/refresh-standings` (header `X-Refresh-Token: $REFRESH_TOKEN`) refreshes the cache;
+Cloud Scheduler calls it every 15 minutes on Sun/Mon/Thu and every 4 hours otherwise.
 
 ## CLI (no UI)
 

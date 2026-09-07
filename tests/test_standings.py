@@ -1,5 +1,6 @@
 import pandas as pd
 from winspool import standings
+from winspool.store import InMemoryStore
 
 
 def df(rows):
@@ -28,18 +29,43 @@ def test_apply_overrides():
     assert standings.apply_overrides(w, {"BUF": 1})["KC"] == 2
 
 
-def test_fetch_wins_uses_cache_and_reports_stale(monkeypatch):
-    calls = []
-    def fake_load():
-        calls.append(1)
-        if len(calls) == 2:
-            raise RuntimeError("network")
-        return df([("REG", "KC", "BUF", 27, 20)])
-    monkeypatch.setattr(standings, "_load_schedule", fake_load)
-    standings._CACHE.clear()
-    w, stale = standings.fetch_wins()
-    assert w["KC"] == 1 and stale is False
-    w, stale = standings.fetch_wins()          # cached, no second call
-    assert len(calls) == 1
-    w, stale = standings.fetch_wins(refresh=True)  # fails → last good + stale
-    assert w["KC"] == 1 and stale is True
+def test_refresh_standings_success_writes_doc(monkeypatch):
+    store = InMemoryStore()
+    monkeypatch.setattr(standings, "_load_schedule",
+                         lambda: df([("REG", "KC", "BUF", 27, 20)]))
+    doc = standings.refresh_standings(store)
+    assert doc["wins"]["KC"] == 1 and doc["ok"] is True and doc["error"] is None
+    assert len(doc["wins"]) == 32
+    assert isinstance(doc["fetched_at"], float)
+    assert store.get_standings() == doc
+
+
+def test_refresh_standings_failure_keeps_previous_wins(monkeypatch):
+    store = InMemoryStore()
+    monkeypatch.setattr(standings, "_load_schedule",
+                         lambda: df([("REG", "KC", "BUF", 27, 20)]))
+    first = standings.refresh_standings(store)
+
+    def boom():
+        raise RuntimeError("network down")
+    monkeypatch.setattr(standings, "_load_schedule", boom)
+    second = standings.refresh_standings(store)
+    assert second["wins"] == first["wins"]
+    assert second["fetched_at"] == first["fetched_at"]
+    assert second["ok"] is False
+    assert "network down" in second["error"]
+    assert store.get_standings() == second
+
+
+def test_refresh_standings_failure_with_no_previous_writes_zeros(monkeypatch):
+    store = InMemoryStore()
+
+    def boom():
+        raise RuntimeError("network down")
+    monkeypatch.setattr(standings, "_load_schedule", boom)
+    doc = standings.refresh_standings(store)
+    assert all(w == 0 for w in doc["wins"].values())
+    assert len(doc["wins"]) == 32
+    assert doc["ok"] is False
+    assert "network down" in doc["error"]
+    assert store.get_standings() == doc

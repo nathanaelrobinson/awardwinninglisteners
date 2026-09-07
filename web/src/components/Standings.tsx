@@ -60,7 +60,10 @@ export default function Standings({ me, view }: { me: Me; view: LeagueView }) {
           ))}
         </tbody>
         </table>
-        {data.stale && <div className="stale">stale</div>}
+        <div className="stale">
+          Updated {new Date(data.fetched_at * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
+          {data.stale && ' · stale'}
+        </div>
       </div>
       <Feed view={view} myName={me.name} />
     </div>
