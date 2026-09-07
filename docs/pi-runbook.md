@@ -57,6 +57,12 @@ journal lines and exits non-zero.
 
 ## Day-to-day
 
+Most of what follows is wrapped by the Makefile at the repo root — `make help`
+lists them, and `make status` is the one-shot dashboard. The raw commands are
+kept here because they work from any shell, including a rescue session where
+the checkout isn't handy.
+
+
 ```bash
 systemctl status winspool
 journalctl -u winspool -f                  # live logs

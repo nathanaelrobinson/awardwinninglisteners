@@ -16,6 +16,23 @@ uv pip install -e ".[dev]"
 cd web && npm install && npm run build && cd ..
 ```
 
+## Make targets
+
+`make` (or `make help`) lists everything — dev tasks and, on the Pi, operations:
+
+```bash
+make install     # Python + web dependencies
+make check       # tests + web build + lint, i.e. everything CI runs
+make serve       # run locally on :8000 with a dev league (PINs 1234)
+
+make status      # on the Pi: services, memory, endpoint, tunnel, database
+make restart     # restart the app after an env or code change
+make logs        # follow the app log
+make deploy      # pull main, rebuild, restart, health-check
+make backup      # take a database backup now
+make export      # dump the live league to JSON (mode 600 — PIN hashes)
+```
+
 ## Data
 
 The tool reads two files from `data/cache/`:
