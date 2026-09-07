@@ -69,9 +69,10 @@ def seed_dev_league():
             store.get()
         except LookupError:
             players = os.environ.get("LEAGUE_PLAYERS", ",".join(DEV_PLAYERS)).split(",")
+            dev_pin = os.environ.get("LEAGUE_DEV_PIN", "1234")
             store.put(_league.new_league(players,
                                          os.environ.get("LEAGUE_COMMISSIONER", players[0]),
-                                         os.environ.get("LEAGUE_PIN", "1234")))
+                                         {name: dev_pin for name in players}))
 
 
 _STATE: dict = {}

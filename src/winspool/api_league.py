@@ -34,7 +34,7 @@ def login(req: LoginReq, resp: Response):
         doc = get_store().get()
     except LookupError:
         raise HTTPException(503, "league not initialized")
-    if req.name not in doc["players"] or not league.check_pin(doc, req.pin):
+    if req.name not in doc["players"] or not league.check_pin(doc, req.name, req.pin):
         raise HTTPException(401, "bad name or pin")
     set_cookie(resp, req.name)
     return {"name": req.name}

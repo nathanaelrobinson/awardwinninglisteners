@@ -54,7 +54,10 @@ def main(argv=None):
     li = sub.add_parser("league-init")
     li.add_argument("--players", required=True, help="comma-separated, 5 names")
     li.add_argument("--commissioner", required=True)
-    li.add_argument("--pin", default=None, help="or set LEAGUE_PIN")
+    li.add_argument("--pins", default=None,
+                    help='"Name=1234,Other=5678,..." — one entry per player. '
+                         "Omit to auto-generate a random 4-digit PIN per player "
+                         "(printed once, to stdout only).")
     li.add_argument("--force", action="store_true")
 
     args = parser.parse_args(argv)
@@ -143,12 +146,11 @@ def main(argv=None):
         return 0
 
     if args.cmd == "league-init":
-        import os, sys
+        import secrets
+        import sys
         from . import league
         from .store import get_store
-        pin = args.pin or os.environ.get("LEAGUE_PIN")
-        if not pin:
-            sys.exit("--pin or LEAGUE_PIN required")
+        players = [p.strip() for p in args.players.split(",")]
         store = get_store()
         try:
             existing = store.get()
@@ -156,8 +158,22 @@ def main(argv=None):
             existing = None
         if existing and existing.get("picks") and not args.force:
             sys.exit("league has picks; use --force to wipe")
-        store.put(league.new_league([p.strip() for p in args.players.split(",")],
-                                    args.commissioner, pin))
-        print("league initialized")
+        generated = args.pins is None
+        if args.pins is None:
+            pins = {name: f"{secrets.randbelow(10000):04d}" for name in players}
+        else:
+            pins = {}
+            for entry in args.pins.split(","):
+                entry = entry.strip()
+                if not entry:
+                    continue
+                name, _, pin = entry.partition("=")
+                pins[name.strip()] = pin.strip()
+        store.put(league.new_league(players, args.commissioner, pins))
+        if generated:
+            for name in players:
+                print(f"{name}: {pins[name]}")
+        else:
+            print("league initialized")
         return
     return 1

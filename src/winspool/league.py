@@ -20,18 +20,23 @@ def _hash(pin: str, salt: str) -> str:
     return hashlib.sha256((salt + pin).encode()).hexdigest()
 
 
-def new_league(players, commissioner, pin):
+def new_league(players, commissioner, pins: dict[str, str]):
     players = list(players)
     if len(players) != N_PLAYERS or len(set(players)) != N_PLAYERS:
         raise LeagueError(400, f"need {N_PLAYERS} distinct players")
     if commissioner not in players:
         raise LeagueError(400, "commissioner must be a player")
-    salt = secrets.token_hex(8)
+    for name in players:
+        if not pins.get(name):
+            raise LeagueError(400, f"missing pin for {name!r}")
+    stored_pins = {}
+    for name in players:
+        salt = secrets.token_hex(8)
+        stored_pins[name] = {"salt": salt, "hash": _hash(pins[name], salt)}
     return {
         "players": players,
         "commissioner": commissioner,
-        "pin_salt": salt,
-        "pin_hash": _hash(pin, salt),
+        "pins": stored_pins,
         "slots": None,
         "status": "lobby",
         "picks": [],
@@ -40,8 +45,13 @@ def new_league(players, commissioner, pin):
     }
 
 
-def check_pin(doc, pin) -> bool:
-    return secrets.compare_digest(_hash(pin or "", doc["pin_salt"]), doc["pin_hash"])
+def check_pin(doc, name, pin) -> bool:
+    entry = doc["pins"].get(name)
+    if entry is None:
+        # Still do a compare so unknown-name lookups aren't a timing oracle.
+        secrets.compare_digest(_hash(pin or "", "x"), "x")
+        return False
+    return secrets.compare_digest(_hash(pin or "", entry["salt"]), entry["hash"])
 
 
 def current_slot(doc):

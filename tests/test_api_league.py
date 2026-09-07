@@ -13,7 +13,8 @@ PIN = "awardwinninglisteners"
 
 @pytest.fixture
 def store():
-    s = InMemoryStore(league.new_league(PLAYERS, "Nate Robinson", PIN))
+    s = InMemoryStore(league.new_league(PLAYERS, "Nate Robinson",
+                                        {p: PIN for p in PLAYERS}))
     set_store(s)
     yield s
     set_store(None)
@@ -54,12 +55,30 @@ def test_league_requires_cookie(api):
     assert api.get("/api/league").status_code == 401
 
 
+def test_player_pin_does_not_login_other_player(monkeypatch):
+    from winspool.store import InMemoryStore, set_store
+    pins = {"Nate Robinson": "1111", "Evan Goguillon-Bader": "2222",
+            "Logan Borgelt": "3333", "Eric Whitley": "4444",
+            "Mitch Fischer": "5555"}
+    s = InMemoryStore(league.new_league(PLAYERS, "Nate Robinson", pins))
+    set_store(s)
+    monkeypatch.setenv("SESSION_SECRET", "test-secret")
+    try:
+        c = TestClient(server.app)
+        r = c.post("/api/login", json={"name": "Evan Goguillon-Bader", "pin": "1111"})
+        assert r.status_code == 401
+        r = c.post("/api/login", json={"name": "Nate Robinson", "pin": "1111"})
+        assert r.status_code == 200
+    finally:
+        set_store(None)
+
+
 def test_league_view_and_logged_in_touch(api, store):
     c, _ = login(api, "Logan Borgelt")
     v = c.get("/api/league").json()
     assert v["status"] == "lobby"
     assert "Logan Borgelt" in v["logged_in"]
-    assert "pin_hash" not in v
+    assert "pins" not in v
 
 
 def test_randomize_commissioner_only(api, store):

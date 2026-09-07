@@ -8,8 +8,11 @@ PLAYERS = ["Nate Robinson", "Evan Goguillon-Bader", "Logan Borgelt",
            "Eric Whitley", "Mitch Fischer"]
 
 
+PIN = "awardwinninglisteners"
+
+
 def fresh():
-    return league.new_league(PLAYERS, "Nate Robinson", "awardwinninglisteners")
+    return league.new_league(PLAYERS, "Nate Robinson", {p: PIN for p in PLAYERS})
 
 
 def drafting():
@@ -27,13 +30,31 @@ def test_new_league_shape():
     assert d["slots"] is None
     assert d["picks"] == []
     assert d["overrides"] == {}
-    assert "awardwinninglisteners" not in str(d)  # only the hash is stored
+    assert PIN not in str(d)  # only the hash is stored
+
+
+def test_new_league_missing_pin_raises_400():
+    with pytest.raises(LeagueError) as e:
+        league.new_league(PLAYERS, "Nate Robinson",
+                          {p: PIN for p in PLAYERS[:-1]})
+    assert e.value.status == 400
 
 
 def test_check_pin():
     d = fresh()
-    assert league.check_pin(d, "awardwinninglisteners")
-    assert not league.check_pin(d, "wrong")
+    assert league.check_pin(d, "Nate Robinson", PIN)
+    assert not league.check_pin(d, "Nate Robinson", "wrong")
+    assert not league.check_pin(d, "Nobody", PIN)
+
+
+def test_check_pin_is_per_player():
+    d = league.new_league(PLAYERS, "Nate Robinson",
+                          {"Nate Robinson": "1111", "Evan Goguillon-Bader": "2222",
+                           "Logan Borgelt": "3333", "Eric Whitley": "4444",
+                           "Mitch Fischer": "5555"})
+    assert league.check_pin(d, "Nate Robinson", "1111")
+    assert not league.check_pin(d, "Nate Robinson", "2222")
+    assert not league.check_pin(d, "Evan Goguillon-Bader", "1111")
 
 
 def test_randomize_assigns_permutation_and_starts_draft():
@@ -121,7 +142,19 @@ def test_view_has_rosters_by_name_and_no_hash():
     assert v["current_slot"] == PICK_ORDER[1]
     assert v["current_player"] == name_for_slot(d, PICK_ORDER[1])
     assert v["pick_order"] == PICK_ORDER
-    assert "pin_hash" not in v and "pin_salt" not in v
+    assert "pins" not in v
+
+
+def test_view_and_doc_never_expose_raw_pins():
+    d = league.new_league(PLAYERS, "Nate Robinson",
+                          {"Nate Robinson": "1111", "Evan Goguillon-Bader": "2222",
+                           "Logan Borgelt": "3333", "Eric Whitley": "4444",
+                           "Mitch Fischer": "5555"})
+    v = league.view(d)
+    assert "pins" not in v
+    for raw in ("1111", "2222", "3333", "4444", "5555"):
+        assert raw not in str(d)
+        assert raw not in str(v)
 
 
 def test_inmemory_store_update_is_atomic_and_returns_new_doc():
