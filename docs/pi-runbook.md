@@ -91,26 +91,36 @@ sudo -u winspool env $(sudo cat /etc/winspool/env | grep -v '^#' | xargs) \
   /opt/winspool/.venv/bin/winspool export --out /tmp/league_export.json
 ```
 
-## Connecting the Cloudflare tunnel
+## The Cloudflare tunnel
 
-`cloudflared` is installed on the Pi (from Cloudflare's apt repo, so it updates
-with the system) but is deliberately **not connected** — creating the tunnel
-needs a Cloudflare login. Once Nate has done the console steps in the design doc
-§4 (add the site, create a tunnel named `pi`, add the public hostnames
-`awardwinninglisteners.com` and `www.` → `http://localhost:8080`), connect it:
+Connected on 2026-09-07 via the CLI (not the dashboard token flow), so the whole
+thing is reproducible from this machine.
+
+- Tunnel name `pi`, id `261a8679-9eb0-414c-8b83-865c1188e845`
+- Config `/etc/cloudflared/config.yml`, credentials
+  `/etc/cloudflared/261a8679-….json` (mode 600, root)
+- `cloudflared.service` is enabled and reconnects on its own after power or
+  network loss. Four QUIC connections to the edge is normal.
+
+Ingress: `awardwinninglisteners.com` and `www.` → `http://localhost:8080`;
+anything else gets `http_status:404` without reaching the app. The app itself
+stays bound to `127.0.0.1:8080` and is never exposed directly.
 
 ```bash
-sudo cloudflared service install <TOKEN-FROM-THE-CONSOLE>
 systemctl status cloudflared
+cloudflared tunnel info pi                       # edge connections
+journalctl -u cloudflared -n 50 --no-pager
+sudo cloudflared --config /etc/cloudflared/config.yml tunnel ingress validate
+sudo cloudflared --config /etc/cloudflared/config.yml tunnel ingress rule https://awardwinninglisteners.com/
 ```
 
-That registers `cloudflared.service`, enables it at boot, and reconnects on its
-own after power or network loss. Nothing else on the Pi changes: the app stays
-bound to `127.0.0.1:8080` and is never exposed directly.
+To rebuild it from scratch: `cloudflared tunnel login`, `cloudflared tunnel
+create pi`, `cloudflared tunnel route dns pi <hostname>` for each name, write
+the config above, then `sudo cloudflared service install`.
 
-To verify before the DNS switch, use the tunnel's own
-`*.cfargotunnel.com` hostname or a temporary Cloudflare hostname — the site only
-goes live on the real domain once the nameservers move.
+**The tunnel serves nothing until the zone is active on Cloudflare** — i.e.
+until the nameservers move (cutover step 5). Until then the CNAMEs exist only
+inside the Cloudflare zone and public DNS still answers from Cloud DNS.
 
 ## Cutover from Cloud Run (day after the draft)
 
