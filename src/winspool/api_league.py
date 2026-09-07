@@ -1,8 +1,10 @@
+import hmac
 import os
 import random
 import time
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Response
+from fastapi.responses import JSONResponse
 from google.api_core import exceptions as gexc
 from pydantic import BaseModel
 
@@ -183,8 +185,11 @@ def internal_refresh_standings(x_refresh_token: str | None = Header(default=None
     expected = os.environ.get("REFRESH_TOKEN")
     if not expected:
         raise HTTPException(503, "refresh token not configured")
-    if not x_refresh_token or x_refresh_token != expected:
+    if not x_refresh_token or not hmac.compare_digest(x_refresh_token, expected):
         raise HTTPException(403, "forbidden")
     doc = _standings.refresh_standings(get_store())
-    return {"ok": doc["ok"], "fetched_at": doc["fetched_at"],
+    if not doc["ok"]:
+        return JSONResponse(status_code=503, content={
+            "ok": False, "fetched_at": doc["fetched_at"], "error": doc["error"]})
+    return {"ok": True, "fetched_at": doc["fetched_at"],
             "teams_with_wins": sum(1 for w in doc["wins"].values() if w > 0)}

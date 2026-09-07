@@ -270,6 +270,32 @@ def test_internal_refresh_standings_requires_token(api, store, monkeypatch):
     assert store.get_standings()["wins"]["KC"] == 1
 
 
+def test_internal_refresh_standings_503_on_failure_keeps_previous_wins(api, store, monkeypatch):
+    from winspool import standings
+
+    prev = {"wins": {t: 0 for t in standings.TEAMS}, "fetched_at": 111.0,
+            "ok": True, "error": None}
+    prev["wins"]["KC"] = 5
+    store.put_standings(prev)
+
+    def boom():
+        raise RuntimeError("nflverse down")
+    monkeypatch.setattr(standings, "_load_schedule", boom)
+    monkeypatch.setenv("REFRESH_TOKEN", "secret-token")
+
+    r = api.post("/internal/refresh-standings", headers={"X-Refresh-Token": "secret-token"})
+    assert r.status_code == 503
+    body = r.json()
+    assert body["ok"] is False
+    assert body["fetched_at"] == 111.0
+    assert "nflverse down" in body["error"]
+
+    stored = store.get_standings()
+    assert stored["ok"] is False
+    assert stored["wins"]["KC"] == 5
+    assert stored["fetched_at"] == 111.0
+
+
 class ExhaustingStore(InMemoryStore):
     def update(self, fn):
         raise ValueError("Failed to commit transaction in 5 attempts.")
