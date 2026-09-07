@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+set -euo pipefail
+PROJECT=snowpack-pika
+REGION=us-west1
+SERVICE=pika
+: "${SESSION_SECRET:?set SESSION_SECRET}"
+
+REPO_ROOT="$(git rev-parse --show-toplevel)"
+TMP=$(mktemp -d)
+cleanup() { rm -rf "$TMP"; }
+trap cleanup EXIT
+
+git archive HEAD | tar -x -C "$TMP"
+mkdir -p "$TMP/data/cache"
+cp "$REPO_ROOT"/data/cache/*.csv "$REPO_ROOT"/data/cache/*.npz "$REPO_ROOT"/data/cache/*.json "$TMP/data/cache/" 2>/dev/null || true
+cd "$TMP"
+
+gcloud run deploy "$SERVICE" \
+  --project "$PROJECT" --region "$REGION" --source . \
+  --quiet \
+  --allow-unauthenticated \
+  --min-instances 1 --max-instances 1 --memory 2Gi --cpu 2 \
+  --port 8080 \
+  --set-env-vars "STORE=firestore,GOOGLE_CLOUD_PROJECT=$PROJECT,SESSION_SECRET=$SESSION_SECRET"
+gcloud run services describe "$SERVICE" --project "$PROJECT" --region "$REGION" --format 'value(status.url)'
