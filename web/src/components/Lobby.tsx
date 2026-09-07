@@ -5,13 +5,13 @@ import { randomize } from '../league';
 const ONLINE_MS = 30_000;
 
 export default function Lobby({ view, me }: { view: LeagueView; me: Me }) {
-  const now = Date.now() / 1000;
+  const ref = Math.max(...Object.values(view.logged_in), 0);
   return (
     <div className="lobby">
       <ul className="lobby-list">
         {view.players.map((p) => {
           const seen = view.logged_in[p];
-          const on = seen !== undefined && now - seen < ONLINE_MS / 1000;
+          const on = seen !== undefined && ref - seen < ONLINE_MS / 1000;
           return (
             <li key={p}>
               <span className={`dot ${on ? 'on' : ''}`} />

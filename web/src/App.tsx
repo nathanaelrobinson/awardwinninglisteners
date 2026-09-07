@@ -31,7 +31,7 @@ export default function App() {
         const v = await getLeague();
         if (!alive) return;
         setView(v);
-        timer = window.setTimeout(tick, v.status === 'done' ? 60_000 : 2_000);
+        timer = window.setTimeout(tick, v.status === 'done' ? 10_000 : 2_000);
       } catch (e) {
         if ((e as Error).message === '401') { setMe(null); return; }
         timer = window.setTimeout(tick, 5_000);

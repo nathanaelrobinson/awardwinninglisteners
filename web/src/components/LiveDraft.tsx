@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { fetchTeams } from '../api';
 import type { Team } from '../types';
 import type { LeagueView, Me } from '../league';
-import { pickTeam, resetDraft, undoPick } from '../league';
+import { getLeague, pickTeam, resetDraft, undoPick } from '../league';
 import PickStrip from './PickStrip';
 import DraftBoard from './DraftBoard';
 import LiveRosters from './LiveRosters';
@@ -17,28 +17,39 @@ interface Props { view: LeagueView; me: Me; onChange: (v: LeagueView) => void }
 
 export default function LiveDraft({ view, me, onChange }: Props) {
   const [teams, setTeams] = useState<Team[]>([]);
-  useEffect(() => { fetchTeams().then((t) => setTeams(t.teams)).catch(() => {}); }, []);
+  useEffect(() => {
+    let alive = true;
+    let timer: number;
+    const load = () => {
+      fetchTeams()
+        .then((t) => { if (alive) setTeams(t.teams); })
+        .catch(() => { if (alive) timer = window.setTimeout(load, 3000); });
+    };
+    load();
+    return () => { alive = false; window.clearTimeout(timer); };
+  }, []);
 
   const takenBy = useMemo(() => Object.fromEntries(view.picks.map((p) => [p.team, p.by])), [view.picks]);
   const myTurn = view.status === 'drafting' && view.current_player === me.name;
   const taken = view.picks.map((p) => p.team);
+  const mySlot = view.slots?.[me.name] ?? null;
 
   // Commissioner-only optimizer panel, driven by the live board.
   const [rec, setRec] = useState<RecommendResponse | null>(null);
   const [recLoading, setRecLoading] = useState(false);
   useEffect(() => {
-    if (!me.is_commissioner || me.slot == null || view.status !== 'drafting') return;
+    if (!me.is_commissioner || mySlot == null || view.status !== 'drafting') return;
     let cancelled = false;
     setRecLoading(true);
-    fetchRecommend(me.slot, taken).then((r) => { if (!cancelled) setRec(r); }).catch(() => {}).finally(() => { if (!cancelled) setRecLoading(false); });
+    fetchRecommend(mySlot, taken).then((r) => { if (!cancelled) setRec(r); }).catch(() => {}).finally(() => { if (!cancelled) setRecLoading(false); });
     return () => { cancelled = true; };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [me.is_commissioner, me.slot, view.status, taken.join(',')]);
+  }, [me.is_commissioner, mySlot, view.status, taken.join(',')]);
 
   const teamNames = useMemo(() => Object.fromEntries(teams.map((t) => [t.code, t.name])), [teams]);
 
   async function act(fn: () => Promise<LeagueView>) {
-    try { onChange(await fn()); } catch { /* poll will correct */ }
+    try { onChange(await fn()); } catch { getLeague().then(onChange).catch(() => {}); }
   }
 
   return (

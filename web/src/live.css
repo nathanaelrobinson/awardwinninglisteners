@@ -18,7 +18,8 @@
 
 .strip { display: grid; grid-template-columns: repeat(10, 1fr); gap: 4px; padding: 12px 16px 0; }
 .strip-cell { border: 1px solid var(--border); border-radius: 4px; padding: 4px 6px; font-size: 12px; min-height: 40px; background: var(--bg-panel); min-width: 0; }
-.strip-cell .who { color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.04em; font-size: 11px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.strip-cell .who { color: var(--text-dim); text-transform: uppercase; letter-spacing: 0.04em; font-size: 11px; display: flex; flex-direction: column; gap: 0; min-width: 0; }
+.strip-cell .who .n, .strip-cell .who .nm { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .strip-cell .team { font-weight: 700; font-size: 14px; letter-spacing: -0.01em; }
 .strip-cell.now { border: 2px solid var(--red); }
 .strip-cell.me .who { color: var(--text); }
@@ -64,6 +65,7 @@
 @media (max-width: 700px) {
   .strip { grid-template-columns: repeat(5, 1fr); }
   .strip-cell .who { font-size: 11px; }
+  .strip-cell .who .nm { white-space: normal; overflow-wrap: break-word; font-size: 10px; }
   .dboard-tiles { grid-template-columns: repeat(4, 1fr); gap: 6px; }
   .tile { min-height: 44px; justify-content: center; width: auto; }
   .lrosters { grid-template-columns: repeat(5, minmax(60px, 1fr)); overflow-x: auto; }

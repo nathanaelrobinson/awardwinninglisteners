@@ -12,7 +12,7 @@ export default function PickStrip({ view, myName }: { view: LeagueView; myName: 
         const cls = ['strip-cell', i === view.picks.length && view.status === 'drafting' ? 'now' : '', who === myName ? 'me' : ''].join(' ');
         return (
           <div key={i} className={cls}>
-            <div className="who">{i + 1}. {short(who)}</div>
+            <div className="who"><span className="n">{i + 1}</span><span className="nm">{short(who)}</span></div>
             <div className="team">{p?.team ?? ''}</div>
           </div>
         );

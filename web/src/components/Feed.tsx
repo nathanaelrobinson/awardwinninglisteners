@@ -7,6 +7,11 @@ type Item =
   | { ts: number; kind: 'pick'; n: number; by: string; team: string }
   | { ts: number; kind: 'msg'; by: string; text: string; id: string };
 
+const merge = (prev: Message[], incoming: Message[]) => {
+  const seen = new Set(prev.map((m) => m.id));
+  return [...prev, ...incoming.filter((m) => !seen.has(m.id))];
+};
+
 export default function Feed({ view, myName }: { view: LeagueView; myName: string }) {
   const [msgs, setMsgs] = useState<Message[]>([]);
   const [text, setText] = useState('');
@@ -22,7 +27,7 @@ export default function Feed({ view, myName }: { view: LeagueView; myName: strin
         if (!alive) return;
         if (m.length) {
           lastTs.current = m[m.length - 1].ts;
-          setMsgs((prev) => [...prev, ...m]);
+          setMsgs((prev) => merge(prev, m));
         }
       } catch { /* retry next tick */ }
       timer = window.setTimeout(tick, 2000);
@@ -47,7 +52,7 @@ export default function Feed({ view, myName }: { view: LeagueView; myName: strin
     try {
       const m = await postMessage(t);
       lastTs.current = Math.max(lastTs.current ?? 0, m.ts);
-      setMsgs((prev) => [...prev, m]);
+      setMsgs((prev) => merge(prev, [m]));
     } catch { setText(t); }
   }
 
