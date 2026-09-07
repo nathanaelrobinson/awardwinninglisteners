@@ -1,235 +1,65 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+// web/src/App.tsx
+import { useCallback, useEffect, useState } from 'react';
 import './App.css';
-import { advanceOpponents, fetchRecommend, fetchTeams } from './api';
-import type { RecommendResponse, TeamsResponse } from './types';
-import Header from './components/Header';
-import Board from './components/Board';
-import Rosters from './components/Rosters';
-import Recommendations from './components/Recommendations';
-import Results from './components/Results';
-import Forecast from './components/Forecast';
-import AutosimView from './components/AutosimView';
+import type { LeagueView, Me } from './league';
+import { getLeague, getMe } from './league';
+import Login from './components/Login';
+import Lobby from './components/Lobby';
+import LiveDraft from './components/LiveDraft';
+import Standings from './components/Standings';
+import Practice from './components/Practice';
 
-const PICKS_PER_PLAYER = 6;
-
-type Tab = 'draft' | 'autosim';
+type Tab = 'draft' | 'standings' | 'practice';
 
 export default function App() {
+  const [me, setMe] = useState<Me | null | undefined>(undefined); // undefined = checking
+  const [view, setView] = useState<LeagueView | null>(null);
   const [tab, setTab] = useState<Tab>('draft');
-  const [slot, setSlot] = useState<number>(1);
-  const [taken, setTaken] = useState<string[]>([]);
 
-  // Practice-draft: let bots pick the other seats until it's my turn.
-  const [autoDraft, setAutoDraft] = useState<boolean>(true);
-  const [oppStrategy, setOppStrategy] = useState<string>('market');
-  const [advancing, setAdvancing] = useState<boolean>(false);
-
-  const [teamsData, setTeamsData] = useState<TeamsResponse | null>(null);
-  const [teamsError, setTeamsError] = useState<string | null>(null);
-
-  const [recommend, setRecommend] = useState<RecommendResponse | null>(null);
-  const [recommendError, setRecommendError] = useState<string | null>(null);
-  const [recLoading, setRecLoading] = useState(false);
-
-  // Load teams once.
-  useEffect(() => {
-    let cancelled = false;
-    fetchTeams()
-      .then((data) => {
-        if (!cancelled) setTeamsData(data);
-      })
-      .catch((err) => {
-        if (!cancelled) setTeamsError(err.message ?? 'Failed to load teams');
-      });
-    return () => {
-      cancelled = true;
-    };
+  const refreshMe = useCallback(() => {
+    getMe().then(setMe).catch(() => setMe(null));
   }, []);
+  useEffect(refreshMe, [refreshMe]);
 
-  const pickOrder = teamsData?.pick_order ?? [];
-  const nPicks = pickOrder.length;
-  const draftDone = nPicks > 0 && taken.length >= nPicks;
-  const currentPlayer = draftDone ? null : pickOrder[taken.length] ?? null;
-
-  // Auto-draft: whenever it's a bot's turn, have the backend pick for the other
-  // seats until it's my turn again (or the draft ends). The re-entry guard is a
-  // ref (not the `advancing` state) so toggling `advancing` doesn't re-run this
-  // effect and cancel its own in-flight request.
-  const advancingRef = useRef(false);
+  // Poll league state: 2s while lobby/drafting, 60s when done.
   useEffect(() => {
-    if (!autoDraft || !teamsData || advancingRef.current) return;
-    if (currentPlayer === null || currentPlayer === slot) return;
-    let cancelled = false;
-    advancingRef.current = true;
-    setAdvancing(true);
-    advanceOpponents(slot, taken, oppStrategy, taken.length)
-      .then((r) => {
-        if (!cancelled) setTaken(r.taken);
-      })
-      .catch(() => {})
-      .finally(() => {
-        advancingRef.current = false;
-        if (!cancelled) setAdvancing(false);
-      });
-    return () => {
-      cancelled = true;
-      advancingRef.current = false;
+    if (!me) return;
+    let alive = true;
+    let timer: number;
+    const tick = async () => {
+      try {
+        const v = await getLeague();
+        if (!alive) return;
+        setView(v);
+        timer = window.setTimeout(tick, v.status === 'done' ? 60_000 : 2_000);
+      } catch (e) {
+        if ((e as Error).message === '401') { setMe(null); return; }
+        timer = window.setTimeout(tick, 5_000);
+      }
     };
-  }, [autoDraft, oppStrategy, slot, taken, teamsData, currentPlayer]);
+    tick();
+    return () => { alive = false; window.clearTimeout(timer); };
+  }, [me]);
 
-  // Fetch recommendation whenever slot or taken changes.
-  useEffect(() => {
-    let cancelled = false;
-    setRecLoading(true);
-    fetchRecommend(slot, taken, oppStrategy)
-      .then((data) => {
-        if (!cancelled) {
-          setRecommend(data);
-          setRecommendError(null);
-        }
-      })
-      .catch((err) => {
-        if (!cancelled) setRecommendError(err.message ?? 'Failed to fetch recommendation');
-      })
-      .finally(() => {
-        if (!cancelled) setRecLoading(false);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [slot, taken, oppStrategy]);
+  if (me === undefined) return null;
+  if (me === null) return <Login onDone={refreshMe} />;
+  if (!view) return null;
 
-  const takenBy = useMemo(() => {
-    const map: Record<string, number> = {};
-    if (!teamsData) return map;
-    taken.forEach((code, i) => {
-      const player = teamsData.pick_order[i];
-      if (player !== undefined) map[code] = player;
-    });
-    return map;
-  }, [taken, teamsData]);
-
-  const teamNames = useMemo(() => {
-    const map: Record<string, string> = {};
-    if (!teamsData) return map;
-    teamsData.teams.forEach((t) => {
-      map[t.code] = t.name;
-    });
-    return map;
-  }, [teamsData]);
-
-  function handleDraft(code: string) {
-    if (takenBy[code] !== undefined) return;
-    // In auto-draft mode, only accept my own pick (bots handle other seats).
-    if (autoDraft && currentPlayer !== slot) return;
-    setTaken((prev) => [...prev, code]);
-  }
-
-  function handleReset() {
-    setTaken([]);
-  }
-
-  function handleUndo() {
-    setTaken((prev) => prev.slice(0, -1));
-  }
-
-  if (teamsError) {
-    return (
-      <div className="app-error">
-        <h2>Backend not reachable</h2>
-        <p>Could not load team data from /api/teams.</p>
-        <p className="error-detail">{teamsError}</p>
-        <p>Make sure the FastAPI backend is running, then reload the page.</p>
-      </div>
-    );
-  }
-
-  if (!teamsData) {
-    return (
-      <div className="app-loading">
-        <p>Loading… (first launch builds the season simulation — a few seconds)</p>
-      </div>
-    );
-  }
+  const tabs: Tab[] = me.is_commissioner ? ['draft', 'standings', 'practice'] : ['draft', 'standings'];
 
   return (
     <div className="app">
-      <Header
-        slot={slot}
-        onSlotChange={setSlot}
-        nPlayers={teamsData.n_players}
-        recommend={recommend}
-        autoDraft={autoDraft}
-        onAutoDraftChange={setAutoDraft}
-        oppStrategy={oppStrategy}
-        onOppStrategyChange={setOppStrategy}
-        onReset={handleReset}
-        onUndo={handleUndo}
-        canUndo={taken.length > 0}
-      />
-
-      {recommendError && (
-        <div className="banner banner-error">
-          Recommendation request failed: {recommendError}
-        </div>
-      )}
-
-      <div className="tab-bar">
-        <button
-          className={`tab-btn ${tab === 'draft' ? 'active' : ''}`}
-          onClick={() => setTab('draft')}
-        >
-          Draft
-        </button>
-        <button
-          className={`tab-btn ${tab === 'autosim' ? 'active' : ''}`}
-          onClick={() => setTab('autosim')}
-        >
-          Auto-sim
-        </button>
-      </div>
-
-      {tab === 'draft' ? (
-        <main className="main-layout">
-          <div className="main-left">
-            {recommend?.done ? (
-              <Results slot={slot} taken={taken} />
-            ) : (
-              <>
-                <Recommendations
-                  recommend={recommend}
-                  loading={recLoading || advancing}
-                  teamNames={teamNames}
-                />
-                <Forecast
-                  forecast={recommend?.forecast ?? []}
-                  done={recommend?.done ?? false}
-                />
-              </>
-            )}
-            <Rosters
-              rosters={recommend?.rosters ?? {}}
-              mySlot={slot}
-              nPlayers={teamsData.n_players}
-              picksPerPlayer={PICKS_PER_PLAYER}
-            />
-          </div>
-          <div className="main-right">
-            <Board
-              teams={teamsData.teams}
-              takenBy={takenBy}
-              mySlot={slot}
-              onDraft={handleDraft}
-              disabled={autoDraft && currentPlayer !== slot}
-              survival={recommend?.survival_all}
-            />
-          </div>
-        </main>
-      ) : (
-        <main className="main-layout main-layout-single">
-          <AutosimView slot={slot} nPlayers={teamsData.n_players} />
-        </main>
-      )}
+      <nav className="tab-bar">
+        {tabs.map((t) => (
+          <button key={t} className={`tab-btn ${tab === t ? 'active' : ''}`} onClick={() => setTab(t)}>
+            {t === 'draft' ? 'Draft' : t === 'standings' ? 'Standings' : 'Practice'}
+          </button>
+        ))}
+        <span className="tab-me">{me.name}</span>
+      </nav>
+      {tab === 'draft' && (view.status === 'lobby' ? <Lobby view={view} me={me} /> : <LiveDraft view={view} me={me} onChange={setView} />)}
+      {tab === 'standings' && <Standings me={me} view={view} />}
+      {tab === 'practice' && <Practice />}
     </div>
   );
 }
