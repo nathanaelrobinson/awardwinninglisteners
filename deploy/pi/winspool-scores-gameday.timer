@@ -1,0 +1,10 @@
+[Unit]
+Description=winspool standings refresh (game days: Sun/Mon/Thu, every 15 min)
+
+[Timer]
+OnCalendar=Sun,Mon,Thu *-*-* *:00/15
+Persistent=true
+Unit=winspool-scores.service
+
+[Install]
+WantedBy=timers.target

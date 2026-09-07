@@ -1,3 +1,4 @@
+import os
 import random
 import re
 import pytest
@@ -5,7 +6,7 @@ from fastapi.testclient import TestClient
 
 from winspool import auth, league, server
 from winspool import api_league
-from winspool.store import InMemoryStore, set_store
+from winspool.store import InMemoryStore, SqliteStore, set_store
 from winspool.draft import PICK_ORDER
 from winspool.teams import TEAMS
 
@@ -14,13 +15,21 @@ PLAYERS = ["Nate Robinson", "Evan Goguillon-Bader", "Logan Borgelt",
 PIN = "awardwinninglisteners"
 
 
-@pytest.fixture
-def store():
-    s = InMemoryStore(league.new_league(PLAYERS, "Nate Robinson",
-                                        {p: PIN for p in PLAYERS}))
+@pytest.fixture(params=["memory", "sqlite"])
+def store(request, tmp_path):
+    """Every endpoint test runs twice: against the dev store and against the
+    SQLite store the Pi serves from."""
+    doc = league.new_league(PLAYERS, "Nate Robinson", {p: PIN for p in PLAYERS})
+    if request.param == "memory":
+        s = InMemoryStore(doc)
+    else:
+        s = SqliteStore(tmp_path / "league.db")
+        s.put(doc)
     set_store(s)
     yield s
     set_store(None)
+    if request.param == "sqlite":
+        s.close()
 
 
 @pytest.fixture
@@ -391,5 +400,64 @@ def test_run_maps_transaction_exhaustion_to_503(monkeypatch):
         c.cookies.set(auth.COOKIE, auth.sign("Nate Robinson"))
         r = c.post("/api/league/undo")
         assert r.status_code == 503
+    finally:
+        set_store(None)
+
+
+def test_login_cookie_not_secure_on_plain_http_dev(api, monkeypatch):
+    monkeypatch.delenv("K_SERVICE", raising=False)
+    monkeypatch.delenv("WINSPOOL_BEHIND_PROXY", raising=False)
+    r = api.post("/api/login", json={"name": "Nate Robinson", "pin": PIN})
+    assert "secure" not in r.headers.get("set-cookie", "").lower()
+
+
+def test_login_cookie_secure_behind_cloudflare_tunnel(api, monkeypatch):
+    """On the Pi the browser still talks HTTPS to Cloudflare, so the session
+    cookie must be marked secure even though uvicorn is serving plain HTTP."""
+    monkeypatch.delenv("K_SERVICE", raising=False)
+    monkeypatch.setenv("WINSPOOL_BEHIND_PROXY", "1")
+    r = api.post("/api/login", json={"name": "Nate Robinson", "pin": PIN})
+    assert "secure" in r.headers.get("set-cookie", "").lower()
+
+
+def test_login_cookie_secure_on_cloud_run(api, monkeypatch):
+    monkeypatch.delenv("WINSPOOL_BEHIND_PROXY", raising=False)
+    monkeypatch.setenv("K_SERVICE", "pika")
+    r = api.post("/api/login", json={"name": "Nate Robinson", "pin": PIN})
+    assert "secure" in r.headers.get("set-cookie", "").lower()
+
+
+# --- boot-time guard: a real deployment must bring its own session secret ---
+
+def test_configured_store_without_session_secret_refuses_to_boot(monkeypatch):
+    monkeypatch.setenv("STORE", "sqlite")
+    monkeypatch.delenv("SESSION_SECRET", raising=False)
+    with pytest.raises(RuntimeError, match="SESSION_SECRET"):
+        server.seed_dev_league()
+
+
+def test_configured_store_with_secret_seeds_nothing(monkeypatch, tmp_path):
+    monkeypatch.setenv("STORE", "sqlite")
+    monkeypatch.setenv("SESSION_SECRET", "real-secret")
+    s = SqliteStore(tmp_path / "l.db")
+    set_store(s)
+    try:
+        server.seed_dev_league()
+        with pytest.raises(LookupError):
+            s.get()          # no dev league conjured into a real store
+    finally:
+        set_store(None)
+        s.close()
+
+
+def test_local_dev_still_gets_a_default_secret(monkeypatch):
+    monkeypatch.delenv("STORE", raising=False)
+    monkeypatch.delenv("SESSION_SECRET", raising=False)
+    s = InMemoryStore()
+    set_store(s)
+    try:
+        server.seed_dev_league()
+        assert os.environ["SESSION_SECRET"] == "dev-secret"
+        assert s.get()["players"]        # dev league seeded
     finally:
         set_store(None)

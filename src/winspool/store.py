@@ -1,6 +1,9 @@
 """League persistence. One league document + a messages subcollection.
-InMemoryStore for tests/dev; FirestoreStore for prod (STORE=firestore)."""
+InMemoryStore for tests/dev; SqliteStore for the Pi (STORE=sqlite);
+FirestoreStore for Cloud Run (STORE=firestore)."""
+import json
 import os
+import sqlite3
 import threading
 import time
 import uuid
@@ -80,6 +83,27 @@ class InMemoryStore:
     def list_snapshots(self):
         return sorted(self._snapshots, key=lambda s: s["taken_at"], reverse=True)[:SNAPSHOT_CAP]
 
+    def all_messages(self):
+        """Every message, oldest first, uncapped. Export only."""
+        return list(self._msgs)
+
+    def all_snapshots(self):
+        """Full snapshot docs, oldest first, uncapped. Export only."""
+        return sorted(self._snapshots, key=lambda s: s["taken_at"])
+
+    def put_message(self, m: dict) -> None:
+        """Insert a message verbatim (id + ts preserved). Import only."""
+        with self._lock:
+            self._msgs = [x for x in self._msgs if x["id"] != m["id"]]
+            self._msgs.append(dict(m))
+            self._msgs.sort(key=lambda x: x["ts"])
+
+    def put_snapshot(self, snap: dict) -> None:
+        """Insert a snapshot verbatim (id preserved). Import only."""
+        with self._lock:
+            self._snapshots = [x for x in self._snapshots if x["id"] != snap["id"]]
+            self._snapshots.append(dict(snap))
+
 
 class FirestoreStore:
     def __init__(self, project: str | None = None):
@@ -152,6 +176,169 @@ class FirestoreStore:
             "taken_at", direction=self._fs.Query.DESCENDING).limit(SNAPSHOT_CAP)
         return [{"id": d.id, **d.to_dict()} for d in q.get()]
 
+    def all_messages(self):
+        """Every message, oldest first, uncapped (MSG_CAP does not apply). Export only."""
+        q = self._ref.collection("messages").order_by("ts")
+        return [{"id": d.id, **d.to_dict()} for d in q.stream()]
+
+    def all_snapshots(self):
+        """Full snapshot docs, oldest first, uncapped. Export only."""
+        q = self._ref.collection("snapshots").order_by("taken_at")
+        return [{"id": d.id, **d.to_dict()} for d in q.stream()]
+
+
+class SqliteStore:
+    """Single-file SQLite store. Same semantics as FirestoreStore, no cloud.
+
+    One connection in autocommit mode (isolation_level=None) guarded by a lock,
+    so `update` can drive its own BEGIN IMMEDIATE ... COMMIT. That write lock is
+    what gives us Firestore's "one pick at a time" transactional guarantee.
+    """
+
+    SCHEMA = """
+    CREATE TABLE IF NOT EXISTS league    (id TEXT PRIMARY KEY, doc TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS messages  (id TEXT PRIMARY KEY, "by" TEXT, text TEXT, ts REAL);
+    CREATE INDEX IF NOT EXISTS messages_ts ON messages(ts);
+    CREATE TABLE IF NOT EXISTS snapshots (id TEXT PRIMARY KEY, taken_at REAL, reason TEXT,
+                                          n_picks INTEGER, status TEXT, doc TEXT NOT NULL);
+    CREATE INDEX IF NOT EXISTS snapshots_taken_at ON snapshots(taken_at);
+    CREATE TABLE IF NOT EXISTS kv        (k TEXT PRIMARY KEY, v TEXT NOT NULL);
+    """
+
+    def __init__(self, path: str | os.PathLike):
+        path = str(path)
+        if path != ":memory:":
+            parent = os.path.dirname(os.path.abspath(path))
+            os.makedirs(parent, exist_ok=True)
+        self._db = sqlite3.connect(path, check_same_thread=False, isolation_level=None)
+        self._db.execute("PRAGMA journal_mode=WAL")
+        self._db.execute("PRAGMA busy_timeout=5000")
+        self._db.execute("PRAGMA synchronous=NORMAL")
+        self._db.executescript(self.SCHEMA)
+        self._lock = threading.Lock()
+
+    # --- league doc ---
+
+    def get(self) -> dict:
+        row = self._db.execute("SELECT doc FROM league WHERE id=?", (LEAGUE_ID,)).fetchone()
+        if row is None:
+            raise LookupError("league not initialized")
+        return json.loads(row[0])
+
+    def put(self, doc: dict) -> None:
+        with self._lock:
+            self._db.execute("INSERT OR REPLACE INTO league (id, doc) VALUES (?, ?)",
+                             (LEAGUE_ID, json.dumps(doc)))
+
+    def update(self, fn):
+        with self._lock:
+            self._db.execute("BEGIN IMMEDIATE")
+            try:
+                row = self._db.execute("SELECT doc FROM league WHERE id=?",
+                                       (LEAGUE_ID,)).fetchone()
+                if row is None:
+                    raise LookupError("league not initialized")
+                new = fn(json.loads(row[0]))
+                self._db.execute("UPDATE league SET doc=? WHERE id=?",
+                                 (json.dumps(new), LEAGUE_ID))
+            except BaseException:
+                self._db.execute("ROLLBACK")
+                raise
+            self._db.execute("COMMIT")
+            return new
+
+    # --- messages ---
+
+    def add_message(self, by: str, text: str) -> dict:
+        m = {"id": uuid.uuid4().hex, "by": by, "text": text, "ts": time.time()}
+        with self._lock:
+            self._db.execute('INSERT INTO messages (id, "by", text, ts) VALUES (?, ?, ?, ?)',
+                             (m["id"], m["by"], m["text"], m["ts"]))
+        return m
+
+    def messages(self, since: float | None) -> list[dict]:
+        # Oldest-first either way: without `since` the newest MSG_CAP, with it the
+        # first MSG_CAP after `since` — same contract as the Firestore path.
+        if since is None:
+            rows = self._db.execute(
+                'SELECT id, "by", text, ts FROM messages ORDER BY ts DESC, rowid DESC LIMIT ?',
+                (MSG_CAP,)).fetchall()
+            rows = rows[::-1]
+        else:
+            rows = self._db.execute(
+                'SELECT id, "by", text, ts FROM messages WHERE ts > ? '
+                'ORDER BY ts, rowid LIMIT ?', (since, MSG_CAP)).fetchall()
+        return [{"id": r[0], "by": r[1], "text": r[2], "ts": r[3]} for r in rows]
+
+    def all_messages(self) -> list[dict]:
+        """Every message, oldest first, uncapped. Export only."""
+        rows = self._db.execute(
+            'SELECT id, "by", text, ts FROM messages ORDER BY ts, rowid').fetchall()
+        return [{"id": r[0], "by": r[1], "text": r[2], "ts": r[3]} for r in rows]
+
+    def clear_messages(self) -> int:
+        with self._lock:
+            cur = self._db.execute("DELETE FROM messages")
+            return cur.rowcount
+
+    # --- standings cache ---
+
+    def get_standings(self) -> dict | None:
+        row = self._db.execute("SELECT v FROM kv WHERE k='standings'").fetchone()
+        return json.loads(row[0]) if row else None
+
+    def put_standings(self, doc: dict) -> None:
+        with self._lock:
+            self._db.execute("INSERT OR REPLACE INTO kv (k, v) VALUES ('standings', ?)",
+                             (json.dumps(doc),))
+
+    # --- snapshots ---
+
+    def add_snapshot(self, snapshot: dict) -> str:
+        sid = uuid.uuid4().hex
+        with self._lock:
+            self._db.execute(
+                "INSERT INTO snapshots (id, taken_at, reason, n_picks, status, doc) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (sid, snapshot.get("taken_at"), snapshot.get("reason"),
+                 snapshot.get("n_picks"), snapshot.get("status"), json.dumps(snapshot)))
+        return sid
+
+    def list_snapshots(self) -> list[dict]:
+        rows = self._db.execute(
+            "SELECT id, taken_at, reason, n_picks, status FROM snapshots "
+            "ORDER BY taken_at DESC, rowid DESC LIMIT ?", (SNAPSHOT_CAP,)).fetchall()
+        return [{"id": r[0], "taken_at": r[1], "reason": r[2],
+                 "n_picks": r[3], "status": r[4]} for r in rows]
+
+    def all_snapshots(self) -> list[dict]:
+        """Full snapshot docs, oldest first, uncapped. Export only."""
+        rows = self._db.execute(
+            "SELECT id, doc FROM snapshots ORDER BY taken_at, rowid").fetchall()
+        return [{"id": r[0], **json.loads(r[1])} for r in rows]
+
+    # --- import helpers (preserve ids and timestamps) ---
+
+    def put_message(self, m: dict) -> None:
+        """Insert a message verbatim (id + ts preserved). Import only."""
+        with self._lock:
+            self._db.execute(
+                'INSERT OR REPLACE INTO messages (id, "by", text, ts) VALUES (?, ?, ?, ?)',
+                (m["id"], m.get("by"), m.get("text"), m.get("ts")))
+
+    def put_snapshot(self, snap: dict) -> None:
+        """Insert a snapshot verbatim (id preserved). Import only."""
+        doc = {k: v for k, v in snap.items() if k != "id"}
+        with self._lock:
+            self._db.execute(
+                "INSERT OR REPLACE INTO snapshots (id, taken_at, reason, n_picks, status, doc) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (snap["id"], snap.get("taken_at"), snap.get("reason"),
+                 snap.get("n_picks"), snap.get("status"), json.dumps(doc)))
+
+    def close(self) -> None:
+        self._db.close()
+
 
 _STORE: Store | None = None
 
@@ -159,8 +346,11 @@ _STORE: Store | None = None
 def get_store() -> Store:
     global _STORE
     if _STORE is None:
-        if os.environ.get("STORE") == "firestore":
+        kind = os.environ.get("STORE")
+        if kind == "firestore":
             _STORE = FirestoreStore(os.environ.get("GOOGLE_CLOUD_PROJECT"))
+        elif kind == "sqlite":
+            _STORE = SqliteStore(os.environ.get("WINSPOOL_DB") or "data/league.db")
         else:
             _STORE = InMemoryStore()
     return _STORE

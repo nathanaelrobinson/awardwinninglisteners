@@ -59,8 +59,14 @@ DEV_PLAYERS = ["Nate Robinson", "Evan Goguillon-Bader", "Logan Borgelt",
 
 
 def seed_dev_league():
-    """Local dev only: STORE unset → in-memory league seeded from env."""
-    if os.environ.get("STORE") == "firestore":
+    """Local dev only: STORE unset → in-memory league seeded from env.
+
+    Any configured STORE (firestore on Cloud Run, sqlite on the Pi) is a real
+    deployment: no dev league, and crucially no "dev-secret" fallback — that
+    would sign session cookies with a value published in this repo.
+    """
+    if os.environ.get("STORE"):
+        _require_session_secret()
         return
     os.environ.setdefault("SESSION_SECRET", "dev-secret")
     store = get_store()
@@ -73,6 +79,15 @@ def seed_dev_league():
             store.put(_league.new_league(players,
                                          os.environ.get("LEAGUE_COMMISSIONER", players[0]),
                                          {name: dev_pin for name in players}))
+
+
+def _require_session_secret() -> None:
+    """Fail at boot, not on the first login, if a real deployment has no secret."""
+    if not os.environ.get("SESSION_SECRET"):
+        raise RuntimeError(
+            "SESSION_SECRET must be set when STORE is configured "
+            f"(STORE={os.environ.get('STORE')!r}). Refusing to start: without it "
+            "sessions would be unsigned or signed with a public dev value.")
 
 
 _STATE: dict = {}

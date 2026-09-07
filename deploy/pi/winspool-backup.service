@@ -1,0 +1,10 @@
+[Unit]
+Description=Nightly winspool SQLite backup
+
+[Service]
+Type=oneshot
+User=winspool
+Group=winspool
+# .backup is safe against a live WAL database; a plain file copy is not.
+ExecStart=/bin/bash -c '/usr/bin/sqlite3 /var/lib/winspool/league.db ".backup /var/backups/winspool/league-$(date +%%F).db"'
+ExecStartPost=/bin/bash -c '/usr/bin/find /var/backups/winspool -name "league-*.db" -mtime +30 -delete'

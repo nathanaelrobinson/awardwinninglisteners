@@ -78,6 +78,39 @@ override a team's wins by clicking the number.
 `POST /internal/refresh-standings` (header `X-Refresh-Token: $REFRESH_TOKEN`) refreshes the cache;
 Cloud Scheduler calls it every 15 minutes on Sun/Mon/Thu and every 4 hours otherwise.
 
+## Raspberry Pi (self-hosted)
+
+The same app runs on a Pi with SQLite instead of Firestore and a Cloudflare
+Tunnel instead of Cloud Run — no cloud bill, no port forwarding. Design:
+`docs/superpowers/specs/2026-09-08-raspberry-pi-hosting-design.md`.
+Operations: `docs/pi-runbook.md`.
+
+```bash
+sudo ./scripts/pi-setup.sh                     # user, dirs, env template, systemd units
+sudoedit /etc/winspool/env                     # SESSION_SECRET must match Cloud Run
+sudo /opt/winspool/scripts/pi-deploy.sh        # pull, build, restart, health-check
+```
+
+`STORE=sqlite` selects the SQLite store; the database path comes from
+`WINSPOOL_DB` (default `data/league.db`). `WINSPOOL_BEHIND_PROXY=1` marks the
+session cookie `Secure` when the browser reaches the app over HTTPS through the
+tunnel. With `STORE` set the app refuses to start without `SESSION_SECRET`
+rather than falling back to the dev value.
+
+**Moving data between stores** — the Cloud Run → Pi cutover, and any backup:
+
+```bash
+# read from wherever STORE points
+STORE=firestore GOOGLE_CLOUD_PROJECT=snowpack-pika uv run winspool export --out league_export.json
+
+# write into wherever STORE points (refuses a non-empty target without --force)
+STORE=sqlite WINSPOOL_DB=/var/lib/winspool/league.db uv run winspool import --from league_export.json
+```
+
+Export carries the league doc, every message (uncapped), full snapshots, and the
+standings cache. Message ids and timestamps are preserved, so the feed's
+`?since=` polling keeps working across the move.
+
 ## CLI (no UI)
 
 ```bash

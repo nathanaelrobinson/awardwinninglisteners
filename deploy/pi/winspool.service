@@ -1,0 +1,26 @@
+[Unit]
+Description=Wins pool app (winspool)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=winspool
+Group=winspool
+WorkingDirectory=/opt/winspool
+EnvironmentFile=/etc/winspool/env
+ExecStart=/opt/winspool/.venv/bin/winspool-serve --host 127.0.0.1 --port 8080
+Restart=always
+RestartSec=3
+
+# The app only ever needs to read its code and write its database.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/winspool
+ProtectKernelTunables=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+
+[Install]
+WantedBy=multi-user.target
