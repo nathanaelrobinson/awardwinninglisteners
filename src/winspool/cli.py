@@ -51,6 +51,12 @@ def main(argv=None):
     mkt = sub.add_parser("market")
     mkt.add_argument("--dist", default="data/cache/kalshi_distributions.csv")
 
+    li = sub.add_parser("league-init")
+    li.add_argument("--players", required=True, help="comma-separated, 5 names")
+    li.add_argument("--commissioner", required=True)
+    li.add_argument("--pin", default=None, help="or set LEAGUE_PIN")
+    li.add_argument("--force", action="store_true")
+
     args = parser.parse_args(argv)
 
     if args.cmd == "fetch":
@@ -135,4 +141,23 @@ def main(argv=None):
         for r in rows:
             print(f"{r['team']:<5}{r['line']:>7.2f}{r['mean']:>7.2f}{r['sd']:>7.2f}")
         return 0
+
+    if args.cmd == "league-init":
+        import os, sys
+        from . import league
+        from .store import get_store
+        pin = args.pin or os.environ.get("LEAGUE_PIN")
+        if not pin:
+            sys.exit("--pin or LEAGUE_PIN required")
+        store = get_store()
+        try:
+            existing = store.get()
+        except LookupError:
+            existing = None
+        if existing and existing.get("picks") and not args.force:
+            sys.exit("league has picks; use --force to wipe")
+        store.put(league.new_league([p.strip() for p in args.players.split(",")],
+                                    args.commissioner, pin))
+        print("league initialized")
+        return
     return 1

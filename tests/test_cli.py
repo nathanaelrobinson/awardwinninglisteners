@@ -22,3 +22,23 @@ def test_market_subcommand(tmp_path, capsys):
     assert rc == 0
     out = capsys.readouterr().out
     assert "BUF" in out and "line" in out
+
+def test_league_init_writes_doc_and_refuses_overwrite_with_picks(monkeypatch):
+    from winspool import cli, league
+    from winspool.store import InMemoryStore, set_store
+    s = InMemoryStore()
+    set_store(s)
+    monkeypatch.setenv("LEAGUE_PIN", "pw")
+    players = "Nate Robinson,Evan Goguillon-Bader,Logan Borgelt,Eric Whitley,Mitch Fischer"
+    cli.main(["league-init", "--players", players, "--commissioner", "Nate Robinson"])
+    d = s.get()
+    assert d["status"] == "lobby" and league.check_pin(d, "pw")
+    # simulate a pick then refuse re-init without --force
+    d["picks"].append({"n": 1, "slot": 1, "team": "KC", "by": "Nate Robinson", "ts": 1})
+    s.put(d)
+    import pytest
+    with pytest.raises(SystemExit):
+        cli.main(["league-init", "--players", players, "--commissioner", "Nate Robinson"])
+    cli.main(["league-init", "--players", players, "--commissioner", "Nate Robinson", "--force"])
+    assert s.get()["picks"] == []
+    set_store(None)
