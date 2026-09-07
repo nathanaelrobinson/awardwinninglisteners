@@ -3,6 +3,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from winspool import auth, league, server
+from winspool import api_league
 from winspool.store import InMemoryStore, set_store
 from winspool.draft import PICK_ORDER
 
@@ -161,3 +162,86 @@ def test_standings_zero_before_games_and_override(api, store, monkeypatch):
     assert next(x for x in r["rows"] if x["player"] == first)["total"] == 3
     c2, _ = login(api, "Mitch Fischer")
     assert c2.post("/api/standings/override", json={"team": "KC", "wins": 9}).status_code == 403
+
+
+class CountingStore(InMemoryStore):
+    def __init__(self, doc=None):
+        super().__init__(doc)
+        self.update_calls = 0
+
+    def update(self, fn):
+        self.update_calls += 1
+        return super().update(fn)
+
+
+def test_league_poll_does_not_write_when_drafting(monkeypatch):
+    monkeypatch.setenv("SESSION_SECRET", "test-secret")
+    s = CountingStore(league.new_league(PLAYERS, "Nate Robinson",
+                                        {p: PIN for p in PLAYERS}))
+    set_store(s)
+    try:
+        c = TestClient(server.app)
+        n, _ = login(TestClient(server.app), "Nate Robinson")
+        n.post("/api/league/randomize")
+        assert s.get()["status"] == "drafting"
+        before = s.update_calls
+        c.cookies.set(auth.COOKIE, auth.sign("Logan Borgelt"))
+        for _ in range(5):
+            r = c.get("/api/league")
+            assert r.status_code == 200
+        assert s.update_calls == before
+    finally:
+        set_store(None)
+
+
+def test_league_poll_touches_at_most_once_per_20s_in_lobby(monkeypatch):
+    monkeypatch.setenv("SESSION_SECRET", "test-secret")
+    s = CountingStore(league.new_league(PLAYERS, "Nate Robinson",
+                                        {p: PIN for p in PLAYERS}))
+    set_store(s)
+    try:
+        c = TestClient(server.app)
+        c.cookies.set(auth.COOKIE, auth.sign("Logan Borgelt"))
+        base = 1_000_000.0
+        monkeypatch.setattr(api_league.time, "time", lambda: base)
+        for _ in range(5):
+            r = c.get("/api/league")
+            assert r.status_code == 200
+        assert s.update_calls == 1
+        monkeypatch.setattr(api_league.time, "time", lambda: base + 25)
+        r = c.get("/api/league")
+        assert r.status_code == 200
+        assert s.update_calls == 2
+    finally:
+        set_store(None)
+
+
+def test_standings_and_commissioner_routes_503_when_uninitialized(monkeypatch):
+    monkeypatch.setenv("SESSION_SECRET", "test-secret")
+    set_store(InMemoryStore())
+    try:
+        c = TestClient(server.app)
+        c.cookies.set(auth.COOKIE, auth.sign("Nate Robinson"))
+        assert c.get("/api/standings").status_code == 503
+        assert c.post("/api/league/randomize").status_code == 503
+    finally:
+        set_store(None)
+
+
+class ExhaustingStore(InMemoryStore):
+    def update(self, fn):
+        raise ValueError("Failed to commit transaction in 5 attempts.")
+
+
+def test_run_maps_transaction_exhaustion_to_503(monkeypatch):
+    monkeypatch.setenv("SESSION_SECRET", "test-secret")
+    s = ExhaustingStore(league.new_league(PLAYERS, "Nate Robinson",
+                                          {p: PIN for p in PLAYERS}))
+    set_store(s)
+    try:
+        c = TestClient(server.app)
+        c.cookies.set(auth.COOKIE, auth.sign("Nate Robinson"))
+        r = c.post("/api/league/undo")
+        assert r.status_code == 503
+    finally:
+        set_store(None)

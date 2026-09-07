@@ -2,6 +2,7 @@ import random
 import time
 
 from fastapi import APIRouter, Depends, HTTPException, Response
+from google.api_core import exceptions as gexc
 from pydantic import BaseModel
 
 from . import league
@@ -13,6 +14,17 @@ from .teams import resolve
 
 router = APIRouter(prefix="/api")
 
+TOUCH_EVERY = 20.0  # seconds; Lobby considers a player online if seen within 30s
+
+
+def _doc():
+    try:
+        return get_store().get()
+    except LookupError:
+        raise HTTPException(503, "league not initialized")
+    except (gexc.GoogleAPICallError, gexc.RetryError):
+        raise HTTPException(503, "busy")
+
 
 def _run(fn):
     try:
@@ -21,6 +33,12 @@ def _run(fn):
         raise HTTPException(e.status, e.detail)
     except LookupError:
         raise HTTPException(503, "league not initialized")
+    except (gexc.Aborted, gexc.GoogleAPICallError, gexc.RetryError):
+        raise HTTPException(503, "busy")
+    except ValueError as e:
+        if "Failed to commit transaction" in str(e):
+            raise HTTPException(503, "busy")
+        raise
 
 
 class LoginReq(BaseModel):
@@ -30,10 +48,7 @@ class LoginReq(BaseModel):
 
 @router.post("/login")
 def login(req: LoginReq, resp: Response):
-    try:
-        doc = get_store().get()
-    except LookupError:
-        raise HTTPException(503, "league not initialized")
+    doc = _doc()
     if req.name not in doc["players"] or not league.check_pin(doc, req.name, req.pin):
         raise HTTPException(401, "bad name or pin")
     set_cookie(resp, req.name)
@@ -42,21 +57,31 @@ def login(req: LoginReq, resp: Response):
 
 @router.get("/me")
 def me(name: str = Depends(current_user)):
-    try:
-        doc = get_store().get()
-    except LookupError:
-        raise HTTPException(503, "league not initialized")
+    doc = _doc()
     return {"name": name, "is_commissioner": name == doc["commissioner"],
             "slot": league.slot_of(doc, name)}
 
 
-@router.get("/league")
-def get_league(name: str = Depends(current_user)):
+def _touch(name):
     def touch(d):
         d = dict(d)
         d["logged_in"] = {**d.get("logged_in", {}), name: time.time()}
         return d
-    return _run(touch)
+    return touch
+
+
+@router.get("/league")
+def get_league(name: str = Depends(current_user)):
+    doc = _doc()
+    last = (doc.get("logged_in") or {}).get(name) or 0
+    if doc["status"] != "lobby" or time.time() - last < TOUCH_EVERY:
+        return league.view(doc)
+    try:
+        return _run(_touch(name))
+    except HTTPException as e:
+        if e.status_code == 503:
+            return league.view(doc)
+        raise
 
 
 @router.post("/league/randomize")
@@ -89,10 +114,7 @@ class MsgReq(BaseModel):
 
 @router.post("/messages")
 def post_message(req: MsgReq, name: str = Depends(current_user)):
-    try:
-        get_store().get()
-    except LookupError:
-        raise HTTPException(503, "league not initialized")
+    _doc()
     text = req.text.strip()
     if not text or len(text) > 500:
         raise HTTPException(400, "1-500 chars")
@@ -101,16 +123,13 @@ def post_message(req: MsgReq, name: str = Depends(current_user)):
 
 @router.get("/messages")
 def get_messages(since: float | None = None, _: str = Depends(current_user)):
-    try:
-        get_store().get()
-    except LookupError:
-        raise HTTPException(503, "league not initialized")
+    _doc()
     return get_store().messages(since)
 
 
 @router.get("/standings")
 def get_standings(refresh: int = 0, name: str = Depends(current_user)):
-    doc = get_store().get()
+    doc = _doc()
     if refresh and name != doc["commissioner"]:
         refresh = 0
     wins, stale = _standings.fetch_wins(refresh=bool(refresh))
@@ -144,4 +163,4 @@ def set_override(req: OverrideReq, _: str = Depends(require_commissioner)):
         d["overrides"] = ov
         return d
     _run(fn)
-    return {"overrides": get_store().get()["overrides"]}
+    return {"overrides": _doc()["overrides"]}

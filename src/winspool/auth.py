@@ -41,8 +41,16 @@ def current_user(request: Request) -> str:
 
 
 def require_commissioner(request: Request) -> str:
+    from google.api_core import exceptions as gexc
+
     from .store import get_store
     name = current_user(request)
-    if name != get_store().get()["commissioner"]:
+    try:
+        doc = get_store().get()
+    except LookupError:
+        raise HTTPException(503, "league not initialized")
+    except (gexc.GoogleAPICallError, gexc.RetryError):
+        raise HTTPException(503, "busy")
+    if name != doc["commissioner"]:
         raise HTTPException(403, "commissioner only")
     return name

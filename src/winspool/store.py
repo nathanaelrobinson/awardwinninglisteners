@@ -66,7 +66,7 @@ class FirestoreStore:
         self._ref.set(doc)
 
     def update(self, fn):
-        transaction = self._db.transaction()
+        transaction = self._db.transaction(max_attempts=10)
         ref = self._ref
 
         @self._fs.transactional
@@ -86,9 +86,10 @@ class FirestoreStore:
         return {"id": ref.id, **m}
 
     def messages(self, since):
+        from google.cloud.firestore_v1.base_query import FieldFilter
         q = self._ref.collection("messages").order_by("ts")
         if since is not None:
-            q = q.where("ts", ">", since)
+            q = q.where(filter=FieldFilter("ts", ">", since))
         docs = list(q.limit_to_last(MSG_CAP).get()) if since is None else list(q.limit(MSG_CAP).get())
         return [{"id": d.id, **d.to_dict()} for d in docs]
 
