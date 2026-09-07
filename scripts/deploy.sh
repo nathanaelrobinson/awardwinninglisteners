@@ -19,7 +19,7 @@ gcloud run deploy "$SERVICE" \
   --project "$PROJECT" --region "$REGION" --source . \
   --quiet \
   --allow-unauthenticated \
-  --min-instances 1 --max-instances 1 --memory 2Gi --cpu 2 \
+  --min-instances 1 --max-instances 1 --memory 768Mi --cpu 1 \
   --port 8080 \
   --set-env-vars "STORE=firestore,GOOGLE_CLOUD_PROJECT=$PROJECT,SESSION_SECRET=$SESSION_SECRET,REFRESH_TOKEN=$REFRESH_TOKEN"
 gcloud run services describe "$SERVICE" --project "$PROJECT" --region "$REGION" --format 'value(status.url)'
