@@ -108,3 +108,22 @@ def test_optimizer_routes_commissioner_only(api):
     assert c.post("/api/results", json={"slot": 1, "taken": []}).status_code == 403
     assert c.post("/api/advance", json={"slot": 1, "taken": []}).status_code == 403
     assert api.get("/api/teams").status_code == 200  # open
+
+
+def test_standings_zero_before_games_and_override(api, store, monkeypatch):
+    from winspool import standings
+    monkeypatch.setattr(standings, "fetch_wins", lambda refresh=False: ({t: 0 for t in standings.TEAMS}, False))
+    n, _ = login(api, "Nate Robinson")
+    n.post("/api/league/randomize")
+    doc = store.get()
+    first = name_for_slot(doc, PICK_ORDER[0])
+    c1, _ = login(api, first)
+    c1.post("/api/league/pick", json={"team": "KC"})
+    r = n.get("/api/standings").json()
+    row = next(x for x in r["rows"] if x["player"] == first)
+    assert row["teams"] == [{"code": "KC", "wins": 0}] and row["total"] == 0
+    assert n.post("/api/standings/override", json={"team": "KC", "wins": 3}).status_code == 200
+    r = n.get("/api/standings").json()
+    assert next(x for x in r["rows"] if x["player"] == first)["total"] == 3
+    c2, _ = login(api, "Mitch Fischer")
+    assert c2.post("/api/standings/override", json={"team": "KC", "wins": 9}).status_code == 403
