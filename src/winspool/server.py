@@ -7,10 +7,11 @@ auto-draft simulations. The built React front end (web/dist) mounts at /.
 Run: uv run winspool-serve
 """
 import argparse
+import os
 from pathlib import Path
 
 import numpy as np
-from fastapi import FastAPI
+from fastapi import Depends, FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -40,6 +41,33 @@ app = FastAPI(title="winspool")
 app.add_middleware(
     CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"],
 )
+
+from .api_league import router as league_router
+from .auth import require_commissioner
+from . import league as _league
+from .store import InMemoryStore, get_store, set_store
+
+app.include_router(league_router)
+
+DEV_PLAYERS = ["Nate Robinson", "Evan Goguillon-Bader", "Logan Borgelt",
+               "Eric Whitley", "Mitch Fischer"]
+
+
+def seed_dev_league():
+    """Local dev only: STORE unset → in-memory league seeded from env."""
+    if os.environ.get("STORE") == "firestore":
+        return
+    os.environ.setdefault("SESSION_SECRET", "dev-secret")
+    store = get_store()
+    if isinstance(store, InMemoryStore):
+        try:
+            store.get()
+        except LookupError:
+            players = os.environ.get("LEAGUE_PLAYERS", ",".join(DEV_PLAYERS)).split(",")
+            store.put(_league.new_league(players,
+                                         os.environ.get("LEAGUE_COMMISSIONER", players[0]),
+                                         os.environ.get("LEAGUE_PIN", "1234")))
+
 
 _STATE: dict = {}
 
@@ -102,6 +130,7 @@ def _ensure_ready():
 def _startup():
     # Build (or load cached) the sim during boot so the first page load is instant.
     _ensure_ready()
+    seed_dev_league()
 
 
 def _state_from(slot, taken):
@@ -165,7 +194,7 @@ class RecReq(BaseModel):
 
 
 @app.post("/api/recommend")
-def recommend(req: RecReq):
+def recommend(req: RecReq, _: str = Depends(require_commissioner)):
     _ensure_ready()
     wins, wins_fast, strengths = _STATE["wins"], _STATE["wins_fast"], _STATE["strengths"]
     state = _state_from(req.slot, req.taken)
@@ -276,7 +305,7 @@ class SimReq(BaseModel):
 
 
 @app.post("/api/autosim")
-def autosim(req: SimReq):
+def autosim(req: SimReq, _: str = Depends(require_commissioner)):
     _ensure_ready()
     wins_fast = _STATE["wins_fast"]
     rng = np.random.default_rng(req.seed)
@@ -312,7 +341,7 @@ class AdvanceReq(BaseModel):
 
 
 @app.post("/api/advance")
-def advance(req: AdvanceReq):
+def advance(req: AdvanceReq, _: str = Depends(require_commissioner)):
     """Auto-pick for the other seats (via opp_strategy) until it is my turn or
     the draft is complete. Returns the extended taken list."""
     _ensure_ready()
@@ -335,7 +364,7 @@ class ResultsReq(BaseModel):
 
 
 @app.post("/api/results")
-def results(req: ResultsReq):
+def results(req: ResultsReq, _: str = Depends(require_commissioner)):
     """Final standings from the joint season sim: each player's projected
     combined wins, P(win the pool), and a 10th–90th pct range."""
     _ensure_ready()
@@ -370,7 +399,7 @@ class SampleReq(BaseModel):
 
 
 @app.post("/api/sample_season")
-def sample_season(req: SampleReq):
+def sample_season(req: SampleReq, _: str = Depends(require_commissioner)):
     """Play out ONE concrete season sampled from the joint distribution (so the
     correlated, teams-play-each-other structure shows up in a single outcome)."""
     _ensure_ready()
