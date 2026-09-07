@@ -3,7 +3,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { fetchTeams } from '../api';
 import type { Team } from '../types';
 import type { LeagueView, Me } from '../league';
-import { getLeague, pickTeam, resetDraft, undoPick } from '../league';
+import { getLeague, pickTeam, restartDraft, undoPick } from '../league';
 import PickStrip from './PickStrip';
 import DraftBoard from './DraftBoard';
 import LiveRosters from './LiveRosters';
@@ -59,7 +59,12 @@ export default function LiveDraft({ view, me, onChange }: Props) {
         {me.is_commissioner && (
           <div className="strip-actions">
             <button className="btn" disabled={view.picks.length === 0} onClick={() => act(undoPick)}>Undo</button>
-            {view.picks.length === 0 && <button className="btn" onClick={() => act(resetDraft)}>Re-randomize</button>}
+            <button
+              className="btn"
+              onClick={() => { if (window.confirm('Restart draft?')) act(restartDraft); }}
+            >
+              Restart draft
+            </button>
           </div>
         )}
       </div>

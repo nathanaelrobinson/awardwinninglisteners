@@ -92,6 +92,16 @@ def reset(doc):
     return d
 
 
+def restart(doc):
+    """Return to lobby from any state, keeping players/commissioner/pins/
+    overrides/logged_in but clearing picks and slots."""
+    d = copy.deepcopy(doc)
+    d["picks"] = []
+    d["slots"] = None
+    d["status"] = "lobby"
+    return d
+
+
 def pick(doc, name, team, ts):
     if doc["status"] != "drafting":
         raise LeagueError(409, "not drafting")

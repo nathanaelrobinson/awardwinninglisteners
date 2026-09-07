@@ -16,7 +16,7 @@ export default function Lobby({ view, me }: { view: LeagueView; me: Me }) {
         <span className="eyebrow">Draft lobby</span>
         {me.is_commissioner && (
           <button className="btn primary" onClick={() => randomize().catch(() => {})}>
-            Randomize order
+            Start draft
           </button>
         )}
       </div>

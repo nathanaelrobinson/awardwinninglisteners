@@ -5,7 +5,7 @@ import os
 from fastapi import HTTPException, Request, Response
 
 COOKIE = "wp_session"
-MAX_AGE = 7 * 24 * 3600
+MAX_AGE = 200 * 24 * 3600
 
 
 def _secret() -> bytes:

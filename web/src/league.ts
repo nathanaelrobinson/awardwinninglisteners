@@ -44,6 +44,7 @@ export const getMe = () => call<Me>('/api/me');
 export const getLeague = () => call<LeagueView>('/api/league');
 export const randomize = () => call<LeagueView>('/api/league/randomize', { method: 'POST' });
 export const resetDraft = () => call<LeagueView>('/api/league/reset', { method: 'POST' });
+export const restartDraft = () => call<LeagueView>('/api/league/restart', { method: 'POST' });
 export const pickTeam = (team: string) => call<LeagueView>('/api/league/pick', json({ team }));
 export const undoPick = () => call<LeagueView>('/api/league/undo', { method: 'POST' });
 export const getMessages = (since?: number) =>

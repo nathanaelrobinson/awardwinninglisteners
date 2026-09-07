@@ -1,4 +1,5 @@
 import random
+import re
 import pytest
 from fastapi.testclient import TestClient
 
@@ -6,6 +7,7 @@ from winspool import auth, league, server
 from winspool import api_league
 from winspool.store import InMemoryStore, set_store
 from winspool.draft import PICK_ORDER
+from winspool.teams import TEAMS
 
 PLAYERS = ["Nate Robinson", "Evan Goguillon-Bader", "Logan Borgelt",
            "Eric Whitley", "Mitch Fischer"]
@@ -165,6 +167,84 @@ def test_standings_zero_before_games_and_override(api, store, monkeypatch):
     assert next(x for x in r["rows"] if x["player"] == first)["total"] == 3
     c2, _ = login(api, "Mitch Fischer")
     assert c2.post("/api/standings/override", json={"team": "KC", "wins": 9}).status_code == 403
+
+
+def test_restart_commissioner_only(api, store):
+    c, _ = login(api, "Eric Whitley")
+    assert c.post("/api/league/restart").status_code == 403
+
+
+def test_restart_after_picks_snapshots_and_clears_messages(api, store):
+    n, _ = login(api, "Nate Robinson")
+    n.post("/api/league/randomize")
+    doc = store.get()
+    first = name_for_slot(doc, PICK_ORDER[0])
+    second = name_for_slot(doc, PICK_ORDER[1])
+    c1, _ = login(api, first)
+    c1.post("/api/league/pick", json={"team": "KC"})
+    c2, _ = login(api, second)
+    c2.post("/api/league/pick", json={"team": "BUF"})
+    c1.post("/api/messages", json={"text": "gl hf"})
+
+    r = n.post("/api/league/restart")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["status"] == "lobby"
+    assert body["picks"] == []
+    assert body["slots"] is None
+
+    assert store.messages(None) == []
+
+    snaps = store.list_snapshots()
+    assert len(snaps) == 1
+    assert snaps[0]["reason"] == "restart"
+    assert snaps[0]["n_picks"] == 2
+
+    r = n.get("/api/league/snapshots")
+    assert r.status_code == 200
+    assert len(r.json()) == 1
+
+
+def test_restart_works_from_lobby_and_from_done(api, store):
+    n, _ = login(api, "Nate Robinson")
+    r = n.post("/api/league/restart")
+    assert r.status_code == 200 and r.json()["status"] == "lobby"
+
+    n.post("/api/league/randomize")
+    doc = store.get()
+    for i in range(30):
+        who = name_for_slot(doc, PICK_ORDER[i])
+        c, _ = login(api, who)
+        c.post("/api/league/pick", json={"team": TEAMS[i]})
+        doc = store.get()
+    assert store.get()["status"] == "done"
+    r = n.post("/api/league/restart")
+    assert r.status_code == 200 and r.json()["status"] == "lobby"
+
+
+def test_completing_draft_writes_complete_snapshot(api, store):
+    n, _ = login(api, "Nate Robinson")
+    n.post("/api/league/randomize")
+    doc = store.get()
+    for i in range(30):
+        who = name_for_slot(doc, PICK_ORDER[i])
+        c, _ = login(api, who)
+        r = c.post("/api/league/pick", json={"team": TEAMS[i]})
+        doc = store.get()
+    assert r.json()["status"] == "done"
+    snaps = store.list_snapshots()
+    assert len(snaps) == 1
+    assert snaps[0]["reason"] == "complete"
+    assert snaps[0]["n_picks"] == 30
+
+
+def test_login_cookie_max_age_is_season_long(api):
+    r = api.post("/api/login", json={"name": "Nate Robinson", "pin": PIN})
+    set_cookie_header = r.headers.get("set-cookie", "")
+    assert "wp_session" in set_cookie_header
+    m = re.search(r"[Mm]ax-[Aa]ge=(\d+)", set_cookie_header)
+    assert m is not None
+    assert int(m.group(1)) >= 180 * 24 * 3600
 
 
 class CountingStore(InMemoryStore):

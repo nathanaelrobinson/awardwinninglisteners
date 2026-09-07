@@ -133,6 +133,40 @@ def test_undo_with_no_picks_409():
         league.undo(drafting())
 
 
+def test_restart_from_drafting_with_picks_returns_to_lobby():
+    d = drafting()
+    d = league.pick(d, name_for_slot(d, PICK_ORDER[0]), "KC", 1.0)
+    d = league.pick(d, name_for_slot(d, PICK_ORDER[1]), "BUF", 2.0)
+    pins_before = d["pins"]
+    r = league.restart(d)
+    assert r["status"] == "lobby"
+    assert r["picks"] == []
+    assert r["slots"] is None
+    assert r["players"] == PLAYERS
+    assert r["commissioner"] == "Nate Robinson"
+    assert r["pins"] == pins_before
+
+
+def test_restart_from_done_returns_to_lobby():
+    from winspool.teams import TEAMS
+    d = drafting()
+    for i in range(30):
+        d = league.pick(d, name_for_slot(d, PICK_ORDER[i]), TEAMS[i], float(i))
+    assert d["status"] == "done"
+    r = league.restart(d)
+    assert r["status"] == "lobby"
+    assert r["picks"] == []
+    assert r["slots"] is None
+
+
+def test_restart_from_lobby_is_a_noop_shape():
+    d = fresh()
+    r = league.restart(d)
+    assert r["status"] == "lobby"
+    assert r["picks"] == []
+    assert r["slots"] is None
+
+
 def test_view_has_rosters_by_name_and_no_hash():
     d = drafting()
     who = name_for_slot(d, PICK_ORDER[0])
@@ -173,3 +207,33 @@ def test_inmemory_store_messages():
     assert [m["text"] for m in s.messages(None)] == ["lol", "ok"]
     assert [m["text"] for m in s.messages(m1["ts"])] == ["ok"]
     assert m2["by"] == "Nate Robinson" and "id" in m2
+
+
+def test_inmemory_store_snapshots_and_clear_messages():
+    from winspool.store import InMemoryStore
+    s = InMemoryStore(fresh())
+    s.add_message("Mitch Fischer", "lol")
+    s.add_message("Nate Robinson", "ok")
+    sid = s.add_snapshot({"taken_at": 1.0, "reason": "restart", "n_picks": 2,
+                           "status": "lobby", "league": {}, "messages": []})
+    assert isinstance(sid, str) and sid
+    snaps = s.list_snapshots()
+    assert len(snaps) == 1
+    assert snaps[0]["id"] == sid
+    assert snaps[0]["reason"] == "restart"
+    assert snaps[0]["n_picks"] == 2
+    assert snaps[0]["status"] == "lobby"
+    n = s.clear_messages()
+    assert n == 2
+    assert s.messages(None) == []
+
+
+def test_inmemory_store_list_snapshots_newest_first():
+    from winspool.store import InMemoryStore
+    s = InMemoryStore(fresh())
+    s.add_snapshot({"taken_at": 1.0, "reason": "restart", "n_picks": 0,
+                    "status": "lobby", "league": {}, "messages": []})
+    s.add_snapshot({"taken_at": 2.0, "reason": "complete", "n_picks": 30,
+                    "status": "done", "league": {}, "messages": []})
+    snaps = s.list_snapshots()
+    assert [sn["reason"] for sn in snaps] == ["complete", "restart"]

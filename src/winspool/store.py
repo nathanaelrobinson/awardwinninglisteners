@@ -18,6 +18,12 @@ class Store(Protocol):
     def messages(self, since: float | None) -> list[dict]: ...
     def get_standings(self) -> dict | None: ...
     def put_standings(self, doc: dict) -> None: ...
+    def add_snapshot(self, snapshot: dict) -> str: ...
+    def clear_messages(self) -> int: ...
+    def list_snapshots(self) -> list[dict]: ...
+
+
+SNAPSHOT_CAP = 50
 
 
 class InMemoryStore:
@@ -25,6 +31,7 @@ class InMemoryStore:
         self._doc = doc
         self._msgs: list[dict] = []
         self._standings: dict | None = None
+        self._snapshots: list[dict] = []
         self._lock = threading.Lock()
 
     def get(self) -> dict:
@@ -57,6 +64,21 @@ class InMemoryStore:
     def put_standings(self, doc):
         with self._lock:
             self._standings = doc
+
+    def add_snapshot(self, snapshot):
+        sid = uuid.uuid4().hex
+        with self._lock:
+            self._snapshots.append({"id": sid, **snapshot})
+        return sid
+
+    def clear_messages(self):
+        with self._lock:
+            n = len(self._msgs)
+            self._msgs = []
+        return n
+
+    def list_snapshots(self):
+        return sorted(self._snapshots, key=lambda s: s["taken_at"], reverse=True)[:SNAPSHOT_CAP]
 
 
 class FirestoreStore:
@@ -109,6 +131,26 @@ class FirestoreStore:
 
     def put_standings(self, doc):
         self._ref.collection("cache").document("standings").set(doc)
+
+    def add_snapshot(self, snapshot):
+        _, ref = self._ref.collection("snapshots").add(snapshot)
+        return ref.id
+
+    def clear_messages(self):
+        docs = list(self._ref.collection("messages").stream())
+        n = 0
+        for i in range(0, len(docs), 400):
+            batch = self._db.batch()
+            for d in docs[i:i + 400]:
+                batch.delete(d.reference)
+            batch.commit()
+            n += len(docs[i:i + 400])
+        return n
+
+    def list_snapshots(self):
+        q = self._ref.collection("snapshots").order_by(
+            "taken_at", direction=self._fs.Query.DESCENDING).limit(SNAPSHOT_CAP)
+        return [{"id": d.id, **d.to_dict()} for d in q.get()]
 
 
 _STORE: Store | None = None

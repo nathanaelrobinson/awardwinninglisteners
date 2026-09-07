@@ -44,6 +44,20 @@ def _run(fn):
         raise
 
 
+def _snapshot(store, reason: str) -> str:
+    doc = store.get()
+    v = league.view(doc)
+    snapshot = {
+        "taken_at": time.time(),
+        "reason": reason,
+        "league": v,
+        "messages": store.messages(None),
+        "n_picks": len(doc["picks"]),
+        "status": doc["status"],
+    }
+    return store.add_snapshot(snapshot)
+
+
 class LoginReq(BaseModel):
     name: str
     pin: str
@@ -97,13 +111,33 @@ def reset(_: str = Depends(require_commissioner)):
     return _run(league.reset)
 
 
+@router.post("/api/league/restart")
+def restart(_: str = Depends(require_commissioner)):
+    store = get_store()
+    _snapshot(store, "restart")
+    view = _run(league.restart)
+    store.clear_messages()
+    return view
+
+
+@router.get("/api/league/snapshots")
+def get_snapshots(_: str = Depends(require_commissioner)):
+    return get_store().list_snapshots()
+
+
 class PickReq(BaseModel):
     team: str
 
 
 @router.post("/api/league/pick")
 def pick(req: PickReq, name: str = Depends(current_user)):
-    return _run(lambda d: league.pick(d, name, req.team, time.time()))
+    view = _run(lambda d: league.pick(d, name, req.team, time.time()))
+    if view["status"] == "done":
+        try:
+            _snapshot(get_store(), "complete")
+        except Exception:
+            pass
+    return view
 
 
 @router.post("/api/league/undo")
