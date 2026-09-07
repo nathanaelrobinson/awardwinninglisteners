@@ -71,7 +71,7 @@ export default function LiveDraft({ view, me, onChange }: Props) {
             </>
           )}
         </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 16 }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: 16, minHeight: 0 }}>
           <LiveRosters view={view} myName={me.name} />
           <Feed view={view} myName={me.name} />
         </div>

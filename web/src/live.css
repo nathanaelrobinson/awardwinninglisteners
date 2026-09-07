@@ -45,7 +45,7 @@
 .lroster ul { padding: 0; margin: 0; min-height: 6.6em; }
 .lroster.turn h4 { color: var(--red); font-weight: 700; }
 
-.feed { display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: 4px; background: var(--bg-panel); height: 50vh; }
+.feed { display: flex; flex-direction: column; border: 1px solid var(--border); border-radius: 4px; background: var(--bg-panel); flex: 1; min-height: 240px; height: auto; }
 .feed-list { flex: 1; overflow-y: auto; padding: 8px 10px; display: flex; flex-direction: column; gap: 6px; font-size: 14px; }
 .feed-pick { color: var(--text-dim); }
 .feed-pick b { color: var(--text); }
@@ -70,7 +70,7 @@
   .tile { min-height: 44px; justify-content: center; width: auto; }
   .lrosters { grid-template-columns: repeat(5, minmax(60px, 1fr)); overflow-x: auto; }
   .lroster h4 { font-size: 11px; }
-  .feed { height: 40vh; }
+  .feed { flex: none; height: 40vh; min-height: 0; }
   .btn { min-height: 44px; }
   .login-pin, .login-name { min-height: 44px; }
 }
