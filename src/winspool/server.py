@@ -215,12 +215,14 @@ def recommend(req: RecReq):
                     for r in roll]
             # Winner-take-all tie-break: among candidates whose P(win) are within
             # ~1 pt (i.e. inside the estimator's noise), prefer the higher ROSTER
-            # ceiling — the upper tail of my combined total WITH this team added.
-            # Roster-aware, so a division rival whose solo upside is capped by
-            # head-to-head games (cannibalization) is NOT rewarded for it; this
-            # keeps the ranking consistent with the `conflict` warning instead of
-            # contradicting it. Early in the draft P(win) is degenerate (a small
-            # roster co-leads most seasons), so this tiebreak carries the ranking.
+            # ceiling — the upper tail of MY combined total with this team added,
+            # i.e. how high my roster realistically spikes. It's the right upside
+            # measure for a winner-take-all tie (you have to spike to win) because
+            # it scores my actual roster, not a team in isolation. Early in the
+            # draft P(win) is degenerate (a small roster co-leads most seasons),
+            # so this tiebreak carries the ranking. (Roster correlation — e.g. two
+            # of my teams playing — is priced in automatically, at the small
+            # magnitude it actually deserves; it is not a special-cased penalty.)
             recs.sort(key=lambda r: (round(r["pwin"], 2), r["roster_ceiling"]), reverse=True)
         else:
             # Targets watchlist (also the "quick"/naive view): rank by value,

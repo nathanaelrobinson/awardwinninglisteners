@@ -42,10 +42,9 @@ export default function Recommendations({ recommend, loading, teamNames }: Props
       </h3>
 
       {recommend.my_intra_games > 0 && (
-        <div className="cannibal-warn" title="Your teams play each other; each such game gives you exactly 1 win instead of a possible 2, capping your ceiling">
-          ⚠ {recommend.my_intra_games} game{recommend.my_intra_games > 1 ? 's' : ''} between your
-          own teams — caps your combined ceiling by {recommend.my_intra_games}. Prefer teams that
-          don't play the ones you hold.
+        <div className="cannibal-warn" title="When two of your teams play, exactly one wins — so those games are guaranteed wins that don't vary. This trims your combined ceiling a little but has a negligible effect on your odds of finishing 1st. Informational, not a problem.">
+          {recommend.my_intra_games} game{recommend.my_intra_games > 1 ? 's' : ''} between your own
+          teams (minor — slightly higher floor, slightly lower ceiling; negligible effect on P(win)).
         </div>
       )}
 
@@ -80,8 +79,8 @@ export default function Recommendations({ recommend, loading, teamNames }: Props
               <td className="rec-code">
                 {r.code}
                 {r.conflict !== undefined && r.conflict > 0 && (
-                  <span className="rec-conflict" title={`plays ${r.conflict} of your teams — caps ceiling`}>
-                    {' '}⚠{r.conflict}
+                  <span className="rec-conflict" title={`plays ${r.conflict} of your teams (minor)`}>
+                    {' '}·{r.conflict}
                   </span>
                 )}
               </td>
