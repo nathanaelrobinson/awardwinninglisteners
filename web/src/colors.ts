@@ -1,7 +1,15 @@
 // web/src/colors.ts
-// Fixed player colors by slot order (index 0..4), matching the league's old sheet.
-const PLAYER_COLORS = ['#d50a0a', '#1b48e0', '#e8842b', '#6b2fb3', '#0a8f5a'];
+// Fixed player colors by name (the league's long-standing colors).
+const PLAYER_COLORS: Record<string, { bg: string; fg: string }> = {
+  'Nate Robinson': { bg: '#6b2fb3', fg: '#ffffff' },
+  'Logan Borgelt': { bg: '#d50a0a', fg: '#ffffff' },
+  'Eric Whitley': { bg: '#1b48e0', fg: '#ffffff' },
+  'Mitch Fischer': { bg: '#e8842b', fg: '#ffffff' },
+  'Evan Goguillon-Bader': { bg: '#f5d90a', fg: '#151515' },
+};
 
-export function playerColor(index: number): string {
-  return PLAYER_COLORS[index % PLAYER_COLORS.length];
+const DEFAULT_COLOR = { bg: '#013369', fg: '#ffffff' };
+
+export function playerColor(name: string): { bg: string; fg: string } {
+  return PLAYER_COLORS[name] ?? DEFAULT_COLOR;
 }

@@ -51,13 +51,12 @@ export default function Standings({ me, view }: { me: Me; view: LeagueView }) {
         <span className="eyebrow">Standings</span>
         <div className="standings-grid">
           {data.rows.map((r) => {
-            const slot = view.players.indexOf(r.player);
-            const color = playerColor(slot < 0 ? 0 : slot);
+            const color = playerColor(r.player);
             const isMe = r.player === me.name;
             const first = r.player.trim().split(/\s+/)[0] ?? r.player;
             return (
               <div key={r.player} className={`standings-player${isMe ? ' me' : ''}`}>
-                <div className="standings-head" style={{ background: color }}>{first}</div>
+                <div className="standings-head" style={{ background: color.bg, color: color.fg }}>{first}</div>
                 <div className="standings-body">
                   {Array.from({ length: ROWS }, (_, i) => {
                     const t = r.teams[i];
