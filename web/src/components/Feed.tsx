@@ -57,7 +57,8 @@ export default function Feed({ view, myName }: { view: LeagueView; myName: strin
   }
 
   return (
-    <div className="feed">
+    <div className="feed card">
+      <span className="eyebrow">Feed</span>
       <div className="feed-list" ref={listRef}>
         {items.map((it) =>
           it.kind === 'pick' ? (

@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import type { LeagueView, Me, StandingsResponse } from '../league';
 import { getStandings, setOverride } from '../league';
 import Feed from './Feed';
+import TeamLogo from './TeamLogo';
 
 export default function Standings({ me, view }: { me: Me; view: LeagueView }) {
   const [data, setData] = useState<StandingsResponse | null>(null);
@@ -31,11 +32,13 @@ export default function Standings({ me, view }: { me: Me; view: LeagueView }) {
   const width = 6;
   return (
     <div className="standings">
-      <table>
+      <div className="card standings-card">
+        <span className="eyebrow">Standings</span>
+        <table>
         <thead>
           <tr>
             <th></th>
-            {Array.from({ length: width }, (_, i) => <th key={i}></th>)}
+            {Array.from({ length: width }, (_, i) => <th key={i} className="num" />)}
             <th>Total</th>
           </tr>
         </thead>
@@ -48,7 +51,7 @@ export default function Standings({ me, view }: { me: Me; view: LeagueView }) {
                 if (!t) return <td key={i} />;
                 return (
                   <td key={t.code} className={`num ${me.is_commissioner ? 'ov' : ''}`} onClick={() => me.is_commissioner && edit(t.code, t.wins)}>
-                    {t.code} {t.wins}
+                    <span className="st-cell"><TeamLogo code={t.code} size={18} /><span className="st-code">{t.code}</span><b>{t.wins}</b></span>
                   </td>
                 );
               })}
@@ -56,11 +59,10 @@ export default function Standings({ me, view }: { me: Me; view: LeagueView }) {
             </tr>
           ))}
         </tbody>
-      </table>
-      {data.stale && <div className="stale">stale</div>}
-      <div style={{ marginTop: 16, maxWidth: 900 }}>
-        <Feed view={view} myName={me.name} />
+        </table>
+        {data.stale && <div className="stale">stale</div>}
       </div>
+      <Feed view={view} myName={me.name} />
     </div>
   );
 }

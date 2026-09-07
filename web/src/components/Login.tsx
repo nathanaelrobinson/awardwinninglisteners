@@ -20,6 +20,8 @@ export default function Login({ onDone }: { onDone: () => void }) {
 
   return (
     <div className="login">
+      <img className="login-shield" src="/nfl.png" alt="" width={48} height={48} />
+      <h1 className="login-title">Wins Pool 2026</h1>
       <div className="login-names">
         {PLAYERS.map((p) => (
           <button key={p} className={`login-name ${name === p ? 'on' : ''}`} onClick={() => setName(p)}>

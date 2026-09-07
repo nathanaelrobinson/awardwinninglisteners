@@ -53,16 +53,18 @@ export default function LiveDraft({ view, me, onChange }: Props) {
   }
 
   return (
-    <>
-      <PickStrip view={view} myName={me.name} />
-      {me.is_commissioner && (
-        <div className="strip-actions">
-          <button className="btn" disabled={view.picks.length === 0} onClick={() => act(undoPick)}>Undo</button>
-          {view.picks.length === 0 && <button className="btn" onClick={() => act(resetDraft)}>Re-randomize</button>}
-        </div>
-      )}
+    <div className="draft">
+      <div className="card strip-card">
+        <PickStrip view={view} myName={me.name} />
+        {me.is_commissioner && (
+          <div className="strip-actions">
+            <button className="btn" disabled={view.picks.length === 0} onClick={() => act(undoPick)}>Undo</button>
+            {view.picks.length === 0 && <button className="btn" onClick={() => act(resetDraft)}>Re-randomize</button>}
+          </div>
+        )}
+      </div>
       <div className="live">
-        <div>
+        <div className="live-col">
           <DraftBoard teams={teams} takenBy={takenBy} myName={me.name} canPick={myTurn} onPick={(c) => act(() => pickTeam(c))} />
           {me.is_commissioner && view.status === 'drafting' && (
             <>
@@ -71,11 +73,11 @@ export default function LiveDraft({ view, me, onChange }: Props) {
             </>
           )}
         </div>
-        <div style={{ display: 'flex', flexDirection: 'column', gap: 16, minHeight: 0 }}>
+        <div className="live-col live-side">
           <LiveRosters view={view} myName={me.name} />
           <Feed view={view} myName={me.name} />
         </div>
       </div>
-    </>
+    </div>
   );
 }

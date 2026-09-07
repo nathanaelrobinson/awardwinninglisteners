@@ -1,5 +1,6 @@
 // web/src/components/DraftBoard.tsx
 import type { Team } from '../types';
+import TeamLogo from './TeamLogo';
 
 const DIVISION_ORDER = [
   'AFC East', 'AFC North', 'AFC South', 'AFC West',
@@ -19,8 +20,10 @@ export default function DraftBoard({ teams, takenBy, myName, canPick, onPick }: 
   const divisions = DIVISION_ORDER.filter((d) => present.has(d));
   const short = (n: string) => n.split(' ')[0];
   return (
-    <div className="dboard">
-      {divisions.map((div) => (
+    <div className="card dboard-card">
+      <span className="eyebrow">Board</span>
+      <div className="dboard">
+        {divisions.map((div) => (
         <div key={div} className="dboard-div">
           <h4>{div}</h4>
           <div className="dboard-tiles">
@@ -33,14 +36,18 @@ export default function DraftBoard({ teams, takenBy, myName, canPick, onPick }: 
                 const cls = ['tile', taken ? 'taken' : canPick ? 'open' : '', owner === myName ? 'mine' : ''].join(' ');
                 return (
                   <button key={t.code} className={cls} disabled={taken || !canPick} onClick={() => onPick(t.code)} title={t.name}>
-                    {t.code}
-                    <span className="owner">{taken ? short(owner) : ' '}</span>
+                    <TeamLogo code={t.code} size={28} />
+                    <span className="tile-text">
+                      {t.code}
+                      <span className="owner">{taken ? short(owner) : ' '}</span>
+                    </span>
                   </button>
                 );
               })}
           </div>
         </div>
-      ))}
+        ))}
+      </div>
     </div>
   );
 }

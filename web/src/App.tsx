@@ -7,6 +7,7 @@ import Login from './components/Login';
 import Lobby from './components/Lobby';
 import LiveDraft from './components/LiveDraft';
 import Standings from './components/Standings';
+import StatusBar from './components/StatusBar';
 import Practice from './components/Practice';
 
 type Tab = 'draft' | 'standings' | 'practice';
@@ -50,15 +51,22 @@ export default function App() {
   return (
     <div className="app">
       <nav className="tab-bar">
-        {tabs.map((t) => (
-          <button key={t} className={`tab-btn ${tab === t ? 'active' : ''}`} onClick={() => setTab(t)}>
-            {t === 'draft' ? 'Draft' : t === 'standings' ? 'Standings' : 'Practice'}
-          </button>
-        ))}
-        <span className="tab-me">{me.name}</span>
+        <div className="tab-bar-inner">
+          {tabs.map((t) => (
+            <button key={t} className={`tab-btn ${tab === t ? 'active' : ''}`} onClick={() => setTab(t)}>
+              {t === 'draft' ? 'Draft' : t === 'standings' ? 'Standings' : 'Practice'}
+            </button>
+          ))}
+          <span className="tab-me">{me.name}</span>
+        </div>
       </nav>
-      {tab === 'draft' && (view.status === 'lobby' ? <Lobby view={view} me={me} /> : <LiveDraft view={view} me={me} onChange={setView} />)}
-      {tab === 'standings' && <Standings me={me} view={view} />}
+      <StatusBar view={view} me={me} />
+      {tab !== 'practice' && (
+        <main className="wrap">
+          {tab === 'draft' && (view.status === 'lobby' ? <Lobby view={view} me={me} /> : <LiveDraft view={view} me={me} onChange={setView} />)}
+          {tab === 'standings' && <Standings me={me} view={view} />}
+        </main>
+      )}
       {tab === 'practice' && <Practice />}
     </div>
   );
