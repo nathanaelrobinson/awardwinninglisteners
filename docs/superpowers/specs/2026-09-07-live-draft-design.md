@@ -12,6 +12,7 @@ The bar is the spreadsheet it replaces: type a team, see the sum. Nothing harder
 
 ## Non-goals
 
+- A custom domain. The `*.run.app` URL is what gets shared tonight.
 - Google/OAuth accounts. Name + shared PIN is enough for five friends.
 - WebSockets. Two-second polling is fine for five clients.
 - Multi-league or multi-season support. One league document, hard-coded to 2026.
@@ -56,6 +57,16 @@ leagues/2026
   logged_in       {name: ts}  last-seen timestamps for the lobby
 ```
 
+```
+leagues/2026/messages/{auto-id}
+  by      str   player name
+  text    str   ≤ 500 chars
+  ts      float epoch seconds
+```
+
+Messages are a subcollection so the league doc stays small. Picks are not duplicated
+into messages; the client merges `picks` and `messages` by timestamp into one feed.
+
 Pick order is `winspool.draft.PICK_ORDER` (fixed, not a snake). Slot for pick `n`
 is `PICK_ORDER[n-1]`. Randomize assigns names to slots; the order itself never
 changes.
@@ -78,6 +89,8 @@ endpoint reads the cookie. Commissioner is the player whose name equals
 | POST | /api/league/reset | commissioner, no picks yet | slots=null, status=lobby |
 | POST | /api/league/pick {team} | cookie | transaction: caller's slot == current slot, team not taken → append |
 | POST | /api/league/undo | commissioner | pop last pick; if picks empty and status=done, status=drafting |
+| GET | /api/messages?since=ts | cookie | messages newer than `since` (all if omitted), oldest first, cap 200 |
+| POST | /api/messages {text} | cookie | append a message as the caller |
 | GET | /api/standings | cookie | per-team wins (feed + overrides), per-player totals |
 | POST | /api/standings/override {team, wins} | commissioner | set/clear override |
 
@@ -135,6 +148,11 @@ Commissioner sees one button: "Randomize order". Everyone else sees nothing else
 - Left: 32 team tiles grouped by division. Taken tiles are dimmed with the drafter's
   name. On your turn, tiles are buttons; otherwise they are inert.
 - Right: five roster columns, name on top, six rows.
+- Below the rosters: the feed. A single-line input with the caller's name as its
+  placeholder, and above it the merged list of picks ("Nate Robinson — KC") and
+  messages ("Mitch Fischer: ..."), newest at the bottom, auto-scrolled. Polled with
+  the league state. The same feed, still writable, appears on the Standings tab so
+  the group can keep commenting all season.
 - Commissioner-only: an "Undo" button under the strip, and the existing
   Recommendations + Forecast panel below the board. No one else sees these.
 - When status = done the strip is full and the pick buttons are gone. No banner.
@@ -169,8 +187,9 @@ headers and button labels stay. Sentences go.
 - New GCP project `wins-pool-2026` (personal), billing linked to the same account as
   the active project. Enable Cloud Run, Artifact Registry, Cloud Build, Firestore.
   Firestore native mode, `us-west1`.
-- One-time setup via `winspool league-init --players A,B,C,D,E --commissioner Nate
-  --pin 1234` which writes the league doc. Re-runnable; refuses if picks exist
+- One-time setup via `winspool league-init` which writes the league doc. Players:
+  Nate Robinson (commissioner), Evan Goguillon-Bader, Logan Borgelt, Eric Whitley,
+  Mitch Fischer. PIN is passed via `--pin` / `LEAGUE_PIN` env, never committed. Re-runnable; refuses if picks exist
   unless `--force`.
 
 ## Error handling
@@ -190,6 +209,7 @@ Unit tests (pytest, in-memory store):
 - randomize: only commissioner, only in lobby, produces a permutation of 1..5
 - pick: right slot accepted, wrong slot 409, taken team 409, 30th pick → done
 - undo: commissioner only, pops last, reopens from done
+- messages: append as caller, `since` filter, 500-char cap, empty text rejected
 - standings: fixture schedule with wins, a tie, an unplayed game, one override
 
 Manual before 6pm: deploy, open five browser profiles, run a full 30-pick mock
@@ -201,7 +221,7 @@ handing the link out.
 | By | Done |
 |---|---|
 | 12:30 | league.py, store.py, auth, endpoints, tests green |
-| 14:30 | Login, Lobby, Draft screens; text pass |
+| 14:30 | Login, Lobby, Draft screens incl. message feed; text pass |
 | 16:00 | Docker, GCP project, Cloud Run deploy, 5-tab mock draft |
 | 17:00 | Standings backend + tab |
 | 18:00 | Buffer. Link texted with PIN. |
