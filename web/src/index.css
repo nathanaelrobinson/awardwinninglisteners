@@ -1,17 +1,19 @@
 :root {
-  --bg: #16171d;
-  --bg-panel: #1f2028;
-  --bg-panel-2: #24252f;
-  --text: #e5e7eb;
-  --text-dim: #9ca3af;
-  --border: #2e303a;
-  --accent: #c084fc;
-  --accent-bg: rgba(192, 132, 252, 0.15);
-  --green: #4ade80;
-  --red: #f87171;
+  --bg: #eeeeee;
+  --bg-panel: #ffffff;
+  --bg-panel-2: #ffffff;
+  --text: #151515;
+  --text-dim: #626c80;
+  --border: #d6d9de;
+  --border-2: #c9ced6;
+  --navy: #013369;
+  --accent: #1b48e0;
+  --accent-bg: rgba(27, 72, 224, 0.08);
+  --green: #1a7f37;
+  --red: #d50a0a;
 
-  font: 15px/145% system-ui, 'Segoe UI', Roboto, sans-serif;
-  color-scheme: dark;
+  font: 14px/145% "All-Pro Sans", "Helvetica Neue", Helvetica, Arial, sans-serif;
+  color-scheme: light;
   color: var(--text);
   background: var(--bg);
   font-synthesis: none;
@@ -30,7 +32,7 @@ body {
 }
 
 h1, h2, h3 {
-  font-weight: 600;
+  font-weight: 700;
   color: var(--text);
   margin: 0;
 }
