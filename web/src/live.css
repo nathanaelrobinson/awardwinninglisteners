@@ -149,8 +149,10 @@
 .feed-pick { color: var(--text-dim); }
 .feed-pick b { color: var(--text); }
 .feed-msg .by { color: var(--accent); font-weight: 700; margin-right: 6px; }
-.feed-input { border: 0; border-top: 1px solid var(--border); background: transparent; color: var(--text); padding: var(--s3) var(--s4); font-size: 16px; }
+.feed-compose { display: flex; gap: 8px; border-top: 1px solid var(--border); padding: 8px; }
+.feed-input { flex: 1; border: 0; background: transparent; color: var(--text); padding: var(--s3) var(--s4); font-size: 16px; }
 .feed-input:focus { outline: none; }
+.feed-send { padding: 0 var(--s3); }
 
 /* ---------- standings ---------- */
 .standings { display: flex; flex-direction: column; gap: var(--s4); }
@@ -248,6 +250,7 @@
   .standings-row.ov { min-height: 44px; }
 
   .feed { flex: none; height: 40vh; min-height: 0; }
-  .feed-input { min-height: 44px; }
+  .feed-input { min-height: 44px; font-size: 16px; }
+  .feed-send { min-height: 44px; }
   .btn { min-height: 44px; }
 }

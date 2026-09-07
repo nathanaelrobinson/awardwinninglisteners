@@ -1,5 +1,5 @@
 // web/src/App.tsx
-import { useCallback, useEffect, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import './App.css';
 import type { LeagueView, Me } from './league';
 import { getLeague, getMe } from './league';
@@ -16,6 +16,7 @@ export default function App() {
   const [me, setMe] = useState<Me | null | undefined>(undefined); // undefined = checking
   const [view, setView] = useState<LeagueView | null>(null);
   const [tab, setTab] = useState<Tab>('draft');
+  const tabChosen = useRef(false);
 
   const refreshMe = useCallback(() => {
     getMe().then(setMe).catch(() => setMe(null));
@@ -32,6 +33,10 @@ export default function App() {
         const v = await getLeague();
         if (!alive) return;
         setView(v);
+        if (!tabChosen.current) {
+          tabChosen.current = true;
+          setTab(v.status === 'done' ? 'standings' : 'draft');
+        }
         timer = window.setTimeout(tick, v.status === 'done' ? 10_000 : 2_000);
       } catch (e) {
         if ((e as Error).message === '401') { setMe(null); return; }
@@ -53,7 +58,7 @@ export default function App() {
       <nav className="tab-bar">
         <div className="tab-bar-inner">
           {tabs.map((t) => (
-            <button key={t} className={`tab-btn ${tab === t ? 'active' : ''}`} onClick={() => setTab(t)}>
+            <button key={t} className={`tab-btn ${tab === t ? 'active' : ''}`} onClick={() => { tabChosen.current = true; setTab(t); }}>
               {t === 'draft' ? 'Draft' : t === 'standings' ? 'Standings' : 'Practice'}
             </button>
           ))}

@@ -68,14 +68,17 @@ export default function Feed({ view, myName }: { view: LeagueView; myName: strin
           )
         )}
       </div>
-      <input
-        className="feed-input"
-        placeholder={myName}
-        value={text}
-        maxLength={500}
-        onChange={(e) => setText(e.target.value)}
-        onKeyDown={(e) => e.key === 'Enter' && send()}
-      />
+      <div className="feed-compose">
+        <input
+          className="feed-input"
+          placeholder={myName}
+          value={text}
+          maxLength={500}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => e.key === 'Enter' && send()}
+        />
+        <button type="button" className="btn primary feed-send" onClick={send} disabled={!text.trim()}>Send</button>
+      </div>
     </div>
   );
 }
