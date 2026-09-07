@@ -13,7 +13,7 @@ The bar is the spreadsheet it replaces: type a team, see the sum. Nothing harder
 ## Non-goals
 
 - A custom domain. The `*.run.app` URL is what gets shared tonight.
-- Google/OAuth accounts. Name + shared PIN is enough for five friends.
+- Google/OAuth accounts. Name + a personal PIN is enough for five friends.
 - WebSockets. Two-second polling is fine for five clients.
 - Multi-league or multi-season support. One league document, hard-coded to 2026.
 - Playoff wins. Regular season only; ties count 0.
@@ -43,11 +43,15 @@ FastAPI (Cloud Run, max 1 instance, min 1 instance)
 Firestore (native mode) — one doc: leagues/2026
 ```
 
+`GET /api/league` is a pure read; the presence stamp (`logged_in`) is written at
+most once per 20s per player and only while `status` is `lobby` (avoids Firestore
+single-document contention).
+
 ### League document
 
 ```
 leagues/2026
-  pin_hash        str   sha256 of league PIN + salt
+  pins            {name: {salt, hash}}  per-player PIN, salted hash
   commissioner    str   player name
   players         [str] five names (fixed at setup)
   slots           {name: 1..5} | null  (null until randomized)
@@ -73,7 +77,8 @@ changes.
 
 ### Auth
 
-`POST /api/login {name, pin}` → checks name ∈ players and PIN hash → sets a signed
+`POST /api/login {name, pin}` → checks name ∈ players and that player's own PIN hash in
+`pins` → sets a signed
 cookie `wp_session` (HMAC over name using `SESSION_SECRET` env). Every league
 endpoint reads the cookie. Commissioner is the player whose name equals
 `commissioner`. No logout needed; cookie lives 7 days.
@@ -82,7 +87,7 @@ endpoint reads the cookie. Commissioner is the player whose name equals
 
 | Method | Path | Who | Effect |
 |---|---|---|---|
-| POST | /api/login | anyone | set cookie |
+| POST | /api/login | anyone | checks that player's own PIN, set cookie |
 | GET | /api/me | cookie | `{name, is_commissioner, slot}` |
 | GET | /api/league | cookie | full league state for rendering (also touches `logged_in`) |
 | POST | /api/league/randomize | commissioner, status=lobby | shuffle names→slots, status=drafting |
@@ -189,8 +194,9 @@ headers and button labels stay. Sentences go.
   Firestore native mode, `us-west1`.
 - One-time setup via `winspool league-init` which writes the league doc. Players:
   Nate Robinson (commissioner), Evan Goguillon-Bader, Logan Borgelt, Eric Whitley,
-  Mitch Fischer. PIN is passed via `--pin` / `LEAGUE_PIN` env, never committed. Re-runnable; refuses if picks exist
-  unless `--force`.
+  Mitch Fischer. `league-init` generates and prints a random per-player PIN for each
+  name (or accepts `--pins "Name=1234,..."` to set them explicitly), never committed.
+  Re-runnable; refuses if picks exist unless `--force`.
 
 ## Error handling
 
