@@ -249,6 +249,16 @@
   font-family: ui-monospace, Consolas, monospace;
 }
 
+.rec-table tr.rec-row-click {
+  cursor: pointer;
+}
+.rec-table tr.rec-row-click:hover td {
+  background: var(--accent-bg);
+}
+.rec-table tr.rec-row-selected td:first-child {
+  box-shadow: inset 3px 0 0 var(--accent);
+}
+
 /* Rosters */
 .rosters {
   background: var(--bg-panel);

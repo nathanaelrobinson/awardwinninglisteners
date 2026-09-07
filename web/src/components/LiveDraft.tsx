@@ -10,6 +10,7 @@ import LiveRosters from './LiveRosters';
 import Feed from './Feed';
 import Recommendations from './Recommendations';
 import Forecast from './Forecast';
+import Results from './Results';
 import { fetchRecommend } from '../api';
 import type { RecommendResponse } from '../types';
 
@@ -37,7 +38,9 @@ export default function LiveDraft({ view, me, onChange, selected, onSelect }: Pr
 
   const takenBy = useMemo(() => Object.fromEntries(view.picks.map((p) => [p.team, { name: p.by, n: p.n }])), [view.picks]);
   const myTurn = view.status === 'drafting' && view.current_player === me.name;
-  const taken = view.picks.map((p) => p.team);
+  // Stable identity across polls (the panels below key their fetches on it).
+  const takenKey = view.picks.map((p) => p.team).join(',');
+  const taken = useMemo(() => (takenKey ? takenKey.split(',') : []), [takenKey]);
   const mySlot = view.slots?.[me.name] ?? null;
 
   // Commissioner-only optimizer panel, driven by the live board.
@@ -49,10 +52,16 @@ export default function LiveDraft({ view, me, onChange, selected, onSelect }: Pr
     setRecLoading(true);
     fetchRecommend(mySlot, taken).then((r) => { if (!cancelled) setRec(r); }).catch(() => {}).finally(() => { if (!cancelled) setRecLoading(false); });
     return () => { cancelled = true; };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [me.is_commissioner, mySlot, view.status, taken.join(',')]);
+  }, [me.is_commissioner, mySlot, view.status, taken]);
 
   const teamNames = useMemo(() => Object.fromEntries(teams.map((t) => [t.code, t.name])), [teams]);
+
+  // Commissioner "what if": inspect a team (board tile or rec row) or default to
+  // the top recommendation; the standings view below shows the field if I take it.
+  const [inspect, setInspect] = useState<string | null>(null);
+  const topRec = rec?.recommendations[0]?.code ?? null;
+  const takenSet = useMemo(() => new Set(taken), [taken]);
+  const whatIf = inspect && !takenSet.has(inspect) ? inspect : selected ?? topRec;
 
   async function act(fn: () => Promise<LeagueView>) {
     try { onChange(await fn()); } catch { getLeague().then(onChange).catch(() => {}); }
@@ -82,12 +91,21 @@ export default function LiveDraft({ view, me, onChange, selected, onSelect }: Pr
             myName={me.name}
             canPick={myTurn}
             selected={selected}
-            onPick={(c) => onSelect(selected === c ? null : c)}
+            onPick={(c) => { onSelect(selected === c ? null : c); setInspect(c); }}
           />
           {me.is_commissioner && view.status === 'drafting' && (
             <>
-              <Recommendations recommend={rec} loading={recLoading} teamNames={teamNames} />
+              <Recommendations
+                recommend={rec}
+                loading={recLoading}
+                teamNames={teamNames}
+                selected={whatIf}
+                onSelect={(c) => setInspect(c)}
+              />
               <Forecast forecast={rec?.forecast ?? []} done={false} />
+              {mySlot != null && rec && (
+                <Results slot={mySlot} taken={taken} withTeam={whatIf} />
+              )}
             </>
           )}
         </div>

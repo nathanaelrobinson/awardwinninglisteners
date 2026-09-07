@@ -369,9 +369,22 @@ def advance(req: AdvanceReq, _: str = Depends(require_commissioner)):
     }
 
 
+def _rosters_with(slot, taken, with_team):
+    """Live rosters, optionally with one still-available team added to MY roster
+    as a hypothetical pick (what the field looks like if I take it)."""
+    rosters = _state_from(slot, taken).rosters()
+    if with_team:
+        code = with_team.strip().upper()
+        idx = TEAM_INDEX.get(code)
+        if idx is not None and idx not in {t for ts in rosters.values() for t in ts}:
+            rosters[slot].append(idx)
+    return rosters
+
+
 class ResultsReq(BaseModel):
     slot: int
     taken: list[str] = []
+    with_team: str | None = None   # hypothetical pick added to my roster
 
 
 @app.post("/api/results")
@@ -380,7 +393,7 @@ def results(req: ResultsReq, _: str = Depends(require_commissioner)):
     combined wins, P(win the pool), and a 10th–90th pct range."""
     _ensure_ready()
     wins = _STATE["wins"]
-    rosters = _state_from(req.slot, req.taken).rosters()
+    rosters = _rosters_with(req.slot, req.taken, req.with_team)
     totals = player_totals(rosters, wins)          # (N, N_PLAYERS)
     rowmax = totals.max(axis=1)
     lo, hi = int(totals.min()), int(totals.max())
@@ -407,6 +420,7 @@ class SampleReq(BaseModel):
     slot: int
     taken: list[str] = []
     seed: int = 0
+    with_team: str | None = None
 
 
 @app.post("/api/sample_season")
@@ -418,7 +432,7 @@ def sample_season(req: SampleReq, _: str = Depends(require_commissioner)):
     rng = np.random.default_rng(req.seed)
     row = int(rng.integers(0, wins.shape[0]))
     season = wins[row]
-    rosters = _state_from(req.slot, req.taken).rosters()
+    rosters = _rosters_with(req.slot, req.taken, req.with_team)
     out = []
     for p in range(1, N_PLAYERS + 1):
         teams = [{"code": TEAMS[t], "wins": int(season[t])} for t in rosters[p]]

@@ -67,11 +67,15 @@ export interface ResultsResponse {
   n_sims: number;
 }
 
-export async function fetchResults(slot: number, taken: string[]): Promise<ResultsResponse> {
+export async function fetchResults(
+  slot: number,
+  taken: string[],
+  withTeam?: string | null
+): Promise<ResultsResponse> {
   const res = await fetch('/api/results', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ slot, taken }),
+    body: JSON.stringify({ slot, taken, with_team: withTeam ?? null }),
   });
   if (!res.ok) throw new Error(`POST /api/results failed: ${res.status}`);
   return res.json();
@@ -90,12 +94,13 @@ export interface SeasonRow {
 export async function sampleSeason(
   slot: number,
   taken: string[],
-  seed: number
+  seed: number,
+  withTeam?: string | null
 ): Promise<{ standings: SeasonRow[]; winners: number[] }> {
   const res = await fetch('/api/sample_season', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ slot, taken, seed }),
+    body: JSON.stringify({ slot, taken, seed, with_team: withTeam ?? null }),
   });
   if (!res.ok) throw new Error(`POST /api/sample_season failed: ${res.status}`);
   return res.json();
