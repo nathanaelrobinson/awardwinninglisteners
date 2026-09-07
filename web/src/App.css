@@ -156,6 +156,13 @@
   cursor: not-allowed;
 }
 
+.btn.primary:disabled {
+  background: var(--border-2);
+  color: var(--text-dim);
+  opacity: 1;
+  border-color: var(--border-2);
+}
+
 .btn-danger:hover:not(:disabled) {
   border-color: var(--red);
   color: var(--red);

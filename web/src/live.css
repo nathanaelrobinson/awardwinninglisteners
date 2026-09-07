@@ -88,6 +88,7 @@
 /* ---------- draft screen ---------- */
 .draft { display: flex; flex-direction: column; gap: var(--s4); }
 .live { display: grid; grid-template-columns: minmax(0, 1fr) 380px; gap: var(--s4); align-items: stretch; min-width: 0; }
+@media (max-width: 900px) { .live { grid-template-columns: minmax(0, 1fr); } }
 .live-col { display: flex; flex-direction: column; gap: var(--s4); min-width: 0; }
 .live-side { min-height: 0; }
 

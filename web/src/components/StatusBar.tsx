@@ -36,7 +36,7 @@ export default function StatusBar({ view, me }: { view: LeagueView; me: Me }) {
           <span className="status-badge">On the clock</span>
         </span>
         <span className="status-next-name">
-          {upNext && <><span className="status-label">Up next</span> {first(upNext)}</>}
+          {upNext && upNext !== onClock && <><span className="status-label">Up next</span> {first(upNext)}</>}
         </span>
       </div>
     </div>
