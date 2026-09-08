@@ -121,6 +121,34 @@ timers:  ## When the next standings refresh and backup fire
 deploy:  ## Pull main, rebuild, restart, health-check
 	sudo $(APP_DIR)/scripts/pi-deploy.sh
 
+.PHONY: ship
+ship:  ## Build and serve the CURRENT checkout (no git pull), then health-check
+	@echo "shipping $$(git rev-parse --abbrev-ref HEAD) @ $$(git rev-parse --short HEAD)"
+	uv sync --extra dev
+	cd web && npm run build
+	sudo systemctl restart winspool
+	@$(MAKE) --no-print-directory health
+
+# == Preview (temporary public URL, no DNS change)
+
+.PHONY: preview
+preview: ship preview-stop  ## Ship the current checkout and expose it at a fresh *.trycloudflare.com URL
+	sudo systemd-run --quiet --collect --unit=winspool-quick \
+	  cloudflared tunnel --url http://127.0.0.1:$(PORT)
+	@$(MAKE) --no-print-directory preview-url
+
+.PHONY: preview-url
+preview-url:  ## Print the current preview URL
+	@for i in $$(seq 1 30); do \
+		url=$$(journalctl -u winspool-quick --no-pager -o cat 2>/dev/null \
+		       | grep -oE 'https://[a-z0-9-]+\.trycloudflare\.com' | tail -1); \
+		if [ -n "$$url" ]; then echo "$$url"; exit 0; fi; sleep 1; \
+	done; echo "no preview URL yet — is winspool-quick running? (make preview)"; exit 1
+
+.PHONY: preview-stop
+preview-stop:  ## Stop the preview tunnel (the real domain is unaffected)
+	@sudo systemctl stop winspool-quick 2>/dev/null || true
+
 .PHONY: refresh
 refresh:  ## Force a standings refresh now
 	sudo systemctl start winspool-scores.service
