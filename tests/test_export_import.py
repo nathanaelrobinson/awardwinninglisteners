@@ -27,6 +27,9 @@ def populated():
                     "status": "done", "league": {"y": 2}, "messages": []})
     s.put_standings({"wins": {"KC": 3, "BUF": 2}, "updated_at": 123.0})
     s.put_preseason({"rows": [], "x": [], "n_sims": 5, "locked_at": 456.0})
+    s.put_live({"week": 3, "rows": [], "computed_at": 7.0})
+    s.put_week(2, {"week": 2, "rows": [], "computed_at": 5.0})
+    s.put_week(3, {"week": 3, "rows": [], "computed_at": 7.0})
     return s
 
 
@@ -51,6 +54,8 @@ def test_export_import_round_trip_preserves_everything(tmp_path):
     assert dst.all_messages() == src.all_messages()
     assert dst.get_standings() == src.get_standings()
     assert dst.get_preseason() == src.get_preseason()
+    assert dst.get_live() == src.get_live()
+    assert dst.list_weeks() == src.list_weeks()
     assert ([{k: s[k] for k in ("id", "taken_at", "reason", "n_picks", "status")}
              for s in dst.list_snapshots()]
             == [{k: s[k] for k in ("id", "taken_at", "reason", "n_picks", "status")}
@@ -64,7 +69,7 @@ def test_export_writes_expected_keys(tmp_path):
     run(["export", "--out", str(out)], populated())
     payload = json.loads(out.read_text())
     assert set(payload) == {"league", "messages", "snapshots", "standings",
-                            "preseason", "exported_at"}
+                            "preseason", "live", "weeks", "exported_at"}
     assert len(payload["messages"]) == 2
     assert len(payload["snapshots"]) == 2
     assert payload["league"]["players"] == PLAYERS
