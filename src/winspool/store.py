@@ -23,6 +23,10 @@ class Store(Protocol):
     def put_standings(self, doc: dict) -> None: ...
     def get_preseason(self) -> dict | None: ...
     def put_preseason(self, doc: dict) -> None: ...
+    def get_live(self) -> dict | None: ...
+    def put_live(self, doc: dict) -> None: ...
+    def put_week(self, week: int, doc: dict) -> None: ...
+    def list_weeks(self) -> list[dict]: ...
     def add_snapshot(self, snapshot: dict) -> str: ...
     def clear_messages(self) -> int: ...
     def list_snapshots(self) -> list[dict]: ...
@@ -37,6 +41,8 @@ class InMemoryStore:
         self._msgs: list[dict] = []
         self._standings: dict | None = None
         self._preseason: dict | None = None
+        self._live: dict | None = None
+        self._weeks: dict[int, dict] = {}
         self._snapshots: list[dict] = []
         self._lock = threading.Lock()
 
@@ -77,6 +83,20 @@ class InMemoryStore:
     def put_preseason(self, doc):
         with self._lock:
             self._preseason = doc
+
+    def get_live(self):
+        return self._live
+
+    def put_live(self, doc):
+        with self._lock:
+            self._live = doc
+
+    def put_week(self, week, doc):
+        with self._lock:
+            self._weeks[int(week)] = doc
+
+    def list_weeks(self):
+        return [self._weeks[k] for k in sorted(self._weeks)]
 
     def add_snapshot(self, snapshot):
         sid = uuid.uuid4().hex
@@ -173,6 +193,20 @@ class FirestoreStore:
     def put_preseason(self, doc):
         self._ref.collection("cache").document("preseason").set(doc)
 
+    def get_live(self):
+        snap = self._ref.collection("cache").document("live").get()
+        return snap.to_dict() if snap.exists else None
+
+    def put_live(self, doc):
+        self._ref.collection("cache").document("live").set(doc)
+
+    def put_week(self, week, doc):
+        self._ref.collection("weeks").document(str(int(week))).set(doc)
+
+    def list_weeks(self):
+        docs = [d.to_dict() for d in self._ref.collection("weeks").stream()]
+        return sorted(docs, key=lambda d: d["week"])
+
     def add_snapshot(self, snapshot):
         _, ref = self._ref.collection("snapshots").add(snapshot)
         return ref.id
@@ -220,6 +254,7 @@ class SqliteStore:
                                           n_picks INTEGER, status TEXT, doc TEXT NOT NULL);
     CREATE INDEX IF NOT EXISTS snapshots_taken_at ON snapshots(taken_at);
     CREATE TABLE IF NOT EXISTS kv        (k TEXT PRIMARY KEY, v TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS weeks     (week INTEGER PRIMARY KEY, doc TEXT NOT NULL);
     """
 
     def __init__(self, path: str | os.PathLike):
@@ -317,6 +352,24 @@ class SqliteStore:
         with self._lock:
             self._db.execute("INSERT OR REPLACE INTO kv (k, v) VALUES ('preseason', ?)",
                              (json.dumps(doc),))
+
+    def get_live(self) -> dict | None:
+        row = self._db.execute("SELECT v FROM kv WHERE k='live'").fetchone()
+        return json.loads(row[0]) if row else None
+
+    def put_live(self, doc: dict) -> None:
+        with self._lock:
+            self._db.execute("INSERT OR REPLACE INTO kv (k, v) VALUES ('live', ?)",
+                             (json.dumps(doc),))
+
+    def put_week(self, week: int, doc: dict) -> None:
+        with self._lock:
+            self._db.execute("INSERT OR REPLACE INTO weeks (week, doc) VALUES (?, ?)",
+                             (int(week), json.dumps(doc)))
+
+    def list_weeks(self) -> list[dict]:
+        rows = self._db.execute("SELECT doc FROM weeks ORDER BY week").fetchall()
+        return [json.loads(r[0]) for r in rows]
 
     # --- snapshots ---
 
