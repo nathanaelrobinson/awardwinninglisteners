@@ -62,7 +62,7 @@ export default function Review({ me }: { me: Me | null }) {
       </div>
 
       <div className="card standings-card">
-        <span className="eyebrow">Rosters</span>
+        <span className="eyebrow">Pre-season projections · {new Date(data.locked_at * 1000).toLocaleDateString([], { month: 'short', day: 'numeric' })}</span>
         <div className="standings-grid">
           {data.rows.map((r) => {
             const color = playerColor(r.player);
@@ -91,7 +91,7 @@ export default function Review({ me }: { me: Me | null }) {
         <div className="card-head">
           <span className="eyebrow">One season</span>
           <button className="btn btn-primary" disabled={busy} onClick={play}>
-            {season ? 'Re-roll' : 'Play a season'}
+            {season ? 'Simulate again' : 'Simulate season'}
           </button>
         </div>
         {season && (

@@ -9,6 +9,7 @@ Run: uv run winspool-serve
 import argparse
 import hashlib
 import os
+import time
 from pathlib import Path
 
 import numpy as np
@@ -481,11 +482,19 @@ def _name_totals(rosters, wins):
 
 @app.get("/api/league/projections")
 def league_projections(_: str | None = Depends(viewer)):
-    """Post-draft season projection for every player, by name: projected wins per
-    team and combined, P(win the pool), 10th-90th pct range, and win distribution."""
+    """Pre-season projection for every player, by name: projected wins per team
+    and combined, P(win the pool), 10th-90th pct range, and win distribution.
+
+    Frozen: computed once after the draft and stored, so later refreshes of the
+    ratings cache (in-season) never move the Draft Review numbers. `locked_at`
+    is when the freeze happened."""
+    rosters = _final_rosters()
+    store = get_store()
+    frozen = store.get_preseason()
+    if frozen is not None:
+        return frozen
     _ensure_ready()
     wins = _STATE["wins"]
-    rosters = _final_rosters()
     totals = _name_totals(rosters, wins)
     stack = np.stack(list(totals.values()), axis=1)
     rowmax = stack.max(axis=1)
@@ -507,7 +516,9 @@ def league_projections(_: str | None = Depends(viewer)):
     for r in rows:
         r["teams"].sort(key=lambda t: t["exp_wins"], reverse=True)
     rows.sort(key=lambda r: (r["pwin"], r["exp_wins"]), reverse=True)
-    return {"rows": rows, "x": xs, "n_sims": int(wins.shape[0])}
+    doc = {"rows": rows, "x": xs, "n_sims": int(wins.shape[0]), "locked_at": time.time()}
+    store.put_preseason(doc)
+    return doc
 
 
 @app.get("/api/league/sample_season")

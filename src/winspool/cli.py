@@ -200,6 +200,7 @@ def main(argv=None):
             "messages": store.all_messages(),
             "snapshots": store.all_snapshots(),
             "standings": store.get_standings(),
+            "preseason": store.get_preseason(),
             "exported_at": _time.time(),
         }
         with open(args.out, "w") as f:
@@ -237,6 +238,8 @@ def main(argv=None):
             store.put_snapshot(snap)
         if payload.get("standings"):
             store.put_standings(payload["standings"])
+        if payload.get("preseason"):
+            store.put_preseason(payload["preseason"])
         print(f"imported {len(payload['league'].get('picks', []))} picks, "
               f"{len(payload.get('messages') or [])} messages, "
               f"{len(payload.get('snapshots') or [])} snapshots, "

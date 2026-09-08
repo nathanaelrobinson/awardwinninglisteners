@@ -74,7 +74,7 @@ export interface ProjRow {
   p90: number;
   dist: number[];
 }
-export interface ProjectionsResponse { rows: ProjRow[]; x: number[]; n_sims: number }
+export interface ProjectionsResponse { rows: ProjRow[]; x: number[]; n_sims: number; locked_at: number }
 export interface SeasonSample {
   standings: { player: string; teams: { code: string; wins: number }[]; total_wins: number }[];
   winners: string[];

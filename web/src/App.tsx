@@ -81,7 +81,7 @@ export default function App() {
   if (view.status === 'done') tabs.push('review');
   tabs.push('standings');
   if (me?.is_commissioner) tabs.push('practice');
-  const LABEL: Record<Tab, string> = { draft: 'Draft', review: 'Review', standings: 'Standings', practice: 'Practice' };
+  const LABEL: Record<Tab, string> = { draft: 'Draft', review: 'Draft Review', standings: 'Standings', practice: 'Practice' };
 
   return (
     <div className="app">
