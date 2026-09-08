@@ -34,7 +34,8 @@ def simulate(strengths, sigma, home_idx, away_idx, n_seasons, *,
 
 
 def simulate_mixture(source_matrix, home_idx, away_idx, n_seasons, *,
-                     base_sigma=4.5, hfa=HFA, scale=SCALE, tie_base=0.0, rng):
+                     base_sigma=4.5, hfa=HFA, scale=SCALE, tie_base=0.0,
+                     weights=None, rng):
     """Mixture-of-models Monte Carlo. `source_matrix` is (n_sources, n_teams),
     one strength vector per rating source (all on a common scale). Each season
     samples ONE source ("which model is right this year") and draws team
@@ -44,12 +45,21 @@ def simulate_mixture(source_matrix, home_idx, away_idx, n_seasons, *,
     latter lets each team's season noise be calibrated independently (see
     `ratings.calibrate_sigma`).
 
+    `weights` (optional, length n_sources, sums to 1) sets how often each
+    source is the sampled world; None = uniform.
+
     Teams the sources AGREE on stay unimodal; teams they DISAGREE on become
     genuinely multimodal (fat / bimodal tails) — the honest picture of model
     uncertainty, and where winner-take-all upside lives."""
     source_matrix = np.asarray(source_matrix, dtype=float)
     n_sources, n_teams = source_matrix.shape
-    picks = rng.integers(0, n_sources, size=n_seasons)          # world per season
+    if weights is None:
+        picks = rng.integers(0, n_sources, size=n_seasons)
+    else:
+        weights = np.asarray(weights, dtype=float)
+        if weights.size != n_sources:
+            raise ValueError(f"weights length {weights.size} != n_sources {n_sources}")
+        picks = rng.choice(n_sources, size=n_seasons, p=weights / weights.sum())
     base_sigma = np.asarray(base_sigma, dtype=float)
     if base_sigma.ndim == 1 and base_sigma.size != n_teams:
         raise ValueError(
