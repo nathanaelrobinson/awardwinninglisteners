@@ -133,8 +133,10 @@ ship:  ## Build and serve the CURRENT checkout (no git pull), then health-check
 
 .PHONY: preview
 preview: ship preview-stop  ## Ship the current checkout and expose it at a fresh *.trycloudflare.com URL
+	@# --config /dev/null: as root, cloudflared would otherwise load the named
+	@# tunnel's /etc/cloudflared/config.yml, whose ingress 404s every other host.
 	sudo systemd-run --quiet --collect --unit=winspool-quick \
-	  cloudflared tunnel --url http://127.0.0.1:$(PORT)
+	  cloudflared --config /dev/null tunnel --url http://127.0.0.1:$(PORT)
 	@$(MAKE) --no-print-directory preview-url
 
 .PHONY: preview-url
