@@ -282,3 +282,43 @@ def test_ratings_fetched_at_only_considers_power_sources(tmp_path):
     meta2 = [{"kind": "kalshi", "ok": True, "fetched_at": "2026-09-25T09:00:00"}]
     path.write_text(_json.dumps(meta2))
     assert live.ratings_fetched_at(str(tmp_path)) is None
+
+
+# --- Per-source views (score lens) -------------------------------------------
+
+def test_compute_live_has_a_view_per_source(inseason):
+    doc = live.compute_live(ROSTERS, inseason,
+                            totals_path=f"{FIX}/win_totals.csv",
+                            power_path=f"{FIX}/power_ratings.csv",
+                            kalshi_dist_path=None, ratings_fetched_at=None,
+                            n_seasons=1500, seed=3)
+    views = doc["views"]
+    assert list(views) == ["blend", "vegas", "fpi", "sagarin", "massey"]
+    blend = {r["player"]: r for r in views["blend"]}
+    top = {r["player"]: r for r in doc["rows"]}
+    for p in ROSTERS:
+        # blend view == the top-level rows, minus the chart/market fields
+        assert blend[p]["pwin"] == top[p]["pwin"] and blend[p]["exp_wins"] == top[p]["exp_wins"]
+        assert set(blend[p]) == {"player", "teams", "banked", "exp_wins", "pwin", "p10", "p90"}
+    for name, rows in views.items():
+        assert sorted(r["player"] for r in rows) == sorted(ROSTERS)
+        assert [r["pwin"] for r in rows] == sorted((r["pwin"] for r in rows), reverse=True)
+        for r in rows:
+            assert r["banked"] == top[r["player"]]["banked"]          # banked wins never depend on the lens
+            assert {t["code"] for t in r["teams"]} == set(ROSTERS[r["player"]])
+            assert abs(sum(t["exp_wins"] for t in r["teams"]) - r["exp_wins"]) < 0.2
+        assert 0.99 <= sum(r["pwin"] for r in rows) <= 1.2
+    # single sources disagree somewhere, otherwise the lens is pointless
+    exp = [tuple(r["exp_wins"] for r in sorted(rows, key=lambda r: r["player"])) for rows in views.values()]
+    assert len(set(exp)) > 1
+
+
+def test_views_season_over_are_all_banked(inseason):
+    done = inseason.copy()
+    done.loc[done["home_score"].isna(), ["home_score", "away_score"]] = [20, 10]
+    doc = live.compute_live(ROSTERS, done, totals_path=f"{FIX}/win_totals.csv",
+                            power_path=f"{FIX}/power_ratings.csv", kalshi_dist_path=None,
+                            ratings_fetched_at=None, n_seasons=300, seed=0)
+    for rows in doc["views"].values():
+        for r in rows:
+            assert r["exp_wins"] == r["banked"]

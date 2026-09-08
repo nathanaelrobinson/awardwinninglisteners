@@ -186,6 +186,50 @@ def market_pwin(rosters: dict, kalshi_dist_path, n_sims: int, rng):
     return {p: round(v, 3) for p, v in pool_pwin(totals).items()}
 
 
+def _project(rosters, banked, matrix, weights, sigma, rest, wh, wa, n_seasons, rng):
+    """One season projection under one set of source weights.
+
+    Returns (rows, team_totals, totals, future_rest, p_home, week_outcomes).
+    This week's games are drawn explicitly (so a single game can be forced for
+    leverage); the rest of the season goes through the mixture sim."""
+    strength = consensus(matrix, weights)
+    if len(rest):
+        rh, ra = remaining_matchups(rest)
+        future_rest = simulate_mixture(matrix, rh, ra, n_seasons, base_sigma=sigma,
+                                       tie_base=TIE_BASE, weights=weights, rng=rng).astype(float)
+    else:
+        future_rest = np.zeros((n_seasons, N_TEAMS))
+    p_home = win_prob(strength[wh], strength[wa]) if len(wh) else np.zeros(0)
+    week_outcomes = rng.random((n_seasons, len(wh))) < p_home[None, :]   # True = home wins
+    team_totals = banked[None, :] + future_rest + _week_wins(week_outcomes, wh, wa, n_seasons)
+    totals = _player_totals(rosters, team_totals)
+    pwin = pool_pwin(totals)
+    rows = []
+    for p, col in totals.items():
+        teams = [{"code": c, "banked": float(banked[TEAM_INDEX[c]]),
+                  "exp_wins": round(float(team_totals[:, TEAM_INDEX[c]].mean()), 1)}
+                 for c in rosters[p]]
+        teams.sort(key=lambda t: t["exp_wins"], reverse=True)
+        rows.append({
+            "player": p, "teams": teams,
+            "banked": float(sum(t["banked"] for t in teams)),
+            "exp_wins": round(float(col.mean()), 1),
+            "pwin": round(pwin[p], 3),
+            "p10": int(round(float(np.percentile(col, 10)))),
+            "p90": int(round(float(np.percentile(col, 90)))),
+        })
+    rows.sort(key=lambda r: (r["pwin"], r["exp_wins"]), reverse=True)
+    return rows, team_totals, totals, future_rest, p_home, week_outcomes
+
+
+def _week_wins(outcomes, wh, wa, n_seasons):
+    w = np.zeros((n_seasons, N_TEAMS))
+    for g in range(outcomes.shape[1]):
+        w[:, wh[g]] += outcomes[:, g]
+        w[:, wa[g]] += ~outcomes[:, g]
+    return w
+
+
 def compute_live(rosters: dict, sched_df: pd.DataFrame, *, totals_path, power_path,
                  kalshi_dist_path, ratings_fetched_at, n_seasons=5000, seed=0,
                  now=None) -> dict:
@@ -199,59 +243,32 @@ def compute_live(rosters: dict, sched_df: pd.DataFrame, *, totals_path, power_pa
     full_away = reg["away_team"].map(TEAM_INDEX).to_numpy(dtype=int)
     matrix, weights, _names, sigma_full = source_matrix_for_week(
         totals_path, power_path, kalshi_dist_path, full_home, full_away, week)
-    strength = consensus(matrix, weights)
-
-    # This week's games are drawn explicitly so a single game can be forced
-    # (leverage); the rest of the season goes through the mixture sim.
     this_week = games_in_week(remaining, week)
     rest = remaining[remaining["week"] != week].reset_index(drop=True)
     sigma = season_sigma(remaining_games_per_team(rest), base_sigma=sigma_full)
-    if len(rest):
-        rh, ra = remaining_matchups(rest)
-        future_rest = simulate_mixture(matrix, rh, ra, n_seasons, base_sigma=sigma,
-                                       tie_base=TIE_BASE, weights=weights, rng=rng).astype(float)
-    else:
-        future_rest = np.zeros((n_seasons, N_TEAMS))
-
     wh, wa = remaining_matchups(this_week)
-    p_home = win_prob(strength[wh], strength[wa]) if len(wh) else np.zeros(0)
-    week_outcomes = rng.random((n_seasons, len(wh))) < p_home[None, :]   # True = home wins
 
-    def week_wins(outcomes):
-        w = np.zeros((n_seasons, N_TEAMS))
-        for g in range(outcomes.shape[1]):
-            w[:, wh[g]] += outcomes[:, g]
-            w[:, wa[g]] += ~outcomes[:, g]
-        return w
+    blend, _team_totals, totals, future_rest, p_home, week_outcomes = _project(
+        rosters, banked, matrix, weights, sigma, rest, wh, wa, n_seasons, rng)
+
+    # One extra view per source, that voice at 100%: the "score lens" on the
+    # Standings card. Same method as the blend so the numbers are comparable.
+    views = {"blend": blend}
+    for i, name in enumerate(_names):
+        one_hot = np.zeros(len(_names))
+        one_hot[i] = 1.0
+        views[name] = _project(rosters, banked, matrix, one_hot, sigma, rest, wh, wa,
+                               n_seasons, rng)[0]
 
     def totals_for(outcomes):
-        return banked[None, :] + future_rest + week_wins(outcomes)
+        return banked[None, :] + future_rest + _week_wins(outcomes, wh, wa, n_seasons)
 
-    team_totals = totals_for(week_outcomes)
-    totals = _player_totals(rosters, team_totals)
-    pwin = pool_pwin(totals)
     stack = np.stack(list(totals.values()), axis=1)
     lo, hi = int(np.floor(stack.min())), int(np.ceil(stack.max()))
     xs = list(range(lo, hi + 1))
     mkt = market_pwin(rosters, kalshi_dist_path, n_seasons, rng)
-
-    rows = []
-    for p, col in totals.items():
-        teams = [{"code": c, "banked": float(banked[TEAM_INDEX[c]]),
-                  "exp_wins": round(float(team_totals[:, TEAM_INDEX[c]].mean()), 1)}
-                 for c in rosters[p]]
-        teams.sort(key=lambda t: t["exp_wins"], reverse=True)
-        rows.append({
-            "player": p, "teams": teams,
-            "banked": float(sum(t["banked"] for t in teams)),
-            "exp_wins": round(float(col.mean()), 1),
-            "pwin": round(pwin[p], 3),
-            "market_pwin": None if mkt is None else mkt.get(p),
-            "p10": int(round(float(np.percentile(col, 10)))),
-            "p90": int(round(float(np.percentile(col, 90)))),
-            "dist": _dist(col, lo, len(xs)),
-        })
-    rows.sort(key=lambda r: (r["pwin"], r["exp_wins"]), reverse=True)
+    rows = [{**r, "market_pwin": None if mkt is None else mkt.get(r["player"]),
+             "dist": _dist(totals[r["player"]], lo, len(xs))} for r in blend]
 
     # Leverage: for each of my games this week, |pwin if we win - pwin if we lose|.
     tw_rows = []
@@ -286,7 +303,8 @@ def compute_live(rosters: dict, sched_df: pd.DataFrame, *, totals_path, power_pa
 
     return {"week": week, "computed_at": float(now if now is not None else time.time()),
             "ratings_fetched_at": ratings_fetched_at,
-            "rows": rows, "x": xs, "n_sims": int(n_seasons), "this_week": tw_rows}
+            "rows": rows, "x": xs, "n_sims": int(n_seasons), "this_week": tw_rows,
+            "views": views}
 
 
 _LAST_SCHEDULE: pd.DataFrame | None = None

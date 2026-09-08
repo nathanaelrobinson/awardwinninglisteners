@@ -33,6 +33,22 @@ Standings tab, top to bottom:
 Strings added: `Win`, `Week N`, `Win probability by week`, `Week`, `Win %`. Each
 labels a number the reader would otherwise have to guess at.
 
+## Score lens (added 2026-09-08)
+
+A dropdown in the Standings card header switches what the cards show:
+
+- **Actual** (default): real wins, `Total`, and `Win %` from the blend.
+- **Blend**: projected wins per team to one decimal, `Proj` total, `Win %`.
+- **One source** (FPI, nfelo, Clay, PFF, EPA, Kalshi, Vegas): the same simulation
+  with that voice at 100% weight, so every lens is comparable. Vegas is the
+  Covers/BetMGM average; BetMGM has been failing since 2026-09-03.
+
+The live doc carries `views: {blend, <source>...}` with the same row shape as
+`rows` minus `dist` and `market_pwin`; weekly snapshots carry them too, so the
+▲/▼ delta follows the chosen lens. The This-week strip and the movement chart
+stay on the blend. Choice is remembered per browser. Commissioner win overrides
+are only clickable under Actual.
+
 ## Model
 
 ### Inputs, refreshed weekly
