@@ -92,10 +92,14 @@ export interface LiveRow {
   player: string; teams: LiveTeam[]; banked: number; exp_wins: number;
   pwin: number; market_pwin: number | null; p10: number; p90: number; dist: number[];
 }
+export type LiveViewRow = Omit<LiveRow, 'dist' | 'market_pwin'>;
 export interface LiveProjection {
   week: number; computed_at: number; ratings_fetched_at: string | null;
   rows: LiveRow[]; x: number[]; n_sims: number; this_week: LiveWeekRow[];
+  /** Same projection under one source at 100%: keys 'blend' plus each source name. */
+  views: Record<string, LiveViewRow[]>;
 }
-export interface WeekPoint { week: number; rows: { player: string; pwin: number; exp_wins: number }[] }
+export interface WeekSlim { player: string; pwin: number; exp_wins: number }
+export interface WeekPoint { week: number; rows: WeekSlim[]; views: Record<string, WeekSlim[]> }
 export const getLive = () => call<LiveProjection>('/api/league/live');
 export const getWeeks = () => call<WeekPoint[]>('/api/league/weeks');

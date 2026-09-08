@@ -639,6 +639,10 @@ def test_weekly_snapshot_written_once_per_week(api, store, live_env):
     weeks = api.get("/api/league/weeks").json()
     assert weeks[0]["week"] == 2
     assert set(weeks[0]["rows"][0]) == {"player", "pwin", "exp_wins"}
+    # per-source views ride along so the card can show a delta under any lens
+    assert list(weeks[0]["views"]) == ["blend", "vegas", "fpi", "sagarin", "massey"]
+    assert set(weeks[0]["views"]["fpi"][0]) == {"player", "pwin", "exp_wins"}
+    assert weeks[0]["views"]["blend"] == weeks[0]["rows"]
 
 
 def test_refresh_live_reuses_last_schedule_on_fetch_failure(api, store, live_env, monkeypatch):

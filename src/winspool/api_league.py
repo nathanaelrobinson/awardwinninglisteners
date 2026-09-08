@@ -243,9 +243,10 @@ def get_live(_: str | None = Depends(viewer)):
 @router.get("/api/league/weeks")
 def get_weeks(_: str | None = Depends(viewer)):
     weeks = _store_read(get_store().list_weeks)
-    return [{"week": w["week"],
-             "rows": [{"player": r["player"], "pwin": r["pwin"], "exp_wins": r["exp_wins"]}
-                      for r in w["rows"]]}
+    def slim(rows):
+        return [{"player": r["player"], "pwin": r["pwin"], "exp_wins": r["exp_wins"]} for r in rows]
+    return [{"week": w["week"], "rows": slim(w["rows"]),
+             "views": {name: slim(rows) for name, rows in (w.get("views") or {}).items()}}
             for w in weeks]
 
 

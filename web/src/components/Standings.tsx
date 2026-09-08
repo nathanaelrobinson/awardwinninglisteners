@@ -2,7 +2,7 @@
 import { useEffect, useState } from 'react';
 import { fetchTeams } from '../api';
 import { playerColor } from '../colors';
-import type { LeagueView, LiveProjection, Me, StandingsResponse, WeekPoint } from '../league';
+import type { LeagueView, LiveProjection, LiveViewRow, Me, StandingsResponse, WeekPoint } from '../league';
 import { getLive, getStandings, getWeeks, setOverride } from '../league';
 import Feed from './Feed';
 import MovementChart from './MovementChart';
@@ -10,6 +10,16 @@ import TeamLogo from './TeamLogo';
 import ThisWeek from './ThisWeek';
 
 const ROWS = 6;
+
+// Score lens: which numbers the cards show. 'actual' = real wins; anything else
+// is a key of live.views (the blend or one rating source at 100%).
+const LENS_LABEL: Record<string, string> = {
+  actual: 'Actual', blend: 'Blend', espn_fpi: 'FPI', nfelo: 'nfelo', clay: 'Clay',
+  pff: 'PFF', epa: 'EPA', kalshi: 'Kalshi', vegas: 'Vegas',
+};
+const LENS_KEY = 'wp:lens';
+const loadLens = () => { try { return localStorage.getItem(LENS_KEY) ?? 'actual'; } catch { return 'actual'; } };
+const saveLens = (v: string) => { try { localStorage.setItem(LENS_KEY, v); } catch { /* ignore */ } };
 
 export default function Standings({ me, view }: { me: Me | null; view: LeagueView }) {
   const [data, setData] = useState<StandingsResponse | null>(null);
@@ -39,6 +49,8 @@ export default function Standings({ me, view }: { me: Me | null; view: LeagueVie
 
   const [live, setLive] = useState<LiveProjection | null>(null);
   const [weeks, setWeeks] = useState<WeekPoint[]>([]);
+  const [lens, setLensState] = useState<string>(loadLens);
+  const setLens = (v: string) => { setLensState(v); saveLens(v); };
 
   useEffect(() => {
     let alive = true;
@@ -65,12 +77,18 @@ export default function Standings({ me, view }: { me: Me | null; view: LeagueVie
 
   if (!data) return null;
 
+  const lenses = ['actual', ...Object.keys(live?.views ?? {})];
+  const active = lenses.includes(lens) ? lens : 'actual';
+  const viewKey = active === 'actual' ? 'blend' : active;
+  const viewRows = live?.views?.[viewKey] ?? live?.rows ?? [];
+  const projBy: Record<string, LiveViewRow> = {};
   const pwinBy: Record<string, number> = {};
-  for (const r of live?.rows ?? []) pwinBy[r.player] = r.pwin;
+  for (const r of viewRows) { projBy[r.player] = r; pwinBy[r.player] = r.pwin; }
   const deltaBy: Record<string, number> = {};
   if (weeks.length >= 2) {
-    const prev = Object.fromEntries(weeks[weeks.length - 2].rows.map((r) => [r.player, r.pwin]));
-    for (const r of weeks[weeks.length - 1].rows) deltaBy[r.player] = r.pwin - (prev[r.player] ?? r.pwin);
+    const pick = (w: WeekPoint) => w.views?.[viewKey] ?? w.rows;
+    const prev = Object.fromEntries(pick(weeks[weeks.length - 2]).map((r) => [r.player, r.pwin]));
+    for (const r of pick(weeks[weeks.length - 1])) deltaBy[r.player] = r.pwin - (prev[r.player] ?? r.pwin);
   }
   const mover = Object.entries(deltaBy)
     .filter(([, d]) => Math.round(Math.abs(d) * 100) > 0)
@@ -81,12 +99,21 @@ export default function Standings({ me, view }: { me: Me | null; view: LeagueVie
   return (
     <div className="standings">
       <div className="card standings-card">
-        <span className="eyebrow">Standings</span>
+        <div className="card-head">
+          <span className="eyebrow">Standings</span>
+          {lenses.length > 1 && (
+            <select className="lens" value={active} onChange={(e) => setLens(e.target.value)} aria-label="Score lens">
+              {lenses.map((k) => <option key={k} value={k}>{LENS_LABEL[k] ?? k}</option>)}
+            </select>
+          )}
+        </div>
         <div className="standings-grid">
           {data.rows.map((r) => {
             const color = playerColor(r.player);
             const isMe = r.player === me?.name;
             const first = r.player.trim().split(/\s+/)[0] ?? r.player;
+            const proj = active === 'actual' ? null : projBy[r.player];
+            const projWins = proj ? Object.fromEntries(proj.teams.map((t) => [t.code, t.exp_wins])) : null;
             return (
               <div key={r.player} className={`standings-player${isMe ? ' me' : ''}${r.player === mover ? ' mover' : ''}`}>
                 <div className="standings-head" style={{ background: color.bg, color: color.fg }}>{first}</div>
@@ -94,27 +121,26 @@ export default function Standings({ me, view }: { me: Me | null; view: LeagueVie
                   {Array.from({ length: ROWS }, (_, i) => {
                     const t = r.teams[i];
                     if (!t) return <div key={i} className="standings-row empty" />;
-                    const cellProps = me?.is_commissioner
-                      ? { onClick: () => edit(t.code, t.wins) }
-                      : {};
+                    const editable = !!me?.is_commissioner && !proj;
+                    const cellProps = editable ? { onClick: () => edit(t.code, t.wins) } : {};
                     return (
                       <div
                         key={t.code}
-                        className={`standings-row${me?.is_commissioner ? ' ov' : ''}`}
+                        className={`standings-row${editable ? ' ov' : ''}`}
                         {...cellProps}
                       >
                         <span className="standings-team">
                           <TeamLogo code={t.code} size={20} />
                           <span className="standings-nick">{names[t.code] ?? t.code}</span>
                         </span>
-                        <b className="standings-wins">{t.wins}</b>
+                        <b className="standings-wins">{projWins ? (projWins[t.code] ?? t.wins).toFixed(1) : t.wins}</b>
                       </div>
                     );
                   })}
                 </div>
                 <div className="standings-foot">
-                  <span>Total</span>
-                  <b>{r.total}</b>
+                  <span>{proj ? 'Proj' : 'Total'}</span>
+                  <b>{proj ? proj.exp_wins.toFixed(1) : r.total}</b>
                 </div>
                 {pwinBy[r.player] !== undefined && (
                   <div className="standings-foot standings-win">
