@@ -10,10 +10,9 @@ import time
 import numpy as np
 import pandas as pd
 
-from .data import load_power_ratings, load_win_totals
-from .game import HFA, SCALE, win_prob
+from .game import win_prob
 from .market import load_distributions, sample_independent
-from .ratings import backout_market, to_common_scale
+from .ratings import calibrate_sigma, ensemble, to_common_scale
 from .sim import simulate_mixture
 from .teams import N_TEAMS, TEAM_INDEX, TEAMS
 
@@ -75,50 +74,61 @@ def remaining_games_per_team(remaining: pd.DataFrame) -> np.ndarray:
 
 
 VEGAS_FADE_WEEK = 9
+BASE_SIGMA = 4.5
+SPREAD_K = 2.0
+TIE_BASE = 0.003
 
 
-def vegas_weight(week: int) -> float:
-    """Pre-season Vegas totals stop updating in-season: fade them out linearly
-    so they carry no weight from week 9 on."""
-    return max(0.0, 1.0 - week / VEGAS_FADE_WEEK)
+def vegas_share(week: int) -> float:
+    """Multiplier on Vegas's equal share of the ensemble. Pre-season win totals
+    stop updating once the season starts, so their voice fades linearly from
+    full weight at week 1 to nothing from week 9 on."""
+    return max(0.0, 1.0 - (week - 1) / (VEGAS_FADE_WEEK - 1))
 
 
-_VEGAS_CACHE: dict = {}
+_ENSEMBLE_CACHE: dict = {}
 
 
-def _vegas_strength(totals_path, full_home, full_away):
-    """Memoised backout_market: keyed on the totals file's path/mtime and the
-    schedule size, since the input is frozen and the call is ~6s."""
-    key = (os.path.abspath(totals_path), os.path.getmtime(totals_path), len(full_home))
-    if key not in _VEGAS_CACHE:
-        totals = load_win_totals(totals_path)
-        _VEGAS_CACHE[key] = backout_market(totals, full_home, full_away, hfa=HFA, scale=SCALE)
-    return _VEGAS_CACHE[key]
+def _mtime(path):
+    return os.path.getmtime(path) if path and os.path.exists(path) else None
 
 
-def source_matrix_for_week(totals_path, power_path, full_home, full_away, week):
-    """(matrix, weights, names). Vegas (backed out of full-season O/U) first when
-    it still carries weight and the totals file exists, then every power column.
-    Weights: Vegas gets vegas_weight(week); power columns share the rest equally."""
-    sources = {}
-    wv = vegas_weight(week)
-    if wv > 0 and totals_path and os.path.exists(totals_path):
-        sources["vegas"] = _vegas_strength(totals_path, full_home, full_away)
-    pdf = load_power_ratings(power_path)
-    for col in pdf.columns:
-        arr = np.zeros(N_TEAMS)
-        for code, val in pdf[col].items():
-            if code in TEAM_INDEX:
-                arr[TEAM_INDEX[code]] = float(val)
-        sources[col] = arr
+def _ensemble(totals_path, power_path, kalshi_dist_path, full_home, full_away, seed=0):
+    """(sources, sigma_full): the same voices and the same Kalshi-calibrated
+    per-team season sigma that Draft Review's pre-season build uses
+    (recommend.build_wins), so the live model agrees with it before kickoff.
+    Memoised on the input files' mtimes — the backouts and the calibration
+    each take seconds and the inputs only change on a ratings refresh."""
+    key = (_mtime(totals_path), _mtime(power_path), _mtime(kalshi_dist_path), len(full_home))
+    if key not in _ENSEMBLE_CACHE:
+        from .recommend import _assemble_sources
+        power = power_path if power_path and os.path.exists(power_path) else None
+        sources, target_sd = _assemble_sources(totals_path, power, full_home, full_away,
+                                               kalshi_dist_path)
+        strengths, _ = ensemble(sources, base_sigma=BASE_SIGMA, spread_k=SPREAD_K)
+        sigma = np.full(N_TEAMS, BASE_SIGMA)
+        if len(sources) > 1 and np.any(~np.isnan(target_sd)):
+            sigma = np.asarray(calibrate_sigma(strengths, full_home, full_away, target_sd,
+                                               sigma_ref=BASE_SIGMA, tie_base=TIE_BASE,
+                                               seed=seed), dtype=float)
+        _ENSEMBLE_CACHE[key] = (sources, sigma)
+    return _ENSEMBLE_CACHE[key]
+
+
+def source_matrix_for_week(totals_path, power_path, kalshi_dist_path, full_home, full_away, week):
+    """(matrix, weights, names, sigma_full). Every source is an equal voice, as in
+    the pre-season build; Vegas's share is scaled by vegas_share(week) and the
+    weights renormalised."""
+    sources, sigma_full = _ensemble(totals_path, power_path, kalshi_dist_path,
+                                    full_home, full_away)
     names = list(sources)
     matrix = to_common_scale(sources)
-    n_power = len(names) - (1 if "vegas" in sources else 0)
-    if "vegas" in sources and n_power > 0:
-        weights = np.array([wv] + [(1.0 - wv) / n_power] * n_power)
-    else:
-        weights = np.full(len(names), 1.0 / len(names))
-    return matrix, weights, names
+    w = np.ones(len(names))
+    if "vegas" in sources:
+        w[names.index("vegas")] = vegas_share(week)
+    if w.sum() == 0:
+        w = np.ones(len(names))
+    return matrix, w / w.sum(), names, sigma_full
 
 
 def season_sigma(remaining_per_team, base_sigma=4.5) -> np.ndarray:
@@ -187,19 +197,19 @@ def compute_live(rosters: dict, sched_df: pd.DataFrame, *, totals_path, power_pa
     reg = _reg(sched_df)
     full_home = reg["home_team"].map(TEAM_INDEX).to_numpy(dtype=int)
     full_away = reg["away_team"].map(TEAM_INDEX).to_numpy(dtype=int)
-    matrix, weights, _names = source_matrix_for_week(totals_path, power_path,
-                                                     full_home, full_away, week)
+    matrix, weights, _names, sigma_full = source_matrix_for_week(
+        totals_path, power_path, kalshi_dist_path, full_home, full_away, week)
     strength = consensus(matrix, weights)
 
     # This week's games are drawn explicitly so a single game can be forced
     # (leverage); the rest of the season goes through the mixture sim.
     this_week = games_in_week(remaining, week)
     rest = remaining[remaining["week"] != week].reset_index(drop=True)
-    sigma = season_sigma(remaining_games_per_team(rest))
+    sigma = season_sigma(remaining_games_per_team(rest), base_sigma=sigma_full)
     if len(rest):
         rh, ra = remaining_matchups(rest)
         future_rest = simulate_mixture(matrix, rh, ra, n_seasons, base_sigma=sigma,
-                                       tie_base=0.003, weights=weights, rng=rng).astype(float)
+                                       tie_base=TIE_BASE, weights=weights, rng=rng).astype(float)
     else:
         future_rest = np.zeros((n_seasons, N_TEAMS))
 
@@ -247,21 +257,31 @@ def compute_live(rosters: dict, sched_df: pd.DataFrame, *, totals_path, power_pa
     tw_rows = []
     for p, codes in rosters.items():
         mine = set(codes)
-        games, lev = [], 0.0
+        games, lev, exp_week, locks = [], 0.0, 0.0, 0
         for g in range(len(wh)):
             hcode, acode = TEAMS[wh[g]], TEAMS[wa[g]]
+            if hcode in mine and acode in mine:
+                # Both sides are mine: exactly one win, nothing to sweat.
+                games.append({"team": hcode, "opp": acode, "home": True, "p": 1.0, "lock": True})
+                exp_week += 1.0
+                locks += 1
+                continue
             for team, opp, home, p_win in ((hcode, acode, True, float(p_home[g])),
                                            (acode, hcode, False, float(1 - p_home[g]))):
                 if team not in mine:
                     continue
-                games.append({"team": team, "opp": opp, "home": home, "p": round(p_win, 3)})
+                games.append({"team": team, "opp": opp, "home": home,
+                              "p": round(p_win, 3), "lock": False})
+                exp_week += p_win
                 forced = week_outcomes.copy()
                 forced[:, g] = home            # my team wins
                 win_tot = _player_totals(rosters, totals_for(forced))
                 forced[:, g] = not home        # my team loses
                 loss_tot = _player_totals(rosters, totals_for(forced))
                 lev += abs(pool_pwin(win_tot)[p] - pool_pwin(loss_tot)[p])
-        tw_rows.append({"player": p, "leverage": round(lev, 3), "games": games})
+        tw_rows.append({"player": p, "leverage": round(lev, 3), "games": games,
+                        "exp_wins": round(exp_week, 1), "min_wins": locks,
+                        "max_wins": len(games)})
     tw_rows.sort(key=lambda r: r["leverage"], reverse=True)
 
     return {"week": week, "computed_at": float(now if now is not None else time.time()),

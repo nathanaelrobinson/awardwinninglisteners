@@ -64,51 +64,69 @@ def test_remaining_matchups_and_games_in_week(inseason):
 FIX = "tests/fixtures"
 
 
-def test_vegas_weight_decays_to_zero_by_week_9():
-    assert live.vegas_weight(1) == pytest.approx(8 / 9)
-    assert live.vegas_weight(5) == pytest.approx(4 / 9)
-    assert live.vegas_weight(9) == 0.0
-    assert live.vegas_weight(14) == 0.0
+def test_vegas_share_full_at_week_1_and_gone_by_week_9():
+    assert live.vegas_share(1) == 1.0
+    assert live.vegas_share(5) == pytest.approx(0.5)
+    assert live.vegas_share(9) == 0.0
+    assert live.vegas_share(14) == 0.0
 
 
-def test_source_matrix_weights_and_order():
+def _fixture_matchups():
     from winspool.data import load_schedule, schedule_matchups
-    home, away = schedule_matchups(load_schedule(f"{FIX}/schedule_2026.csv"))
-    m, w, names = live.source_matrix_for_week(f"{FIX}/win_totals.csv",
-                                              f"{FIX}/power_ratings.csv",
-                                              home, away, week=3)
-    assert names[0] == "vegas" and names[1:] == ["fpi", "sagarin", "massey"]
-    assert m.shape == (4, 32)
-    assert w.sum() == pytest.approx(1.0)
-    assert w[0] == pytest.approx(live.vegas_weight(3))
-    assert np.allclose(w[1:], (1 - w[0]) / 3)
-    m9, w9, n9 = live.source_matrix_for_week(f"{FIX}/win_totals.csv",
-                                             f"{FIX}/power_ratings.csv",
-                                             home, away, week=9)
-    assert "vegas" not in n9 and np.allclose(w9, 1 / 3)
+    return schedule_matchups(load_schedule(f"{FIX}/schedule_2026.csv"))
 
 
-def test_source_matrix_skips_vegas_from_week_9(monkeypatch):
-    from winspool.data import load_schedule, schedule_matchups
-    home, away = schedule_matchups(load_schedule(f"{FIX}/schedule_2026.csv"))
+def test_source_matrix_equal_voices_with_vegas_fading():
+    home, away = _fixture_matchups()
+    m, w, names, sigma = live.source_matrix_for_week(
+        f"{FIX}/win_totals.csv", f"{FIX}/power_ratings.csv", None, home, away, week=1)
+    assert names == ["vegas", "fpi", "sagarin", "massey"]
+    assert m.shape == (4, 32) and sigma.shape == (32,)
+    assert np.allclose(w, 0.25)                      # pre-season: seven-equal-voices rule
+    assert np.allclose(sigma, 4.5)                   # no Kalshi file -> flat base sigma
+    _, w5, _, _ = live.source_matrix_for_week(
+        f"{FIX}/win_totals.csv", f"{FIX}/power_ratings.csv", None, home, away, week=5)
+    assert w5[0] == pytest.approx(0.5 / 3.5) and np.allclose(w5[1:], 1 / 3.5)
+    _, w9, _, _ = live.source_matrix_for_week(
+        f"{FIX}/win_totals.csv", f"{FIX}/power_ratings.csv", None, home, away, week=9)
+    assert w9[0] == 0.0 and np.allclose(w9[1:], 1 / 3)
+    assert w.sum() == pytest.approx(1) and w5.sum() == pytest.approx(1) and w9.sum() == pytest.approx(1)
+
+
+def test_ensemble_is_memoised_across_weeks(monkeypatch):
+    from winspool import recommend
+    home, away = _fixture_matchups()
     calls = []
-    real = live.backout_market
-    monkeypatch.setattr(live, "backout_market", lambda *a, **k: (calls.append(1), real(*a, **k))[1])
-    live._VEGAS_CACHE.clear()
-    m, w, names = live.source_matrix_for_week(f"{FIX}/win_totals.csv", f"{FIX}/power_ratings.csv", home, away, week=9)
-    assert "vegas" not in names and calls == []
-    live.source_matrix_for_week(f"{FIX}/win_totals.csv", f"{FIX}/power_ratings.csv", home, away, week=2)
-    live.source_matrix_for_week(f"{FIX}/win_totals.csv", f"{FIX}/power_ratings.csv", home, away, week=3)
-    assert len(calls) == 1   # memoised across weeks
+    real = recommend._assemble_sources
+    monkeypatch.setattr(recommend, "_assemble_sources",
+                        lambda *a, **k: (calls.append(1), real(*a, **k))[1])
+    live._ENSEMBLE_CACHE.clear()
+    for wk in (1, 2, 9):
+        live.source_matrix_for_week(f"{FIX}/win_totals.csv", f"{FIX}/power_ratings.csv",
+                                    None, home, away, week=wk)
+    assert len(calls) == 1
 
 
-def test_source_matrix_without_totals_file_has_no_vegas(tmp_path):
-    from winspool.data import load_schedule, schedule_matchups
-    home, away = schedule_matchups(load_schedule(f"{FIX}/schedule_2026.csv"))
-    m, w, names = live.source_matrix_for_week(str(tmp_path / "missing.csv"),
-                                              f"{FIX}/power_ratings.csv",
-                                              home, away, week=1)
-    assert names == ["fpi", "sagarin", "massey"] and np.allclose(w, 1 / 3)
+def test_live_matches_preseason_before_kickoff():
+    """Before any game is played the live model must agree with Draft Review
+    (recommend.build_wins) up to Monte Carlo noise: same voices, same weights."""
+    from winspool.recommend import build_wins
+    from winspool.data import load_schedule
+    sched = load_schedule(f"{FIX}/schedule_2026.csv")
+    n = 6000
+    wins, _ = build_wins(f"{FIX}/schedule_2026.csv", f"{FIX}/win_totals.csv", n_seasons=n,
+                         seed=0, power_path=f"{FIX}/power_ratings.csv", kalshi_dist_path=None)
+    teams = sorted(set(sched["home_team"]) | set(sched["away_team"]))
+    rosters = {"A": teams[0::2], "B": teams[1::2]}
+    pre = live.pool_pwin(live._player_totals(rosters, wins.astype(float)))
+    df = pd.DataFrame({"week": (np.arange(len(sched)) % 18) + 1, "game_type": "REG",
+                       "home_team": sched["home_team"], "away_team": sched["away_team"],
+                       "home_score": np.nan, "away_score": np.nan})
+    doc = live.compute_live(rosters, df, totals_path=f"{FIX}/win_totals.csv",
+                            power_path=f"{FIX}/power_ratings.csv", kalshi_dist_path=None,
+                            ratings_fetched_at=None, n_seasons=n, seed=1)
+    for r in doc["rows"]:
+        assert r["pwin"] == pytest.approx(pre[r["player"]], abs=0.03), r["player"]
 
 
 def test_season_sigma_shrinks_with_games_left():
@@ -176,15 +194,11 @@ def test_compute_live_this_week_games_and_leverage(inseason):
     tw = {r["player"]: r for r in doc["this_week"]}
     # Week 3 has one unplayed game: BUF (home) vs DAL. Both are B's teams; A has none.
     assert tw["A"]["games"] == [] and tw["A"]["leverage"] == 0.0
-    games = tw["B"]["games"]
-    assert {g["team"] for g in games} == {"BUF", "DAL"}
-    buf = next(g for g in games if g["team"] == "BUF")
-    dal = next(g for g in games if g["team"] == "DAL")
-    assert buf["opp"] == "DAL" and buf["home"] is True
-    assert dal["opp"] == "BUF" and dal["home"] is False
-    assert buf["p"] == pytest.approx(1 - dal["p"], abs=2e-3)
-    # B owns both sides, so the game cannot change B's total: leverage ~ 0.
-    assert tw["B"]["leverage"] == pytest.approx(0.0, abs=0.02)
+    # B owns both sides of BUF vs DAL: one locked chip worth exactly one win.
+    assert tw["B"]["games"] == [{"team": "BUF", "opp": "DAL", "home": True, "p": 1.0, "lock": True}]
+    assert tw["B"]["exp_wins"] == 1.0 and tw["B"]["min_wins"] == 1 and tw["B"]["max_wins"] == 1
+    assert tw["A"]["exp_wins"] == 0.0 and tw["A"]["min_wins"] == 0 and tw["A"]["max_wins"] == 0
+    assert tw["B"]["leverage"] == 0.0
     assert [r["leverage"] for r in doc["this_week"]] == sorted(
         (r["leverage"] for r in doc["this_week"]), reverse=True)
 
@@ -198,6 +212,11 @@ def test_compute_live_leverage_positive_when_opponent_is_not_mine(inseason):
                             n_seasons=3000, seed=2)
     tw = {r["player"]: r for r in doc["this_week"]}
     assert tw["A"]["leverage"] > 0.05 and tw["B"]["leverage"] > 0.05
+    a = tw["A"]["games"]
+    assert a == [{"team": "BUF", "opp": "DAL", "home": True, "p": a[0]["p"], "lock": False}]
+    assert tw["A"]["exp_wins"] == pytest.approx(round(a[0]["p"], 1))
+    assert tw["A"]["min_wins"] == 0 and tw["A"]["max_wins"] == 1
+    assert tw["A"]["games"][0]["p"] == pytest.approx(1 - tw["B"]["games"][0]["p"], abs=2e-3)
 
 
 def test_compute_live_season_over(inseason):

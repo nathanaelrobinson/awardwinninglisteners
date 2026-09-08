@@ -66,8 +66,7 @@ export default function Standings({ me, view }: { me: Me | null; view: LeagueVie
   if (!data) return null;
 
   const pwinBy: Record<string, number> = {};
-  const mktBy: Record<string, number | null> = {};
-  for (const r of live?.rows ?? []) { pwinBy[r.player] = r.pwin; mktBy[r.player] = r.market_pwin; }
+  for (const r of live?.rows ?? []) pwinBy[r.player] = r.pwin;
   const deltaBy: Record<string, number> = {};
   if (weeks.length >= 2) {
     const prev = Object.fromEntries(weeks[weeks.length - 2].rows.map((r) => [r.player, r.pwin]));
@@ -122,9 +121,6 @@ export default function Standings({ me, view }: { me: Me | null; view: LeagueVie
                     <span>Win</span>
                     <b>
                       {Math.round(pwinBy[r.player] * 100)}%
-                      {mktBy[r.player] != null && Math.abs(mktBy[r.player]! - pwinBy[r.player]) > 0.05 && (
-                        <span className="mkt">mkt {Math.round(mktBy[r.player]! * 100)}%</span>
-                      )}
                       {deltaBy[r.player] !== undefined && Math.round(Math.abs(deltaBy[r.player]) * 100) > 0 && (
                         <span className={`delta ${deltaBy[r.player] > 0 ? 'up' : 'down'}`}>
                           {deltaBy[r.player] > 0 ? '▲' : '▼'} {Math.round(Math.abs(deltaBy[r.player]) * 100)}
