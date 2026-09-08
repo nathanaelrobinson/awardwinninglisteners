@@ -136,6 +136,14 @@ def _player_totals(rosters: dict, team_wins: np.ndarray) -> dict:
     return out
 
 
+def _dist(col, lo, n_bins):
+    """Histogram of totals over the integer grid starting at lo. Half-integer
+    totals (a team with a tie) round up, so distinct totals stay distinct."""
+    idx = np.floor(np.asarray(col, dtype=float) - lo + 0.5).astype(int)
+    counts = np.bincount(np.clip(idx, 0, n_bins - 1), minlength=n_bins)
+    return (counts / max(counts.sum(), 1)).round(5).tolist()
+
+
 def market_pwin(rosters: dict, kalshi_dist_path, n_sims: int, rng):
     """Kalshi-implied P(win pool): draw each team's season total from its market
     PMF independently (as `winspool market` does) and apply the >= rule.
@@ -190,7 +198,10 @@ def compute_live(rosters: dict, sched_df: pd.DataFrame, *, totals_path, power_pa
             w[:, wa[g]] += ~outcomes[:, g]
         return w
 
-    team_totals = banked[None, :] + future_rest + week_wins(week_outcomes)
+    def totals_for(outcomes):
+        return banked[None, :] + future_rest + week_wins(outcomes)
+
+    team_totals = totals_for(week_outcomes)
     totals = _player_totals(rosters, team_totals)
     pwin = pool_pwin(totals)
     stack = np.stack(list(totals.values()), axis=1)
@@ -200,7 +211,6 @@ def compute_live(rosters: dict, sched_df: pd.DataFrame, *, totals_path, power_pa
 
     rows = []
     for p, col in totals.items():
-        counts = np.bincount(np.rint(col - lo).astype(int), minlength=len(xs))
         teams = [{"code": c, "banked": float(banked[TEAM_INDEX[c]]),
                   "exp_wins": round(float(team_totals[:, TEAM_INDEX[c]].mean()), 1)}
                  for c in rosters[p]]
@@ -211,8 +221,9 @@ def compute_live(rosters: dict, sched_df: pd.DataFrame, *, totals_path, power_pa
             "exp_wins": round(float(col.mean()), 1),
             "pwin": round(pwin[p], 3),
             "market_pwin": None if mkt is None else mkt.get(p),
-            "p10": int(np.percentile(col, 10)), "p90": int(np.percentile(col, 90)),
-            "dist": (counts / max(counts.sum(), 1)).round(5).tolist(),
+            "p10": int(round(float(np.percentile(col, 10)))),
+            "p90": int(round(float(np.percentile(col, 90)))),
+            "dist": _dist(col, lo, len(xs)),
         })
     rows.sort(key=lambda r: (r["pwin"], r["exp_wins"]), reverse=True)
 
@@ -230,9 +241,9 @@ def compute_live(rosters: dict, sched_df: pd.DataFrame, *, totals_path, power_pa
                 games.append({"team": team, "opp": opp, "home": home, "p": round(p_win, 3)})
                 forced = week_outcomes.copy()
                 forced[:, g] = home            # my team wins
-                win_tot = _player_totals(rosters, banked[None, :] + future_rest + week_wins(forced))
+                win_tot = _player_totals(rosters, totals_for(forced))
                 forced[:, g] = not home        # my team loses
-                loss_tot = _player_totals(rosters, banked[None, :] + future_rest + week_wins(forced))
+                loss_tot = _player_totals(rosters, totals_for(forced))
                 lev += abs(pool_pwin(win_tot)[p] - pool_pwin(loss_tot)[p])
         tw_rows.append({"player": p, "leverage": round(lev, 3), "games": games})
     tw_rows.sort(key=lambda r: r["leverage"], reverse=True)

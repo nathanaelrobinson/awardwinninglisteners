@@ -215,3 +215,15 @@ def test_market_pwin_from_pmfs(tmp_path):
     assert p == {"A": 1.0, "B": 0.0}
     assert live.market_pwin({"A": ["KC"]}, str(tmp_path / "nope.csv"), 10,
                             np.random.default_rng(0)) is None
+
+
+def test_dist_keeps_half_integer_totals_distinct():
+    # _dist rounds to 5 decimals, so 1/3 and 2/3 land ~3e-6 off their exact
+    # values -- outside pytest.approx's default rel=1e-6 tolerance. abs=1e-4
+    # comfortably covers the rounding without loosening the actual assertion
+    # (that distinct half-integer totals stay in distinct bins).
+    d = live._dist(np.array([4.5, 5.5, 6.5]), 4, 4)
+    assert d == [0.0, pytest.approx(1 / 3, abs=1e-4), pytest.approx(1 / 3, abs=1e-4),
+                 pytest.approx(1 / 3, abs=1e-4)]
+    d = live._dist(np.array([4, 4, 6]), 4, 3)
+    assert d == [pytest.approx(2 / 3, abs=1e-4), 0.0, pytest.approx(1 / 3, abs=1e-4)]
