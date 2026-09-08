@@ -104,6 +104,12 @@ class InMemoryStore:
             self._snapshots = [x for x in self._snapshots if x["id"] != snap["id"]]
             self._snapshots.append(dict(snap))
 
+    def clear_snapshots(self) -> int:
+        with self._lock:
+            n = len(self._snapshots)
+            self._snapshots = []
+            return n
+
 
 class FirestoreStore:
     def __init__(self, project: str | None = None):
@@ -335,6 +341,10 @@ class SqliteStore:
                 "VALUES (?, ?, ?, ?, ?, ?)",
                 (snap["id"], snap.get("taken_at"), snap.get("reason"),
                  snap.get("n_picks"), snap.get("status"), json.dumps(doc)))
+
+    def clear_snapshots(self) -> int:
+        with self._lock:
+            return self._db.execute("DELETE FROM snapshots").rowcount
 
     def close(self) -> None:
         self._db.close()

@@ -111,6 +111,19 @@ def test_import_force_overwrites_and_is_idempotent(tmp_path):
     dst.close()
 
 
+def test_import_force_drops_snapshots_the_target_already_had(tmp_path):
+    src = populated()
+    out = tmp_path / "e.json"
+    run(["export", "--out", str(out)], src)
+    dst = SqliteStore(tmp_path / "l.db")
+    dst.put(league.new_league(PLAYERS, "Nate Robinson", {p: PIN for p in PLAYERS}))
+    dst.add_snapshot({"taken_at": 1.0, "reason": "restart", "n_picks": 0, "status": "drafting"})
+
+    assert run(["import", "--from", str(out), "--force"], dst) == 0
+    assert dst.all_snapshots() == src.all_snapshots()   # the stray test snapshot is gone
+    dst.close()
+
+
 def test_export_of_empty_store_exits(tmp_path):
     with pytest.raises(SystemExit) as e:
         run(["export", "--out", str(tmp_path / "e.json")], InMemoryStore())

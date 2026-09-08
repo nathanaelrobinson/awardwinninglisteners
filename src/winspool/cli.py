@@ -215,7 +215,7 @@ def main(argv=None):
         import sys
         from .store import get_store
         store = get_store()
-        for m in ("put_message", "put_snapshot"):
+        for m in ("put_message", "put_snapshot", "clear_snapshots"):
             if not hasattr(store, m):
                 sys.exit(f"{type(store).__name__} cannot be an import target "
                          f"(no {m}); use STORE=sqlite")
@@ -233,6 +233,7 @@ def main(argv=None):
         store.clear_messages()
         for m in payload.get("messages") or []:
             store.put_message(m)
+        store.clear_snapshots()  # the target may hold snapshots from a test draft
         for snap in payload.get("snapshots") or []:
             store.put_snapshot(snap)
         if payload.get("standings"):
