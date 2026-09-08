@@ -5,6 +5,7 @@ import { playerColor } from '../colors';
 import type { LeagueView, LiveProjection, Me, StandingsResponse, WeekPoint } from '../league';
 import { getLive, getStandings, getWeeks, setOverride } from '../league';
 import Feed from './Feed';
+import MovementChart from './MovementChart';
 import TeamLogo from './TeamLogo';
 import ThisWeek from './ThisWeek';
 
@@ -142,6 +143,7 @@ export default function Standings({ me, view }: { me: Me | null; view: LeagueVie
         </div>
       </div>
       {live && <ThisWeek live={live} />}
+      <MovementChart weeks={weeks} me={me?.name ?? ''} />
       <Feed view={view} myName={me?.name ?? null} />
     </div>
   );

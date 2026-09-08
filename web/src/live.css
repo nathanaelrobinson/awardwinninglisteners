@@ -329,3 +329,7 @@
 .week-game b { color: var(--text); margin-left: 2px; }
 .week-vs { font-size: 10px; }
 @media (max-width: 480px) { .week-row { grid-template-columns: 1fr; } }
+
+.move-chart { position: relative; }
+.move-chart svg { display: block; max-width: 100%; }
+.move-axes { display: flex; justify-content: space-between; font-size: 11px; color: var(--text-dim); margin-top: 2px; }
