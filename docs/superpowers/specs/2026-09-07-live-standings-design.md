@@ -1,6 +1,6 @@
 # Live Standings: weekly win probabilities and week-to-week movement
 
-**Status:** draft for review · **Date:** 2026-09-07 · **Depends on:** PR #11 (frozen pre-season projections)
+**Status:** approved 2026-09-07 · **Date:** 2026-09-07 · **Depends on:** PR #11 (frozen pre-season projections)
 
 ## Goal
 
@@ -122,13 +122,17 @@ in `data/cache`, so ratings freshness is decoupled from the projection job.
 
 ## Ratings refresh job
 
-`winspool fetch` needs headless Chromium for nfelo. Running it on the Pi is
-possible but slow and fragile on ARM. Decision: run `winspool fetch` weekly from a
-GitHub Actions cron (Tuesday 09:00 PT) that commits the refreshed
-`data/cache/*.csv` to `main`; the Pi's existing deploy pull picks them up. If the
-Action fails, the Pi keeps simulating on last week's ratings and `live_projection`
-records `ratings_fetched_at` so staleness is visible (`stale` chip already exists
-in the Standings card footer; reuse it when ratings are more than 8 days old).
+`winspool fetch` needs headless Chromium for nfelo, which is slow and fragile on
+the Pi. Decision: the commissioner runs `winspool fetch` by hand from a laptop
+(Tuesday mornings), commits the refreshed `data/cache/*.csv` to `main`, and the
+Pi's existing deploy pull picks them up. `make refresh-ratings` wraps fetch,
+commit, and push so it is one command.
+
+If a week is missed, the Pi keeps simulating on last week's ratings.
+`live_projection` records `ratings_fetched_at`; the Standings card footer reuses
+its existing `stale` chip when ratings are more than 8 days old, so the miss is
+visible rather than silent. A GitHub Actions cron can replace the manual step
+later without touching anything else.
 
 `sim_matrix.npz` is content-keyed on the CSVs and rebuilds itself when they
 change. Draft Review no longer depends on it after PR #11.
@@ -170,8 +174,9 @@ change. Draft Review no longer depends on it after PR #11.
 - Push notifications on movement.
 - Refreshing sportsbook win totals in-season.
 
-## Open questions for review
+## Decisions from review
 
-1. Vegas weight decaying to zero by week 9: too fast, too slow?
-2. Show `mkt 41%` only on 5-point divergence, or always?
-3. GitHub Actions cron for `winspool fetch` versus running it from your laptop when you remember.
+1. Vegas weight decays linearly to zero by week 9. Approved.
+2. `mkt NN%` shown only when model and market differ by more than 5 points.
+   Default kept; revisit after a few weeks of real data.
+3. Ratings fetched by hand for now via `make refresh-ratings`; no cron.
