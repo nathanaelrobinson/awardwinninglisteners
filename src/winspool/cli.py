@@ -201,6 +201,8 @@ def main(argv=None):
             "snapshots": store.all_snapshots(),
             "standings": store.get_standings(),
             "preseason": store.get_preseason(),
+            "live": store.get_live(),
+            "weeks": store.list_weeks(),
             "exported_at": _time.time(),
         }
         with open(args.out, "w") as f:
@@ -208,7 +210,8 @@ def main(argv=None):
         print(f"exported {len(doc.get('picks', []))} picks, "
               f"{len(payload['messages'])} messages, "
               f"{len(payload['snapshots'])} snapshots, "
-              f"standings={'yes' if payload['standings'] else 'no'} -> {args.out}")
+              f"standings={'yes' if payload['standings'] else 'no'} "
+              f"live={'yes' if payload['live'] else 'no'} weeks={len(payload['weeks'])} -> {args.out}")
         return 0
 
     if args.cmd == "import":
@@ -240,6 +243,10 @@ def main(argv=None):
             store.put_standings(payload["standings"])
         if payload.get("preseason"):
             store.put_preseason(payload["preseason"])
+        if payload.get("live"):
+            store.put_live(payload["live"])
+        for w in payload.get("weeks") or []:
+            store.put_week(w["week"], w)
         print(f"imported {len(payload['league'].get('picks', []))} picks, "
               f"{len(payload.get('messages') or [])} messages, "
               f"{len(payload.get('snapshots') or [])} snapshots, "

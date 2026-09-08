@@ -92,3 +92,27 @@ def test_mixture_per_team_sigma_widens_only_that_team():
                          base_sigma=np.array([0.1, 8.0, 0.1]),   # team1 far noisier
                          hfa=0.0, tie_base=0.0, rng=np.random.default_rng(3))
     assert w[:, 1].std() > w[:, 0].std() + 0.5
+
+
+def test_simulate_mixture_weights_select_sources():
+    # Source 0: team 0 is +20 points; source 1: team 1 is +20 points.
+    src = np.zeros((2, 32))
+    src[0, 0] = 20.0
+    src[1, 1] = 20.0
+    home = np.array([0]); away = np.array([1])
+    rng = np.random.default_rng(1)
+    w = simulate_mixture(src, home, away, 4000, base_sigma=0.0, tie_base=0.0,
+                         weights=np.array([1.0, 0.0]), rng=rng)
+    # Only source 0 is ever sampled, so team 0 (home, +22 with HFA) wins ~95%.
+    assert w[:, 0].mean() > 0.9
+    rng = np.random.default_rng(1)
+    w = simulate_mixture(src, home, away, 4000, base_sigma=0.0, tie_base=0.0,
+                         weights=np.array([0.0, 1.0]), rng=rng)
+    assert w[:, 0].mean() < 0.15
+
+
+def test_simulate_mixture_weights_length_checked():
+    src = np.zeros((2, 32))
+    with pytest.raises(ValueError):
+        simulate_mixture(src, np.array([0]), np.array([1]), 10,
+                         weights=np.array([1.0]), rng=np.random.default_rng(0))

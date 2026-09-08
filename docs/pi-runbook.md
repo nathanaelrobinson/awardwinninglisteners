@@ -175,3 +175,18 @@ untouched and still hold the data as of the freeze.
 | Service won't start, log says `SESSION_SECRET must be set` | env file incomplete | fill `/etc/winspool/env` |
 | Standings stale | Pi was offline when the timer fired | `systemctl start winspool-scores.service` |
 | `import` refuses | target already has a league | intended; pass `--force` |
+
+## Weekly ratings refresh (manual)
+
+Tuesday morning, from a laptop with Chromium available for nfelo:
+
+    git checkout -b ratings/$(date +%F) origin/main
+    make refresh-ratings
+
+Open the PR, merge, then on the Pi `make deploy`. The scores timer calls
+`/internal/refresh-live` after every standings refresh, so the live projection
+picks up the new ratings on its next run. If a week is skipped the Standings
+footer shows the stale chip once ratings are more than 8 days old.
+
+The target restores `win_totals.csv` after the fetch; pre-season totals stay
+frozen on purpose.

@@ -579,3 +579,87 @@ def test_projections_not_frozen_before_draft_is_done(api, store):
     c, _ = login(api, "Logan Borgelt")
     assert c.get("/api/league/projections").status_code == 409
     assert store.get_preseason() is None
+
+
+# --- Live projection ----------------------------------------------------------
+
+def _inseason_df():
+    import pandas as pd
+    cols = ["week", "game_type", "home_team", "away_team", "home_score", "away_score"]
+    rows = [(1, "REG", h, a, 20, 10) for h, a in zip(TEAMS[::2], TEAMS[1::2])]     # week 1 final
+    rows += [(2, "REG", a, h, None, None) for h, a in zip(TEAMS[::2], TEAMS[1::2])]  # week 2 open
+    return pd.DataFrame(rows, columns=cols)
+
+
+@pytest.fixture
+def live_env(monkeypatch, tmp_path):
+    from winspool import live, standings
+    monkeypatch.setattr(standings, "_load_schedule", _inseason_df)
+    monkeypatch.setattr(live, "_LAST_SCHEDULE", None)
+    monkeypatch.setattr(api_league, "LIVE_CACHE_DIR", "tests/fixtures")
+    monkeypatch.setattr(api_league, "LIVE_N_SEASONS", 300)
+    monkeypatch.setenv("REFRESH_TOKEN", "tok")
+    return live
+
+
+def test_live_404_until_refreshed_and_public_after_draft(api, store, live_env):
+    _complete_draft(api, store)
+    anon = TestClient(server.app)
+    assert anon.get("/api/league/live").status_code == 404
+    r = api.post("/internal/refresh-live", headers={"X-Refresh-Token": "tok"})
+    assert r.status_code == 200, r.text
+    body = anon.get("/api/league/live").json()
+    assert body["week"] == 2
+    assert sorted(x["player"] for x in body["rows"]) == sorted(PLAYERS)
+    assert all(len(r["games"]) == 6 for r in body["this_week"])
+    assert store.get_live()["week"] == 2
+
+
+def test_live_and_weeks_401_before_draft_done(api, store, live_env):
+    assert api.get("/api/league/live").status_code == 401
+    assert api.get("/api/league/weeks").status_code == 401
+
+
+def test_refresh_live_token_gate(api, store, live_env, monkeypatch):
+    assert api.post("/internal/refresh-live").status_code == 403
+    monkeypatch.delenv("REFRESH_TOKEN")
+    assert api.post("/internal/refresh-live").status_code == 503
+
+
+def test_weekly_snapshot_written_once_per_week(api, store, live_env):
+    _complete_draft(api, store)
+    h = {"X-Refresh-Token": "tok"}
+    assert api.post("/internal/refresh-live", headers=h).status_code == 200
+    first = store.list_weeks()
+    assert [w["week"] for w in first] == [2]
+    # Second refresh in the same week: live doc updates, snapshot does not.
+    assert api.post("/internal/refresh-live", headers=h).status_code == 200
+    assert store.list_weeks()[0]["computed_at"] == first[0]["computed_at"]
+    weeks = api.get("/api/league/weeks").json()
+    assert weeks[0]["week"] == 2
+    assert set(weeks[0]["rows"][0]) == {"player", "pwin", "exp_wins"}
+
+
+def test_refresh_live_reuses_last_schedule_on_fetch_failure(api, store, live_env, monkeypatch):
+    from winspool import standings
+    _complete_draft(api, store)
+    h = {"X-Refresh-Token": "tok"}
+    assert api.post("/internal/refresh-live", headers=h).status_code == 200
+
+    def boom():
+        raise RuntimeError("network down")
+    monkeypatch.setattr(standings, "_load_schedule", boom)
+    r = api.post("/internal/refresh-live", headers=h)
+    assert r.status_code == 200 and r.json()["week"] == 2
+
+
+def test_refresh_live_503_with_no_schedule_at_all(api, store, live_env, monkeypatch):
+    from winspool import standings
+    _complete_draft(api, store)
+
+    def boom():
+        raise RuntimeError("network down")
+    monkeypatch.setattr(standings, "_load_schedule", boom)
+    r = api.post("/internal/refresh-live", headers={"X-Refresh-Token": "tok"})
+    assert r.status_code == 503
+    assert api.get("/api/league/live").status_code == 404

@@ -200,3 +200,21 @@ def test_get_store_selects_sqlite_from_env(tmp_path, monkeypatch):
     finally:
         set_store(None)
     assert (tmp_path / "env.db").exists()
+
+
+def test_live_doc_round_trips(store):
+    assert store.get_live() is None
+    store.put_live({"week": 3, "rows": []})
+    assert store.get_live() == {"week": 3, "rows": []}
+    store.put_live({"week": 4, "rows": []})
+    assert store.get_live()["week"] == 4
+
+
+def test_weeks_are_keyed_and_sorted(store):
+    assert store.list_weeks() == []
+    store.put_week(3, {"week": 3, "rows": [{"player": "A", "pwin": 0.5}]})
+    store.put_week(1, {"week": 1, "rows": []})
+    store.put_week(3, {"week": 3, "rows": [{"player": "A", "pwin": 0.6}]})  # overwrite
+    weeks = store.list_weeks()
+    assert [w["week"] for w in weeks] == [1, 3]
+    assert weeks[1]["rows"][0]["pwin"] == 0.6
