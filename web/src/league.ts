@@ -82,8 +82,11 @@ export interface SeasonSample {
 export const getProjections = () => call<ProjectionsResponse>('/api/league/projections');
 export const getSampleSeason = (seed: number) => call<SeasonSample>(`/api/league/sample_season?seed=${seed}`);
 
-export interface LiveGame { team: string; opp: string; home: boolean; p: number }
-export interface LiveWeekRow { player: string; leverage: number; games: LiveGame[] }
+export interface LiveGame { team: string; opp: string; home: boolean; p: number; lock: boolean }
+export interface LiveWeekRow {
+  player: string; leverage: number; games: LiveGame[];
+  exp_wins: number; min_wins: number; max_wins: number;
+}
 export interface LiveTeam { code: string; banked: number; exp_wins: number }
 export interface LiveRow {
   player: string; teams: LiveTeam[]; banked: number; exp_wins: number;

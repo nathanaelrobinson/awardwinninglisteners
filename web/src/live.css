@@ -319,16 +319,19 @@
 .standings-win .delta { font-size: 12px; font-weight: 700; }
 .standings-win .delta.up { color: #1a7f37; }
 .standings-win .delta.down { color: #b42318; }
-.standings-win .mkt { font-size: 11px; font-weight: 500; color: var(--text-dim); }
 
 .week-grid { display: flex; flex-direction: column; }
-.week-row { display: grid; grid-template-columns: 7.5em 1fr; gap: var(--s2) var(--s3); align-items: start; padding: var(--s2) 0; border-top: 1px solid var(--border); font-size: 14px; }
+.week-row { display: grid; grid-template-columns: 7.5em 1fr auto; gap: var(--s2) var(--s3); align-items: start; padding: var(--s2) 0; border-top: 1px solid var(--border); font-size: 14px; }
 .week-name { white-space: nowrap; }
 .week-games { display: flex; flex-wrap: wrap; gap: var(--s2) var(--s4); font-size: 12px; color: var(--text-dim); font-variant-numeric: tabular-nums; }
 .week-game { display: inline-flex; align-items: center; gap: 3px; }
 .week-game b { color: var(--text); margin-left: 2px; }
+.week-game.lock { color: var(--text); }
+.week-exp { display: inline-flex; align-items: baseline; gap: var(--s2); font-variant-numeric: tabular-nums; white-space: nowrap; }
+.week-exp b { font-size: 15px; }
+.week-range { font-size: 12px; color: var(--text-dim); }
 .week-vs { font-size: 10px; }
-@media (max-width: 480px) { .week-row { grid-template-columns: 1fr; } }
+@media (max-width: 480px) { .week-row { grid-template-columns: 1fr auto; } .week-row .week-games { grid-column: 1 / -1; } }
 
 .move-chart { position: relative; }
 .move-chart svg { display: block; max-width: 100%; }

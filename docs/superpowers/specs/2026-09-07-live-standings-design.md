@@ -19,11 +19,12 @@ Standings tab, top to bottom:
    `Win 34%` and a delta chip `▲ 6` / `▼ 3` versus last week's snapshot. The
    biggest absolute mover gets the card's existing `me`-style emphasis border.
    Delta is hidden until two snapshots exist.
-2. **This week strip** (new card, eyebrow `Week 3`). One row per player. Each row
-   lists that player's teams playing this week as `LOGO vs LOGO 61%`, where the
-   percentage is the model's win probability for the player's team. Teams on bye
-   are omitted. Rows are ordered by how much the week can swing that player's
-   pool odds (see Leverage below). No explanatory text.
+2. **This week strip** (new card, eyebrow `Week 3`). One row per player: that
+   player's games as `LOGO vs LOGO` chips (no per-game percentage), then the
+   **expected wins this week** (`2.8`) and the possible range (`2–4`). A game
+   between two of the player's own teams is one chip marked `1`: exactly one win,
+   nothing to sweat. Teams on bye are omitted. Rows are ordered by how much the
+   week can swing that player's pool odds (see Leverage below). No explanatory text.
 3. **Movement chart** (new card, eyebrow `Win probability by week`). One line per
    player in player colors, x = NFL week, y = P(win pool). Hidden until three
    snapshots exist. Axis labels: `Week`, `Win %`.
@@ -56,11 +57,12 @@ already simulates an arbitrary list of matchups. The in-season run:
 1. Split the schedule into `played` (both scores present, `game_type == "REG"`)
    and `remaining`.
 2. `banked[t]` = wins from `played` (ties count 0.5, matching the sim's tie handling).
-3. `source_matrix` = `ratings.to_common_scale(...)` over the current power columns
-   plus the pre-season Vegas strength. The Vegas row's sampling weight is
-   `max(0, 1 - week / 9)`, so it is gone by week 9. Power sources share the rest
-   equally. (`simulate_mixture` samples one source per season uniformly today; it
-   gains an optional `weights` argument.)
+3. `source_matrix` is the **same ensemble Draft Review uses** (`recommend._assemble_sources`:
+   Vegas, Kalshi, and every power column as equal voices, per-team season sigma
+   calibrated to Kalshi's implied spread). Only Vegas changes in-season: its equal
+   share is multiplied by `max(0, 1 - (week - 1) / 8)`, full at week 1 and gone by
+   week 9, and the weights are renormalised. Before kickoff the live numbers
+   therefore match Draft Review up to Monte Carlo noise (tested).
 4. `season_noise` shrinks with games left: `base_sigma * sqrt(remaining_games / 17)`
    per team, so late-season projections tighten.
 5. `future = simulate_mixture(source_matrix, remaining home/away, N_SEASONS)`.
@@ -72,8 +74,9 @@ Market check: from `kalshi_distributions.csv`, each player's market-implied
 total is the convolution of their teams' PMFs (independence assumed, as
 `winspool market` already does). P(win pool) under the market is computed from
 `N_SEASONS` draws of those PMFs. Stored alongside the model number as
-`market_pwin`; shown in the UI only if the two differ by more than 5 points, as a
-small `mkt 41%` suffix. Cheap to compute, and divergence is interesting.
+`market_pwin` for a possible later toggle. **Not shown in the UI**: Kalshi is
+already one of the ensemble's voices, and two unexplained numbers on a card broke
+the no-explanatory-text rule.
 
 ### Leverage (ordering the This Week strip)
 
@@ -180,6 +183,6 @@ change. Draft Review no longer depends on it after PR #11.
 ## Decisions from review
 
 1. Vegas weight decays linearly to zero by week 9. Approved.
-2. `mkt NN%` shown only when model and market differ by more than 5 points.
-   Default kept; revisit after a few weeks of real data.
+2. `mkt NN%` removed from the UI on 2026-09-07 after launch review; `market_pwin`
+   stays in the API.
 3. Ratings fetched by hand for now via `make refresh-ratings`; no cron.

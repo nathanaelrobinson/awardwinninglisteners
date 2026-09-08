@@ -611,7 +611,8 @@ def test_live_404_until_refreshed_and_public_after_draft(api, store, live_env):
     body = anon.get("/api/league/live").json()
     assert body["week"] == 2
     assert sorted(x["player"] for x in body["rows"]) == sorted(PLAYERS)
-    assert all(len(r["games"]) == 6 for r in body["this_week"])
+    # six teams each play once; a game between two of a player's own teams is one locked chip
+    assert all(sum(2 if g["lock"] else 1 for g in r["games"]) == 6 for r in body["this_week"])
     assert store.get_live()["week"] == 2
 
 
