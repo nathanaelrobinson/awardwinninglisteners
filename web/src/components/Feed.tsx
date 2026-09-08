@@ -12,7 +12,7 @@ const merge = (prev: Message[], incoming: Message[]) => {
   return [...prev, ...incoming.filter((m) => !seen.has(m.id))];
 };
 
-export default function Feed({ view, myName }: { view: LeagueView; myName: string }) {
+export default function Feed({ view, myName }: { view: LeagueView; myName: string | null }) {
   const [msgs, setMsgs] = useState<Message[]>([]);
   const [text, setText] = useState('');
   const listRef = useRef<HTMLDivElement>(null);
@@ -68,7 +68,7 @@ export default function Feed({ view, myName }: { view: LeagueView; myName: strin
           )
         )}
       </div>
-      <div className="feed-compose">
+      {myName && <div className="feed-compose">
         <input
           className="feed-input"
           placeholder={myName}
@@ -78,7 +78,7 @@ export default function Feed({ view, myName }: { view: LeagueView; myName: strin
           onKeyDown={(e) => e.key === 'Enter' && send()}
         />
         <button type="button" className="btn primary feed-send" onClick={send} disabled={!text.trim()}>Send</button>
-      </div>
+      </div>}
     </div>
   );
 }

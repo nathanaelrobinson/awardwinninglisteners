@@ -8,7 +8,7 @@ import TeamLogo from './TeamLogo';
 
 const first = (name: string) => name.trim().split(/\s+/)[0] ?? name;
 
-export default function Review({ me }: { me: Me }) {
+export default function Review({ me }: { me: Me | null }) {
   const [data, setData] = useState<ProjectionsResponse | null>(null);
   const [names, setNames] = useState<Record<string, string>>({});
   const [season, setSeason] = useState<SeasonSample | null>(null);
@@ -39,7 +39,7 @@ export default function Review({ me }: { me: Me }) {
     <div className="review">
       <div className="card">
         <span className="eyebrow">Projected wins</span>
-        <ProjChart rows={data.rows} x={data.x} me={me.name} />
+        <ProjChart rows={data.rows} x={data.x} me={me?.name ?? ''} />
         <table className="proj-table">
           <thead>
             <tr><th></th><th>Proj</th><th>Win</th><th>Range</th></tr>
@@ -48,7 +48,7 @@ export default function Review({ me }: { me: Me }) {
             {data.rows.map((r) => {
               const c = playerColor(r.player);
               return (
-                <tr key={r.player} className={r.player === me.name ? 'me' : ''}>
+                <tr key={r.player} className={r.player === me?.name ? 'me' : ''}>
                   <td><span className="proj-swatch" style={{ background: c.bg }} />{first(r.player)}</td>
                   <td>{r.exp_wins.toFixed(1)}</td>
                   <td>{(r.pwin * 100).toFixed(0)}%</td>
@@ -67,7 +67,7 @@ export default function Review({ me }: { me: Me }) {
           {data.rows.map((r) => {
             const color = playerColor(r.player);
             return (
-              <div key={r.player} className={`standings-player${r.player === me.name ? ' me' : ''}`}>
+              <div key={r.player} className={`standings-player${r.player === me?.name ? ' me' : ''}`}>
                 <div className="standings-head" style={{ background: color.bg, color: color.fg }}>{first(r.player)}</div>
                 <div className="standings-body">
                   {r.teams.map((t) => (
