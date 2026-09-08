@@ -144,7 +144,7 @@ green with a test import.
    STORE=firestore GOOGLE_CLOUD_PROJECT=snowpack-pika \
      uv run winspool export --out league_export.json
    ```
-3. **Copy and import** on the Pi:
+3. **Copy and import** on the Pi (or run `./scripts/pi-cutover.sh /tmp/league_export.json`, which does steps 3–4 plus the permissions/env/unit setup):
    ```bash
    scp league_export.json pi:/tmp/
    sudo -u winspool env $(sudo cat /etc/winspool/env | grep -v '^#' | xargs) \
