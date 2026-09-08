@@ -26,6 +26,7 @@ def populated():
     s.add_snapshot({"taken_at": 2.0, "reason": "complete", "n_picks": 30,
                     "status": "done", "league": {"y": 2}, "messages": []})
     s.put_standings({"wins": {"KC": 3, "BUF": 2}, "updated_at": 123.0})
+    s.put_preseason({"rows": [], "x": [], "n_sims": 5, "locked_at": 456.0})
     return s
 
 
@@ -49,6 +50,7 @@ def test_export_import_round_trip_preserves_everything(tmp_path):
     assert league.view(dst.get()) == league.view(src.get())
     assert dst.all_messages() == src.all_messages()
     assert dst.get_standings() == src.get_standings()
+    assert dst.get_preseason() == src.get_preseason()
     assert ([{k: s[k] for k in ("id", "taken_at", "reason", "n_picks", "status")}
              for s in dst.list_snapshots()]
             == [{k: s[k] for k in ("id", "taken_at", "reason", "n_picks", "status")}
@@ -62,7 +64,7 @@ def test_export_writes_expected_keys(tmp_path):
     run(["export", "--out", str(out)], populated())
     payload = json.loads(out.read_text())
     assert set(payload) == {"league", "messages", "snapshots", "standings",
-                            "exported_at"}
+                            "preseason", "exported_at"}
     assert len(payload["messages"]) == 2
     assert len(payload["snapshots"]) == 2
     assert payload["league"]["players"] == PLAYERS

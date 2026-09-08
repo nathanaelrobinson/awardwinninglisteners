@@ -558,3 +558,24 @@ def test_anonymous_cannot_write_after_draft(api, store):
     assert anon.post("/api/league/undo").status_code == 401
     assert anon.post("/api/standings/override", json={"team": "KC", "wins": 1}).status_code == 401
     assert anon.post("/api/league/pick", json={"team": "KC"}).status_code == 401
+
+
+# --- Pre-season projections are frozen once computed ------------------------
+
+def test_projections_frozen_after_first_computation(api, store):
+    _complete_draft(api, store)
+    c, _ = login(api, "Logan Borgelt")
+    a = c.get("/api/league/projections").json()
+    assert a["locked_at"] > 0
+    # Stored, and served verbatim afterwards even if the store's copy is edited.
+    frozen = store.get_preseason()
+    assert frozen["locked_at"] == a["locked_at"]
+    store.put_preseason({**frozen, "n_sims": 1})
+    b = c.get("/api/league/projections").json()
+    assert b["n_sims"] == 1 and b["locked_at"] == a["locked_at"]
+
+
+def test_projections_not_frozen_before_draft_is_done(api, store):
+    c, _ = login(api, "Logan Borgelt")
+    assert c.get("/api/league/projections").status_code == 409
+    assert store.get_preseason() is None

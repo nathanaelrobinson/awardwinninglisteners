@@ -21,6 +21,8 @@ class Store(Protocol):
     def messages(self, since: float | None) -> list[dict]: ...
     def get_standings(self) -> dict | None: ...
     def put_standings(self, doc: dict) -> None: ...
+    def get_preseason(self) -> dict | None: ...
+    def put_preseason(self, doc: dict) -> None: ...
     def add_snapshot(self, snapshot: dict) -> str: ...
     def clear_messages(self) -> int: ...
     def list_snapshots(self) -> list[dict]: ...
@@ -34,6 +36,7 @@ class InMemoryStore:
         self._doc = doc
         self._msgs: list[dict] = []
         self._standings: dict | None = None
+        self._preseason: dict | None = None
         self._snapshots: list[dict] = []
         self._lock = threading.Lock()
 
@@ -67,6 +70,13 @@ class InMemoryStore:
     def put_standings(self, doc):
         with self._lock:
             self._standings = doc
+
+    def get_preseason(self):
+        return self._preseason
+
+    def put_preseason(self, doc):
+        with self._lock:
+            self._preseason = doc
 
     def add_snapshot(self, snapshot):
         sid = uuid.uuid4().hex
@@ -155,6 +165,13 @@ class FirestoreStore:
 
     def put_standings(self, doc):
         self._ref.collection("cache").document("standings").set(doc)
+
+    def get_preseason(self):
+        snap = self._ref.collection("cache").document("preseason").get()
+        return snap.to_dict() if snap.exists else None
+
+    def put_preseason(self, doc):
+        self._ref.collection("cache").document("preseason").set(doc)
 
     def add_snapshot(self, snapshot):
         _, ref = self._ref.collection("snapshots").add(snapshot)
@@ -290,6 +307,15 @@ class SqliteStore:
     def put_standings(self, doc: dict) -> None:
         with self._lock:
             self._db.execute("INSERT OR REPLACE INTO kv (k, v) VALUES ('standings', ?)",
+                             (json.dumps(doc),))
+
+    def get_preseason(self) -> dict | None:
+        row = self._db.execute("SELECT v FROM kv WHERE k='preseason'").fetchone()
+        return json.loads(row[0]) if row else None
+
+    def put_preseason(self, doc: dict) -> None:
+        with self._lock:
+            self._db.execute("INSERT OR REPLACE INTO kv (k, v) VALUES ('preseason', ?)",
                              (json.dumps(doc),))
 
     # --- snapshots ---
