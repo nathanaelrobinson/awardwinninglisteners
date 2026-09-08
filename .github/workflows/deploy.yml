@@ -1,8 +1,8 @@
 name: Deploy
 
+# Cloud Run is the rollback host only since the 2026-09-08 Pi cutover;
+# deploy on demand, not on every push. See docs/pi-runbook.md.
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
 permissions:
