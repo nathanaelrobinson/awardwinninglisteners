@@ -4,7 +4,7 @@
 SHELL := /bin/bash
 .DEFAULT_GOAL := help
 
-APP_DIR ?= /opt/winspool
+APP_DIR ?= /home/nate/awardwinninglisteners
 DB      ?= /var/lib/winspool/league.db
 PORT    ?= 8080
 SINCE   ?= 1 hour ago

@@ -8,7 +8,7 @@
 # template at /etc/winspool/env; fill in SESSION_SECRET before starting.
 set -euo pipefail
 
-APP_DIR=${APP_DIR:-/opt/winspool}
+APP_DIR=${APP_DIR:-/home/nate/awardwinninglisteners}
 DATA_DIR=${DATA_DIR:-/var/lib/winspool}
 BACKUP_DIR=${BACKUP_DIR:-/var/backups/winspool}
 ENV_FILE=${ENV_FILE:-/etc/winspool/env}
