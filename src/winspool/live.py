@@ -3,6 +3,7 @@
 Pure functions over the nfl_data_py schedule frame (columns week, game_type,
 home_team, away_team, home_score, away_score) and the data/cache ratings files.
 No store or network access except in refresh_live()."""
+import json
 import os
 import time
 
@@ -251,3 +252,51 @@ def compute_live(rosters: dict, sched_df: pd.DataFrame, *, totals_path, power_pa
     return {"week": week, "computed_at": float(now if now is not None else time.time()),
             "ratings_fetched_at": ratings_fetched_at,
             "rows": rows, "x": xs, "n_sims": int(n_seasons), "this_week": tw_rows}
+
+
+_LAST_SCHEDULE: pd.DataFrame | None = None
+
+
+def _load_schedule_cached() -> pd.DataFrame:
+    """Live schedule from nfl_data_py; on failure, the last frame that worked.
+    Raises if there has never been a good fetch in this process."""
+    global _LAST_SCHEDULE
+    from . import standings
+    try:
+        df = standings._load_schedule()
+        _LAST_SCHEDULE = df
+        return df
+    except Exception:
+        if _LAST_SCHEDULE is None:
+            raise
+        return _LAST_SCHEDULE
+
+
+def ratings_fetched_at(cache_dir) -> str | None:
+    """Newest fetched_at among ok sources in sources_meta.json, or None."""
+    path = os.path.join(cache_dir, "sources_meta.json")
+    if not os.path.exists(path):
+        return None
+    with open(path) as f:
+        meta = json.load(f)
+    stamps = [m["fetched_at"] for m in meta if m.get("ok") and m.get("fetched_at")]
+    return max(stamps) if stamps else None
+
+
+def refresh_live(store, cache_dir, *, n_seasons=5000) -> dict:
+    """Recompute the live doc from the league's final rosters and the current
+    schedule + ratings cache; store it; snapshot the week if not yet snapshotted."""
+    from . import league as _league
+    rosters = _league.view(store.get())["rosters"]
+    df = _load_schedule_cached()
+    doc = compute_live(
+        rosters, df,
+        totals_path=os.path.join(cache_dir, "win_totals.csv"),
+        power_path=os.path.join(cache_dir, "power_ratings.csv"),
+        kalshi_dist_path=os.path.join(cache_dir, "kalshi_distributions.csv"),
+        ratings_fetched_at=ratings_fetched_at(cache_dir),
+        n_seasons=n_seasons)
+    store.put_live(doc)
+    if not any(w["week"] == doc["week"] for w in store.list_weeks()):
+        store.put_week(doc["week"], doc)
+    return doc

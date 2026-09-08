@@ -3,6 +3,7 @@ import os
 import random
 import sqlite3
 import time
+from pathlib import Path
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Response
 from fastapi.responses import JSONResponse
@@ -10,6 +11,7 @@ from google.api_core import exceptions as gexc
 from pydantic import BaseModel
 
 from . import league
+from . import live as _live
 from . import standings as _standings
 from .auth import current_user, require_commissioner, set_cookie, viewer
 from .league import LeagueError
@@ -19,6 +21,11 @@ from .teams import resolve
 router = APIRouter()
 
 TOUCH_EVERY = 20.0  # seconds; Lobby considers a player online if seen within 30s
+
+# In-season live projection. Same cache dir the sim reads; overridable for tests.
+LIVE_CACHE_DIR = os.environ.get("WINSPOOL_DATA_DIR") or str(
+    Path(__file__).resolve().parents[2] / "data" / "cache")
+LIVE_N_SEASONS = 5000
 
 
 def _doc():
@@ -216,13 +223,46 @@ def set_override(req: OverrideReq, _: str = Depends(require_commissioner)):
     return {"overrides": _doc()["overrides"]}
 
 
-@router.post("/internal/refresh-standings", include_in_schema=False)
-def internal_refresh_standings(x_refresh_token: str | None = Header(default=None)):
+@router.get("/api/league/live")
+def get_live(_: str | None = Depends(viewer)):
+    doc = get_store().get_live()
+    if doc is None:
+        raise HTTPException(404, "no live projection yet")
+    return doc
+
+
+@router.get("/api/league/weeks")
+def get_weeks(_: str | None = Depends(viewer)):
+    return [{"week": w["week"],
+             "rows": [{"player": r["player"], "pwin": r["pwin"], "exp_wins": r["exp_wins"]}
+                      for r in w["rows"]]}
+            for w in get_store().list_weeks()]
+
+
+def _check_refresh_token(x_refresh_token: str | None) -> None:
     expected = os.environ.get("REFRESH_TOKEN")
     if not expected:
         raise HTTPException(503, "refresh token not configured")
     if not x_refresh_token or not hmac.compare_digest(x_refresh_token, expected):
         raise HTTPException(403, "forbidden")
+
+
+@router.post("/internal/refresh-live", include_in_schema=False)
+def internal_refresh_live(x_refresh_token: str | None = Header(default=None)):
+    _check_refresh_token(x_refresh_token)
+    doc = _doc()
+    if doc["status"] != "done":
+        raise HTTPException(409, "draft not finished")
+    try:
+        out = _live.refresh_live(get_store(), LIVE_CACHE_DIR, n_seasons=LIVE_N_SEASONS)
+    except Exception as e:
+        return JSONResponse(status_code=503, content={"ok": False, "error": str(e)[:200]})
+    return {"ok": True, "week": out["week"], "computed_at": out["computed_at"]}
+
+
+@router.post("/internal/refresh-standings", include_in_schema=False)
+def internal_refresh_standings(x_refresh_token: str | None = Header(default=None)):
+    _check_refresh_token(x_refresh_token)
     doc = _standings.refresh_standings(get_store())
     if not doc["ok"]:
         return JSONResponse(status_code=503, content={
