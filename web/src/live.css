@@ -314,6 +314,7 @@
 }
 
 .standings-player.mover { box-shadow: inset 0 0 0 2px var(--accent, #d50a0a), var(--shadow-sm); }
+.standings-player.me.mover { box-shadow: inset 0 0 0 2px var(--navy), inset 0 0 0 4px #d50a0a, var(--shadow-sm); }
 .standings-win b { display: inline-flex; align-items: baseline; gap: var(--s2); }
 .standings-win .delta { font-size: 12px; font-weight: 700; }
 .standings-win .delta.up { color: #1a7f37; }

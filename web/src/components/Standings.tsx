@@ -18,7 +18,7 @@ export default function Standings({ me, view }: { me: Me | null; view: LeagueVie
     let timer: number;
     const tick = async () => {
       try { const d = await getStandings(); if (alive) setData(d); } catch { /* keep last */ }
-      timer = window.setTimeout(tick, 60_000);
+      if (alive) timer = window.setTimeout(tick, 60_000);
     };
     tick();
     return () => { alive = false; window.clearTimeout(timer); };
@@ -46,7 +46,7 @@ export default function Standings({ me, view }: { me: Me | null; view: LeagueVie
         const [l, w] = await Promise.all([getLive(), getWeeks()]);
         if (alive) { setLive(l); setWeeks(w); }
       } catch { /* 404 until the first refresh; keep last */ }
-      timer = window.setTimeout(tick, 5 * 60_000);
+      if (alive) timer = window.setTimeout(tick, 5 * 60_000);
     };
     tick();
     return () => { alive = false; window.clearTimeout(timer); };
@@ -71,7 +71,9 @@ export default function Standings({ me, view }: { me: Me | null; view: LeagueVie
     const prev = Object.fromEntries(weeks[weeks.length - 2].rows.map((r) => [r.player, r.pwin]));
     for (const r of weeks[weeks.length - 1].rows) deltaBy[r.player] = r.pwin - (prev[r.player] ?? r.pwin);
   }
-  const mover = Object.entries(deltaBy).sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]))[0]?.[0];
+  const mover = Object.entries(deltaBy)
+    .filter(([, d]) => Math.round(Math.abs(d) * 100) > 0)
+    .sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]))[0]?.[0];
   const ratingsStale = !!live?.ratings_fetched_at
     && Date.now() - new Date(live.ratings_fetched_at).getTime() > 8 * 24 * 3600_000;
 
