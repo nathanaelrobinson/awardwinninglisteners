@@ -81,3 +81,18 @@ export interface SeasonSample {
 }
 export const getProjections = () => call<ProjectionsResponse>('/api/league/projections');
 export const getSampleSeason = (seed: number) => call<SeasonSample>(`/api/league/sample_season?seed=${seed}`);
+
+export interface LiveGame { team: string; opp: string; home: boolean; p: number }
+export interface LiveWeekRow { player: string; leverage: number; games: LiveGame[] }
+export interface LiveTeam { code: string; banked: number; exp_wins: number }
+export interface LiveRow {
+  player: string; teams: LiveTeam[]; banked: number; exp_wins: number;
+  pwin: number; market_pwin: number | null; p10: number; p90: number; dist: number[];
+}
+export interface LiveProjection {
+  week: number; computed_at: number; ratings_fetched_at: string | null;
+  rows: LiveRow[]; x: number[]; n_sims: number; this_week: LiveWeekRow[];
+}
+export interface WeekPoint { week: number; rows: { player: string; pwin: number; exp_wins: number }[] }
+export const getLive = () => call<LiveProjection>('/api/league/live');
+export const getWeeks = () => call<WeekPoint[]>('/api/league/weeks');
