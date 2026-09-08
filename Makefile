@@ -44,6 +44,15 @@ check: test build lint  ## Everything CI runs, in one go
 serve:  ## Run the app locally on :8000 with an in-memory dev league (PINs 1234)
 	uv run winspool-serve
 
+.PHONY: refresh-ratings
+refresh-ratings:  ## Fetch fresh power ratings + Kalshi, commit CSVs on a branch, push (run weekly from a laptop)
+	@test "$$(git rev-parse --abbrev-ref HEAD)" != "main" || { echo "switch off main first: git checkout -b ratings/$$(date +%F)"; exit 1; }
+	uv run winspool fetch
+	git add data/cache/power_ratings.csv data/cache/kalshi_distributions.csv data/cache/sources_meta.json
+	git commit -m "data: ratings refresh $$(date +%F)"
+	git push -u origin HEAD
+	@echo "open a PR into main, merge, then 'make deploy' on the Pi"
+
 .PHONY: clean
 clean:  ## Remove build output and caches
 	rm -rf web/dist web/node_modules/.vite .pytest_cache
