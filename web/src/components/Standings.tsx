@@ -6,6 +6,7 @@ import type { LeagueView, LiveProjection, Me, StandingsResponse, WeekPoint } fro
 import { getLive, getStandings, getWeeks, setOverride } from '../league';
 import Feed from './Feed';
 import TeamLogo from './TeamLogo';
+import ThisWeek from './ThisWeek';
 
 const ROWS = 6;
 
@@ -140,6 +141,7 @@ export default function Standings({ me, view }: { me: Me | null; view: LeagueVie
           {(data.stale || ratingsStale) && ' · stale'}
         </div>
       </div>
+      {live && <ThisWeek live={live} />}
       <Feed view={view} myName={me?.name ?? null} />
     </div>
   );
