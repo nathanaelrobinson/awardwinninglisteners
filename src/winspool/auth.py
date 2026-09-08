@@ -28,9 +28,17 @@ def verify(token: str | None) -> str | None:
     return name if hmac.compare_digest(mac, good) else None
 
 
+def _secure_cookie() -> bool:
+    """Mark the cookie HTTPS-only whenever the browser actually sees HTTPS:
+    Cloud Run (K_SERVICE), or behind the Cloudflare tunnel on the Pi
+    (WINSPOOL_BEHIND_PROXY=1). Plain http://localhost dev stays non-secure."""
+    return (os.environ.get("K_SERVICE") is not None
+            or os.environ.get("WINSPOOL_BEHIND_PROXY") == "1")
+
+
 def set_cookie(resp: Response, name: str) -> None:
     resp.set_cookie(COOKIE, sign(name), max_age=MAX_AGE, httponly=True,
-                    samesite="lax", secure=os.environ.get("K_SERVICE") is not None)
+                    samesite="lax", secure=_secure_cookie())
 
 
 def current_user(request: Request) -> str:
@@ -41,6 +49,8 @@ def current_user(request: Request) -> str:
 
 
 def require_commissioner(request: Request) -> str:
+    import sqlite3
+
     from google.api_core import exceptions as gexc
 
     from .store import get_store
@@ -49,7 +59,7 @@ def require_commissioner(request: Request) -> str:
         doc = get_store().get()
     except LookupError:
         raise HTTPException(503, "league not initialized")
-    except (gexc.GoogleAPICallError, gexc.RetryError):
+    except (gexc.GoogleAPICallError, gexc.RetryError, sqlite3.OperationalError):
         raise HTTPException(503, "busy")
     if name != doc["commissioner"]:
         raise HTTPException(403, "commissioner only")

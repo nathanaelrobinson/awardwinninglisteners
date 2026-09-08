@@ -1,6 +1,7 @@
 import hmac
 import os
 import random
+import sqlite3
 import time
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Response
@@ -25,7 +26,7 @@ def _doc():
         return get_store().get()
     except LookupError:
         raise HTTPException(503, "league not initialized")
-    except (gexc.GoogleAPICallError, gexc.RetryError):
+    except (gexc.GoogleAPICallError, gexc.RetryError, sqlite3.OperationalError):
         raise HTTPException(503, "busy")
 
 
@@ -36,7 +37,8 @@ def _run(fn):
         raise HTTPException(e.status, e.detail)
     except LookupError:
         raise HTTPException(503, "league not initialized")
-    except (gexc.Aborted, gexc.GoogleAPICallError, gexc.RetryError):
+    except (gexc.Aborted, gexc.GoogleAPICallError, gexc.RetryError,
+            sqlite3.OperationalError):
         raise HTTPException(503, "busy")
     except ValueError as e:
         if "Failed to commit transaction" in str(e):

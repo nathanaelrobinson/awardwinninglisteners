@@ -10,3 +10,4 @@ web/dist/
 *.egg-info/
 .pins.txt
 
+league_export.json
