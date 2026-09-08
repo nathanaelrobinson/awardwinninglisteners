@@ -101,8 +101,11 @@ New store doc `cache/live_projection` (Firestore) / kv `live_projection` (SQLite
 New store collection `snapshots_weekly` keyed by week (`put_week(week, doc)`,
 `list_weeks()`). A week's snapshot is written once, the first time a
 `live_projection` is computed for that week with all of that week's games
-final. Re-computes within the same week overwrite `live_projection` but never the
-snapshot. Export/import carries both.
+final. Snapshots are keyed by the upcoming week, so `weeks/3` is the standing
+entering week 3 (after week 2's games). The Standings delta chip compares the
+two most recent snapshots, i.e. week-over-week movement, and can differ from
+the live headline number mid-week by design. Re-computes within the same week
+overwrite `live_projection` but never the snapshot. Export/import carries both.
 
 `week` = the smallest schedule week with an unplayed regular-season game. Before
 kickoff of week 1 it is 1, and the live projection equals the pre-season one

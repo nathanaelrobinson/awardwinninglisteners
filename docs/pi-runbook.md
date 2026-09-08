@@ -187,3 +187,6 @@ Open the PR, merge, then on the Pi `make deploy`. The scores timer calls
 `/internal/refresh-live` after every standings refresh, so the live projection
 picks up the new ratings on its next run. If a week is skipped the Standings
 footer shows the stale chip once ratings are more than 8 days old.
+
+The target restores `win_totals.csv` after the fetch; pre-season totals stay
+frozen on purpose.

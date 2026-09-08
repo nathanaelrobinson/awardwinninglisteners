@@ -37,6 +37,15 @@ def _doc():
         raise HTTPException(503, "busy")
 
 
+def _store_read(fn):
+    try:
+        return fn()
+    except LookupError:
+        raise HTTPException(503, "league not initialized")
+    except (gexc.GoogleAPICallError, gexc.RetryError, sqlite3.OperationalError):
+        raise HTTPException(503, "busy")
+
+
 def _run(fn):
     try:
         return league.view(get_store().update(fn))
@@ -225,7 +234,7 @@ def set_override(req: OverrideReq, _: str = Depends(require_commissioner)):
 
 @router.get("/api/league/live")
 def get_live(_: str | None = Depends(viewer)):
-    doc = get_store().get_live()
+    doc = _store_read(get_store().get_live)
     if doc is None:
         raise HTTPException(404, "no live projection yet")
     return doc
@@ -233,10 +242,11 @@ def get_live(_: str | None = Depends(viewer)):
 
 @router.get("/api/league/weeks")
 def get_weeks(_: str | None = Depends(viewer)):
+    weeks = _store_read(get_store().list_weeks)
     return [{"week": w["week"],
              "rows": [{"player": r["player"], "pwin": r["pwin"], "exp_wins": r["exp_wins"]}
                       for r in w["rows"]]}
-            for w in get_store().list_weeks()]
+            for w in weeks]
 
 
 def _check_refresh_token(x_refresh_token: str | None) -> None:

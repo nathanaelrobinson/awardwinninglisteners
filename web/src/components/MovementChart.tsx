@@ -4,11 +4,12 @@ import { playerColor } from '../colors';
 import type { WeekPoint } from '../league';
 
 const first = (n: string) => n.trim().split(/\s+/)[0] ?? n;
-const H = 200, ML = 34, MR = 56, MT = 10, MB = 24;
+const H = 200, ML = 34, MR = 72, MT = 10, MB = 24;
 
 export default function MovementChart({ weeks, me }: { weeks: WeekPoint[]; me: string }) {
   const box = useRef<HTMLDivElement>(null);
   const [W, setW] = useState(380);
+  const shown = weeks.length >= 3;
   useEffect(() => {
     const el = box.current;
     if (!el) return;
@@ -16,8 +17,8 @@ export default function MovementChart({ weeks, me }: { weeks: WeekPoint[]; me: s
     ro.observe(el);
     setW(Math.max(240, el.clientWidth));
     return () => ro.disconnect();
-  }, []);
-  if (weeks.length < 3) return null;
+  }, [shown]);
+  if (!shown) return null;
 
   const players = weeks[weeks.length - 1].rows.map((r) => r.player);
   const series = players.map((p) => ({
@@ -50,10 +51,13 @@ export default function MovementChart({ weeks, me }: { weeks: WeekPoint[]; me: s
           {series.map((s) => {
             const c = playerColor(s.player).bg;
             const last = s.pts[s.pts.length - 1];
+            const overflow = xPx(last.week) + 6 + 70 > W;
+            const labelX = overflow ? ML + pw - 4 : xPx(last.week) + 6;
             return (
               <g key={s.player}>
                 <path d={path(s.pts)} fill="none" stroke={c} strokeWidth={s.player === me ? 3 : 2} />
-                <text x={xPx(last.week) + 6} y={yPx(last.p) + 3} fill={c} fontSize={11} fontWeight={700}>
+                <text x={labelX} y={yPx(last.p) + 3} fill={c} fontSize={11} fontWeight={700}
+                      textAnchor={overflow ? 'end' : 'start'}>
                   {first(s.player)} {Math.round(last.p * 100)}%
                 </text>
               </g>

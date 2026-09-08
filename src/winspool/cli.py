@@ -210,7 +210,8 @@ def main(argv=None):
         print(f"exported {len(doc.get('picks', []))} picks, "
               f"{len(payload['messages'])} messages, "
               f"{len(payload['snapshots'])} snapshots, "
-              f"standings={'yes' if payload['standings'] else 'no'} -> {args.out}")
+              f"standings={'yes' if payload['standings'] else 'no'} "
+              f"live={'yes' if payload['live'] else 'no'} weeks={len(payload['weeks'])} -> {args.out}")
         return 0
 
     if args.cmd == "import":

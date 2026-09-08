@@ -82,10 +82,24 @@ def test_source_matrix_weights_and_order():
     assert w.sum() == pytest.approx(1.0)
     assert w[0] == pytest.approx(live.vegas_weight(3))
     assert np.allclose(w[1:], (1 - w[0]) / 3)
-    m9, w9, _ = live.source_matrix_for_week(f"{FIX}/win_totals.csv",
-                                            f"{FIX}/power_ratings.csv",
-                                            home, away, week=9)
-    assert w9[0] == 0.0 and np.allclose(w9[1:], 1 / 3)
+    m9, w9, n9 = live.source_matrix_for_week(f"{FIX}/win_totals.csv",
+                                             f"{FIX}/power_ratings.csv",
+                                             home, away, week=9)
+    assert "vegas" not in n9 and np.allclose(w9, 1 / 3)
+
+
+def test_source_matrix_skips_vegas_from_week_9(monkeypatch):
+    from winspool.data import load_schedule, schedule_matchups
+    home, away = schedule_matchups(load_schedule(f"{FIX}/schedule_2026.csv"))
+    calls = []
+    real = live.backout_market
+    monkeypatch.setattr(live, "backout_market", lambda *a, **k: (calls.append(1), real(*a, **k))[1])
+    live._VEGAS_CACHE.clear()
+    m, w, names = live.source_matrix_for_week(f"{FIX}/win_totals.csv", f"{FIX}/power_ratings.csv", home, away, week=9)
+    assert "vegas" not in names and calls == []
+    live.source_matrix_for_week(f"{FIX}/win_totals.csv", f"{FIX}/power_ratings.csv", home, away, week=2)
+    live.source_matrix_for_week(f"{FIX}/win_totals.csv", f"{FIX}/power_ratings.csv", home, away, week=3)
+    assert len(calls) == 1   # memoised across weeks
 
 
 def test_source_matrix_without_totals_file_has_no_vegas(tmp_path):
@@ -216,6 +230,13 @@ def test_market_pwin_from_pmfs(tmp_path):
     assert live.market_pwin({"A": ["KC"]}, str(tmp_path / "nope.csv"), 10,
                             np.random.default_rng(0)) is None
 
+    # Missing team (BUF dropped from the distributions file) -> None overall.
+    rows2 = [r for r in rows if r[0] != "BUF"]
+    path2 = tmp_path / "k2.csv"
+    pd.DataFrame(rows2, columns=cols).to_csv(path2, index=False)
+    assert live.market_pwin({"A": ["KC"], "B": ["BUF"]}, str(path2), 10,
+                            np.random.default_rng(0)) is None
+
 
 def test_dist_keeps_half_integer_totals_distinct():
     # _dist rounds to 5 decimals, so 1/3 and 2/3 land ~3e-6 off their exact
@@ -227,3 +248,18 @@ def test_dist_keeps_half_integer_totals_distinct():
                  pytest.approx(1 / 3, abs=1e-4)]
     d = live._dist(np.array([4, 4, 6]), 4, 3)
     assert d == [pytest.approx(2 / 3, abs=1e-4), 0.0, pytest.approx(1 / 3, abs=1e-4)]
+
+
+def test_ratings_fetched_at_only_considers_power_sources(tmp_path):
+    import json as _json
+    meta = [
+        {"kind": "kalshi", "ok": True, "fetched_at": "2026-09-25T09:00:00"},
+        {"kind": "power", "ok": True, "fetched_at": "2026-09-20T09:00:00"},
+    ]
+    path = tmp_path / "sources_meta.json"
+    path.write_text(_json.dumps(meta))
+    assert live.ratings_fetched_at(str(tmp_path)) == "2026-09-20T09:00:00"
+
+    meta2 = [{"kind": "kalshi", "ok": True, "fetched_at": "2026-09-25T09:00:00"}]
+    path.write_text(_json.dumps(meta2))
+    assert live.ratings_fetched_at(str(tmp_path)) is None

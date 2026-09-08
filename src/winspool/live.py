@@ -83,14 +83,27 @@ def vegas_weight(week: int) -> float:
     return max(0.0, 1.0 - week / VEGAS_FADE_WEEK)
 
 
+_VEGAS_CACHE: dict = {}
+
+
+def _vegas_strength(totals_path, full_home, full_away):
+    """Memoised backout_market: keyed on the totals file's path/mtime and the
+    schedule size, since the input is frozen and the call is ~6s."""
+    key = (os.path.abspath(totals_path), os.path.getmtime(totals_path), len(full_home))
+    if key not in _VEGAS_CACHE:
+        totals = load_win_totals(totals_path)
+        _VEGAS_CACHE[key] = backout_market(totals, full_home, full_away, hfa=HFA, scale=SCALE)
+    return _VEGAS_CACHE[key]
+
+
 def source_matrix_for_week(totals_path, power_path, full_home, full_away, week):
     """(matrix, weights, names). Vegas (backed out of full-season O/U) first when
-    the totals file exists, then every power column. Weights: Vegas gets
-    vegas_weight(week); power columns share the rest equally."""
+    it still carries weight and the totals file exists, then every power column.
+    Weights: Vegas gets vegas_weight(week); power columns share the rest equally."""
     sources = {}
-    if totals_path and os.path.exists(totals_path):
-        totals = load_win_totals(totals_path)
-        sources["vegas"] = backout_market(totals, full_home, full_away, hfa=HFA, scale=SCALE)
+    wv = vegas_weight(week)
+    if wv > 0 and totals_path and os.path.exists(totals_path):
+        sources["vegas"] = _vegas_strength(totals_path, full_home, full_away)
     pdf = load_power_ratings(power_path)
     for col in pdf.columns:
         arr = np.zeros(N_TEAMS)
@@ -102,7 +115,6 @@ def source_matrix_for_week(totals_path, power_path, full_home, full_away, week):
     matrix = to_common_scale(sources)
     n_power = len(names) - (1 if "vegas" in sources else 0)
     if "vegas" in sources and n_power > 0:
-        wv = vegas_weight(week)
         weights = np.array([wv] + [(1.0 - wv) / n_power] * n_power)
     else:
         weights = np.full(len(names), 1.0 / len(names))
@@ -148,15 +160,18 @@ def _dist(col, lo, n_bins):
 def market_pwin(rosters: dict, kalshi_dist_path, n_sims: int, rng):
     """Kalshi-implied P(win pool): draw each team's season total from its market
     PMF independently (as `winspool market` does) and apply the >= rule.
-    None when the distributions file is missing."""
+    None when the distributions file is missing or any roster team has no
+    market distribution."""
     if not kalshi_dist_path or not os.path.exists(kalshi_dist_path):
         return None
     codes, mat = load_distributions(kalshi_dist_path)
-    draws = sample_independent(mat, n_sims, rng)              # (N, n_codes)
     col = {c: i for i, c in enumerate(codes)}
+    if any(t not in col for teams in rosters.values() for t in teams):
+        return None
+    draws = sample_independent(mat, n_sims, rng)              # (N, n_codes)
     totals = {}
     for p, teams in rosters.items():
-        idx = [col[t] for t in teams if t in col]
+        idx = [col[t] for t in teams]
         totals[p] = draws[:, idx].sum(axis=1) if idx else np.zeros(n_sims)
     return {p: round(v, 3) for p, v in pool_pwin(totals).items()}
 
@@ -273,13 +288,15 @@ def _load_schedule_cached() -> pd.DataFrame:
 
 
 def ratings_fetched_at(cache_dir) -> str | None:
-    """Newest fetched_at among ok sources in sources_meta.json, or None."""
+    """Newest fetched_at among ok power-rating sources in sources_meta.json, or
+    None."""
     path = os.path.join(cache_dir, "sources_meta.json")
     if not os.path.exists(path):
         return None
     with open(path) as f:
         meta = json.load(f)
-    stamps = [m["fetched_at"] for m in meta if m.get("ok") and m.get("fetched_at")]
+    stamps = [m["fetched_at"] for m in meta
+              if m.get("ok") and m.get("fetched_at") and m.get("kind") == "power"]
     return max(stamps) if stamps else None
 
 
