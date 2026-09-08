@@ -105,7 +105,7 @@ Operations: `docs/pi-runbook.md`.
 ```bash
 sudo ./scripts/pi-setup.sh                     # user, dirs, env template, systemd units
 sudoedit /etc/winspool/env                     # SESSION_SECRET must match Cloud Run
-sudo /opt/winspool/scripts/pi-deploy.sh        # pull, build, restart, health-check
+./scripts/pi-deploy.sh                         # pull, build, restart, health-check
 ```
 
 `STORE=sqlite` selects the SQLite store; the database path comes from

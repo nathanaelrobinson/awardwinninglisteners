@@ -1,14 +1,23 @@
 #!/usr/bin/env bash
 # Deploy the current main onto the Pi: pull, rebuild, restart, health-check.
 #
-#   ssh pi 'sudo /opt/winspool/scripts/pi-deploy.sh'
+#   ssh pi '/home/nate/awardwinninglisteners/scripts/pi-deploy.sh'
+#
+# Run as the checkout's owner (nate). git/uv/npm run as that user; only the
+# service restart needs sudo. If invoked via sudo it re-execs as the owner.
 set -euo pipefail
 
-APP_DIR=${APP_DIR:-/opt/winspool}
+APP_DIR=${APP_DIR:-/home/nate/awardwinninglisteners}
 PORT=${PORT:-8080}
 BRANCH=${BRANCH:-main}
 
 cd "$APP_DIR"
+
+OWNER=$(stat -c %U .)
+if [[ $EUID -eq 0 && $OWNER != root ]]; then
+  exec sudo -u "$OWNER" -H env APP_DIR="$APP_DIR" PORT="$PORT" BRANCH="$BRANCH" "$0" "$@"
+fi
+SUDO=""; [[ $EUID -eq 0 ]] || SUDO=sudo
 
 echo "==> pulling $BRANCH"
 git fetch --quiet origin "$BRANCH"
@@ -23,7 +32,7 @@ echo "==> web build"
 (cd web && npm ci --silent && npm run build)
 
 echo "==> restarting"
-systemctl restart winspool
+$SUDO systemctl restart winspool
 
 echo -n "==> waiting for health"
 for i in $(seq 1 60); do
@@ -37,5 +46,5 @@ done
 
 echo " FAILED"
 echo "--- last 40 log lines ---"
-journalctl -u winspool -n 40 --no-pager
+$SUDO journalctl -u winspool -n 40 --no-pager
 exit 1

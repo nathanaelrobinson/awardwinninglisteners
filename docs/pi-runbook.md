@@ -8,13 +8,17 @@ deploy, and the cutover checklist.
 
 | What | Where |
 | --- | --- |
-| Code | `/opt/winspool` (git checkout, remote `origin`, branch `main`) |
-| Virtualenv | `/opt/winspool/.venv` (built by `uv sync --extra dev`) |
-| Front end | `/opt/winspool/web/dist` (built by `npm run build`) |
+| Code | `/home/nate/awardwinninglisteners` (nate's checkout, remote `origin`, branch `main`) |
+| Virtualenv | `/home/nate/awardwinninglisteners/.venv` (built by `uv sync --extra dev`) |
+| Front end | `/home/nate/awardwinninglisteners/web/dist` (built by `npm run build`) |
 | Database | `/var/lib/winspool/league.db` (SQLite, WAL) |
 | Backups | `/var/backups/winspool/league-YYYY-MM-DD.db` (nightly, 30 kept) |
 | Secrets | `/etc/winspool/env` (mode 600, owned by root) |
 | Units | `/etc/systemd/system/winspool*.{service,timer}` (source in `deploy/pi/`) |
+
+The service runs as the `winspool` user but reads code from nate's home
+checkout. That needs `winspool` in the `nate` group, `/home/nate` at mode 750,
+and `ProtectHome=read-only` in the unit (all set by the steps below).
 
 The app listens on `127.0.0.1:8080` only. Nothing is exposed directly; the
 Cloudflare tunnel is the sole ingress.
@@ -24,8 +28,8 @@ Cloudflare tunnel is the sole ingress.
 ```
 STORE=sqlite
 WINSPOOL_DB=/var/lib/winspool/league.db
-WINSPOOL_DATA_DIR=/opt/winspool/data/cache
-WINSPOOL_WEB_DIST=/opt/winspool/web/dist
+WINSPOOL_DATA_DIR=/home/nate/awardwinninglisteners/data/cache
+WINSPOOL_WEB_DIST=/home/nate/awardwinninglisteners/web/dist
 WINSPOOL_BEHIND_PROXY=1     # marks the session cookie Secure behind the tunnel
 SESSION_SECRET=...          # MUST equal the Cloud Run value, or everyone is logged out
 REFRESH_TOKEN=...           # only the scores timer uses it
@@ -38,8 +42,9 @@ without it rather than falling back to the public dev value.
 
 ```bash
 sudo ./scripts/pi-setup.sh          # user, dirs, env template, units, timers
+sudo usermod -aG nate winspool && chmod 750 /home/nate   # let the service read the checkout
 sudoedit /etc/winspool/env          # fill in SESSION_SECRET and REFRESH_TOKEN
-sudo /opt/winspool/scripts/pi-deploy.sh
+/home/nate/awardwinninglisteners/scripts/pi-deploy.sh
 sudo systemctl enable --now winspool
 sudo systemctl start winspool-scores-gameday.timer winspool-scores-offday.timer
 sudo systemctl start winspool-backup.timer
@@ -48,10 +53,10 @@ sudo systemctl start winspool-backup.timer
 ## Deploying a change
 
 ```bash
-ssh pi 'sudo /opt/winspool/scripts/pi-deploy.sh'
+ssh pi '/home/nate/awardwinninglisteners/scripts/pi-deploy.sh'
 ```
 
-Pulls `main`, re-syncs Python deps, rebuilds the front end, restarts the
+Runs as nate (re-execs via sudo if launched as root). Pulls `main`, re-syncs Python deps, rebuilds the front end, restarts the
 service, and polls `/api/teams` for up to 60s. On failure it prints the last 40
 journal lines and exits non-zero.
 
@@ -94,7 +99,7 @@ A JSON export is the portable form, and works against any store:
 
 ```bash
 sudo -u winspool env $(sudo cat /etc/winspool/env | grep -v '^#' | xargs) \
-  /opt/winspool/.venv/bin/winspool export --out /tmp/league_export.json
+  /home/nate/awardwinninglisteners/.venv/bin/winspool export --out /tmp/league_export.json
 ```
 
 ## The Cloudflare tunnel
@@ -143,7 +148,7 @@ green with a test import.
    ```bash
    scp league_export.json pi:/tmp/
    sudo -u winspool env $(sudo cat /etc/winspool/env | grep -v '^#' | xargs) \
-     /opt/winspool/.venv/bin/winspool import --from /tmp/league_export.json --force
+     /home/nate/awardwinninglisteners/.venv/bin/winspool import --from /tmp/league_export.json --force
    sudo systemctl restart winspool
    ```
 4. **Verify locally** — `curl -fsS localhost:8080/api/teams`, then log in and
