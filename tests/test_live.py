@@ -3,7 +3,7 @@ import pandas as pd
 import pytest
 
 from winspool import live
-from winspool.teams import TEAM_INDEX
+from winspool.teams import TEAM_INDEX, TEAMS
 
 COLS = ["week", "game_type", "home_team", "away_team", "home_score", "away_score"]
 
@@ -110,3 +110,108 @@ def test_season_sigma_shrinks_with_games_left():
 def test_consensus_is_weighted_mean():
     m = np.array([[1.0] * 32, [3.0] * 32])
     assert np.allclose(live.consensus(m, np.array([0.25, 0.75])), 2.5)
+
+
+ROSTERS = {
+    "A": ["KC", "PHI"],
+    "B": ["BUF", "DAL"],
+}
+
+
+def test_pool_pwin_ties_count_for_both():
+    t = {"A": np.array([10, 12, 8]), "B": np.array([10, 11, 9])}
+    p = live.pool_pwin(t)
+    assert p["A"] == pytest.approx(2 / 3)   # seasons 0 (tie) and 1
+    assert p["B"] == pytest.approx(2 / 3)   # seasons 0 (tie) and 2
+
+
+def test_compute_live_shape_and_banked(inseason):
+    doc = live.compute_live(ROSTERS, inseason,
+                            totals_path=f"{FIX}/win_totals.csv",
+                            power_path=f"{FIX}/power_ratings.csv",
+                            kalshi_dist_path=None,
+                            ratings_fetched_at="2026-09-23T09:00:00",
+                            n_seasons=2000, seed=1, now=1000.0)
+    assert doc["week"] == 3 and doc["computed_at"] == 1000.0
+    assert doc["ratings_fetched_at"] == "2026-09-23T09:00:00"
+    assert doc["n_sims"] == 2000 and len(doc["x"]) > 0
+    rows = {r["player"]: r for r in doc["rows"]}
+    assert set(rows) == {"A", "B"}
+    a = rows["A"]
+    # KC 3 banked + PHI 1.5 banked
+    assert a["banked"] == 4.5
+    assert {t["code"]: t["banked"] for t in a["teams"]} == {"KC": 3, "PHI": 1.5}
+    # Each team: exp_wins >= banked and <= banked + games left (KC 1, PHI 2)
+    by = {t["code"]: t for t in a["teams"]}
+    assert 3 <= by["KC"]["exp_wins"] <= 4
+    assert 1.5 <= by["PHI"]["exp_wins"] <= 3.5
+    assert a["exp_wins"] == pytest.approx(sum(t["exp_wins"] for t in a["teams"]), abs=0.2)
+    assert a["p10"] <= a["p90"]
+    assert len(a["dist"]) == len(doc["x"]) and abs(sum(a["dist"]) - 1) < 1e-3
+    assert a["market_pwin"] is None
+    assert 0.99 <= sum(r["pwin"] for r in doc["rows"]) <= 1.2
+    assert [r["pwin"] for r in doc["rows"]] == sorted((r["pwin"] for r in doc["rows"]), reverse=True)
+
+
+def test_compute_live_this_week_games_and_leverage(inseason):
+    doc = live.compute_live(ROSTERS, inseason,
+                            totals_path=f"{FIX}/win_totals.csv",
+                            power_path=f"{FIX}/power_ratings.csv",
+                            kalshi_dist_path=None, ratings_fetched_at=None,
+                            n_seasons=2000, seed=1)
+    tw = {r["player"]: r for r in doc["this_week"]}
+    # Week 3 has one unplayed game: BUF (home) vs DAL. Both are B's teams; A has none.
+    assert tw["A"]["games"] == [] and tw["A"]["leverage"] == 0.0
+    games = tw["B"]["games"]
+    assert {g["team"] for g in games} == {"BUF", "DAL"}
+    buf = next(g for g in games if g["team"] == "BUF")
+    dal = next(g for g in games if g["team"] == "DAL")
+    assert buf["opp"] == "DAL" and buf["home"] is True
+    assert dal["opp"] == "BUF" and dal["home"] is False
+    assert buf["p"] == pytest.approx(1 - dal["p"], abs=2e-3)
+    # B owns both sides, so the game cannot change B's total: leverage ~ 0.
+    assert tw["B"]["leverage"] == pytest.approx(0.0, abs=0.02)
+    assert [r["leverage"] for r in doc["this_week"]] == sorted(
+        (r["leverage"] for r in doc["this_week"]), reverse=True)
+
+
+def test_compute_live_leverage_positive_when_opponent_is_not_mine(inseason):
+    rosters = {"A": ["KC", "BUF"], "B": ["PHI", "DAL"]}
+    doc = live.compute_live(rosters, inseason,
+                            totals_path=f"{FIX}/win_totals.csv",
+                            power_path=f"{FIX}/power_ratings.csv",
+                            kalshi_dist_path=None, ratings_fetched_at=None,
+                            n_seasons=3000, seed=2)
+    tw = {r["player"]: r for r in doc["this_week"]}
+    assert tw["A"]["leverage"] > 0.05 and tw["B"]["leverage"] > 0.05
+
+
+def test_compute_live_season_over(inseason):
+    done = inseason.copy()
+    done.loc[done["home_score"].isna(), ["home_score", "away_score"]] = [20, 10]
+    doc = live.compute_live(ROSTERS, done,
+                            totals_path=f"{FIX}/win_totals.csv",
+                            power_path=f"{FIX}/power_ratings.csv",
+                            kalshi_dist_path=None, ratings_fetched_at=None,
+                            n_seasons=500, seed=0)
+    assert doc["week"] == 19
+    assert all(r["games"] == [] for r in doc["this_week"])
+    rows = {r["player"]: r for r in doc["rows"]}
+    assert rows["A"]["exp_wins"] == rows["A"]["banked"]
+    assert rows["A"]["p10"] == rows["A"]["p90"]
+
+
+def test_market_pwin_from_pmfs(tmp_path):
+    # KC always 10 wins, BUF always 9, everyone else 0 -> A (KC) beats B (BUF) always.
+    cols = ["team"] + [f"p{k}" for k in range(18)]
+    rows = []
+    for code in TEAMS:
+        pmf = [0.0] * 18
+        pmf[10 if code == "KC" else 9 if code == "BUF" else 0] = 1.0
+        rows.append([code] + pmf)
+    path = tmp_path / "k.csv"
+    pd.DataFrame(rows, columns=cols).to_csv(path, index=False)
+    p = live.market_pwin({"A": ["KC"], "B": ["BUF"]}, str(path), 200, np.random.default_rng(0))
+    assert p == {"A": 1.0, "B": 0.0}
+    assert live.market_pwin({"A": ["KC"]}, str(tmp_path / "nope.csv"), 10,
+                            np.random.default_rng(0)) is None
