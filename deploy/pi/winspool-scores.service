@@ -1,0 +1,11 @@
+[Unit]
+Description=Refresh the winspool standings cache
+After=winspool.service
+Requires=winspool.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/winspool/env
+ExecStart=/usr/bin/curl -fsS --retry 3 --retry-delay 5 --max-time 120 \
+    -X POST -H "X-Refresh-Token: ${REFRESH_TOKEN}" \
+    http://127.0.0.1:8080/internal/refresh-standings

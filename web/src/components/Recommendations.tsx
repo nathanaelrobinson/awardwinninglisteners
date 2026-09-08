@@ -4,13 +4,16 @@ interface Props {
   recommend: RecommendResponse | null;
   loading: boolean;
   teamNames: Record<string, string>;
+  /** Team currently being inspected (drives the "if you take X" view below). */
+  selected?: string | null;
+  onSelect?: (code: string) => void;
 }
 
 function pct(x: number): string {
   return `${(x * 100).toFixed(1)}%`;
 }
 
-export default function Recommendations({ recommend, loading, teamNames }: Props) {
+export default function Recommendations({ recommend, loading, teamNames, selected = null, onSelect }: Props) {
   if (!recommend) {
     return (
       <div className="recommendations panel">
@@ -74,7 +77,11 @@ export default function Recommendations({ recommend, loading, teamNames }: Props
         </thead>
         <tbody>
           {recommend.recommendations.map((r, i) => (
-            <tr key={r.code} className={i === 0 ? 'top-row' : ''}>
+            <tr
+              key={r.code}
+              className={[i === 0 ? 'top-row' : '', onSelect ? 'rec-row-click' : '', r.code === selected ? 'rec-row-selected' : ''].filter(Boolean).join(' ')}
+              onClick={onSelect ? () => onSelect(r.code) : undefined}
+            >
               <td>{i + 1}</td>
               <td className="rec-code">
                 {r.code}

@@ -1,6 +1,7 @@
 import hmac
 import os
 import random
+import sqlite3
 import time
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Response
@@ -10,7 +11,7 @@ from pydantic import BaseModel
 
 from . import league
 from . import standings as _standings
-from .auth import current_user, require_commissioner, set_cookie
+from .auth import current_user, require_commissioner, set_cookie, viewer
 from .league import LeagueError
 from .store import get_store
 from .teams import resolve
@@ -25,7 +26,7 @@ def _doc():
         return get_store().get()
     except LookupError:
         raise HTTPException(503, "league not initialized")
-    except (gexc.GoogleAPICallError, gexc.RetryError):
+    except (gexc.GoogleAPICallError, gexc.RetryError, sqlite3.OperationalError):
         raise HTTPException(503, "busy")
 
 
@@ -36,7 +37,8 @@ def _run(fn):
         raise HTTPException(e.status, e.detail)
     except LookupError:
         raise HTTPException(503, "league not initialized")
-    except (gexc.Aborted, gexc.GoogleAPICallError, gexc.RetryError):
+    except (gexc.Aborted, gexc.GoogleAPICallError, gexc.RetryError,
+            sqlite3.OperationalError):
         raise HTTPException(503, "busy")
     except ValueError as e:
         if "Failed to commit transaction" in str(e):
@@ -88,10 +90,10 @@ def _touch(name):
 
 
 @router.get("/api/league")
-def get_league(name: str = Depends(current_user)):
+def get_league(name: str | None = Depends(viewer)):
     doc = _doc()
     last = (doc.get("logged_in") or {}).get(name) or 0
-    if doc["status"] != "lobby" or time.time() - last < TOUCH_EVERY:
+    if name is None or doc["status"] != "lobby" or time.time() - last < TOUCH_EVERY:
         return league.view(doc)
     try:
         return _run(_touch(name))
@@ -159,7 +161,7 @@ def post_message(req: MsgReq, name: str = Depends(current_user)):
 
 
 @router.get("/api/messages")
-def get_messages(since: float | None = None, _: str = Depends(current_user)):
+def get_messages(since: float | None = None, _: str | None = Depends(viewer)):
     _doc()
     return get_store().messages(since)
 
@@ -168,7 +170,7 @@ STANDINGS_STALE_AFTER = 6 * 3600
 
 
 @router.get("/api/standings")
-def get_standings(refresh: int = 0, name: str = Depends(current_user)):
+def get_standings(refresh: int = 0, name: str | None = Depends(viewer)):
     doc = _doc()
     store = get_store()
     if refresh and name != doc["commissioner"]:

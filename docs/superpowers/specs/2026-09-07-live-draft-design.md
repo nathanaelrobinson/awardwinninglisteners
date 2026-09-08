@@ -187,7 +187,7 @@ headers and button labels stay. Sentences go.
 - `.dockerignore` excludes `venv/`, `web/node_modules/`, `.git/`. `data/cache/` is
   git-ignored but is **not** docker-ignored; it must exist locally when building.
 - Cloud Run service `pika`, region `us-west1`, `--min-instances=1
-  --max-instances=1 --memory=2Gi --cpu=2 --allow-unauthenticated`.
+  --max-instances=1 --memory=768Mi --cpu=1 --allow-unauthenticated`.
   Env: `STORE=firestore`, `SESSION_SECRET`, `GOOGLE_CLOUD_PROJECT`.
 - New GCP project `snowpack-pika` (codename "pika"), billing linked to the same account as
   the active project. Enable Cloud Run, Artifact Registry, Cloud Build, Firestore.

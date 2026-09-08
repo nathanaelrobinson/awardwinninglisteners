@@ -1,0 +1,10 @@
+[Unit]
+Description=Nightly winspool SQLite backup
+
+[Timer]
+OnCalendar=*-*-* 03:30:00
+Persistent=true
+Unit=winspool-backup.service
+
+[Install]
+WantedBy=timers.target

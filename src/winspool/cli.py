@@ -60,6 +60,14 @@ def main(argv=None):
                          "(printed once, to stdout only).")
     li.add_argument("--force", action="store_true")
 
+    exp = sub.add_parser("export", help="dump the configured store to a JSON file")
+    exp.add_argument("--out", required=True)
+
+    imp = sub.add_parser("import", help="load a JSON dump into the configured store")
+    imp.add_argument("--from", dest="src", required=True)
+    imp.add_argument("--force", action="store_true",
+                     help="overwrite a store that already holds a league")
+
     args = parser.parse_args(argv)
 
     if args.cmd == "fetch":
@@ -176,4 +184,63 @@ def main(argv=None):
         else:
             print("league initialized")
         return
+
+    if args.cmd == "export":
+        import json
+        import sys
+        import time as _time
+        from .store import get_store
+        store = get_store()
+        try:
+            doc = store.get()
+        except LookupError:
+            sys.exit("source store has no league; nothing to export")
+        payload = {
+            "league": doc,
+            "messages": store.all_messages(),
+            "snapshots": store.all_snapshots(),
+            "standings": store.get_standings(),
+            "exported_at": _time.time(),
+        }
+        with open(args.out, "w") as f:
+            json.dump(payload, f, indent=2)
+        print(f"exported {len(doc.get('picks', []))} picks, "
+              f"{len(payload['messages'])} messages, "
+              f"{len(payload['snapshots'])} snapshots, "
+              f"standings={'yes' if payload['standings'] else 'no'} -> {args.out}")
+        return 0
+
+    if args.cmd == "import":
+        import json
+        import sys
+        from .store import get_store
+        store = get_store()
+        for m in ("put_message", "put_snapshot"):
+            if not hasattr(store, m):
+                sys.exit(f"{type(store).__name__} cannot be an import target "
+                         f"(no {m}); use STORE=sqlite")
+        try:
+            existing = store.get()
+        except LookupError:
+            existing = None
+        if existing is not None and not args.force:
+            sys.exit("target store already has a league; use --force to overwrite")
+        with open(args.src) as f:
+            payload = json.load(f)
+        if "league" not in payload:
+            sys.exit(f"{args.src} has no 'league' key — not a winspool export")
+        store.put(payload["league"])
+        store.clear_messages()
+        for m in payload.get("messages") or []:
+            store.put_message(m)
+        for snap in payload.get("snapshots") or []:
+            store.put_snapshot(snap)
+        if payload.get("standings"):
+            store.put_standings(payload["standings"])
+        print(f"imported {len(payload['league'].get('picks', []))} picks, "
+              f"{len(payload.get('messages') or [])} messages, "
+              f"{len(payload.get('snapshots') or [])} snapshots, "
+              f"standings={'yes' if payload.get('standings') else 'no'}")
+        return 0
+
     return 1

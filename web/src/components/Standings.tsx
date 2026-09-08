@@ -9,7 +9,7 @@ import TeamLogo from './TeamLogo';
 
 const ROWS = 6;
 
-export default function Standings({ me, view }: { me: Me; view: LeagueView }) {
+export default function Standings({ me, view }: { me: Me | null; view: LeagueView }) {
   const [data, setData] = useState<StandingsResponse | null>(null);
   const [names, setNames] = useState<Record<string, string>>({});
 
@@ -52,7 +52,7 @@ export default function Standings({ me, view }: { me: Me; view: LeagueView }) {
         <div className="standings-grid">
           {data.rows.map((r) => {
             const color = playerColor(r.player);
-            const isMe = r.player === me.name;
+            const isMe = r.player === me?.name;
             const first = r.player.trim().split(/\s+/)[0] ?? r.player;
             return (
               <div key={r.player} className={`standings-player${isMe ? ' me' : ''}`}>
@@ -61,13 +61,13 @@ export default function Standings({ me, view }: { me: Me; view: LeagueView }) {
                   {Array.from({ length: ROWS }, (_, i) => {
                     const t = r.teams[i];
                     if (!t) return <div key={i} className="standings-row empty" />;
-                    const cellProps = me.is_commissioner
+                    const cellProps = me?.is_commissioner
                       ? { onClick: () => edit(t.code, t.wins) }
                       : {};
                     return (
                       <div
                         key={t.code}
-                        className={`standings-row${me.is_commissioner ? ' ov' : ''}`}
+                        className={`standings-row${me?.is_commissioner ? ' ov' : ''}`}
                         {...cellProps}
                       >
                         <span className="standings-team">
@@ -92,7 +92,7 @@ export default function Standings({ me, view }: { me: Me; view: LeagueView }) {
           {data.stale && ' · stale'}
         </div>
       </div>
-      <Feed view={view} myName={me.name} />
+      <Feed view={view} myName={me?.name ?? null} />
     </div>
   );
 }

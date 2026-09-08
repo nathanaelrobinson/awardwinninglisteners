@@ -1,11 +1,13 @@
+import os
 import random
 import re
+import time
 import pytest
 from fastapi.testclient import TestClient
 
 from winspool import auth, league, server
 from winspool import api_league
-from winspool.store import InMemoryStore, set_store
+from winspool.store import InMemoryStore, SqliteStore, set_store
 from winspool.draft import PICK_ORDER
 from winspool.teams import TEAMS
 
@@ -14,13 +16,21 @@ PLAYERS = ["Nate Robinson", "Evan Goguillon-Bader", "Logan Borgelt",
 PIN = "awardwinninglisteners"
 
 
-@pytest.fixture
-def store():
-    s = InMemoryStore(league.new_league(PLAYERS, "Nate Robinson",
-                                        {p: PIN for p in PLAYERS}))
+@pytest.fixture(params=["memory", "sqlite"])
+def store(request, tmp_path):
+    """Every endpoint test runs twice: against the dev store and against the
+    SQLite store the Pi serves from."""
+    doc = league.new_league(PLAYERS, "Nate Robinson", {p: PIN for p in PLAYERS})
+    if request.param == "memory":
+        s = InMemoryStore(doc)
+    else:
+        s = SqliteStore(tmp_path / "league.db")
+        s.put(doc)
     set_store(s)
     yield s
     set_store(None)
+    if request.param == "sqlite":
+        s.close()
 
 
 @pytest.fixture
@@ -393,3 +403,158 @@ def test_run_maps_transaction_exhaustion_to_503(monkeypatch):
         assert r.status_code == 503
     finally:
         set_store(None)
+
+
+def test_login_cookie_not_secure_on_plain_http_dev(api, monkeypatch):
+    monkeypatch.delenv("K_SERVICE", raising=False)
+    monkeypatch.delenv("WINSPOOL_BEHIND_PROXY", raising=False)
+    r = api.post("/api/login", json={"name": "Nate Robinson", "pin": PIN})
+    assert "secure" not in r.headers.get("set-cookie", "").lower()
+
+
+def test_login_cookie_secure_behind_cloudflare_tunnel(api, monkeypatch):
+    """On the Pi the browser still talks HTTPS to Cloudflare, so the session
+    cookie must be marked secure even though uvicorn is serving plain HTTP."""
+    monkeypatch.delenv("K_SERVICE", raising=False)
+    monkeypatch.setenv("WINSPOOL_BEHIND_PROXY", "1")
+    r = api.post("/api/login", json={"name": "Nate Robinson", "pin": PIN})
+    assert "secure" in r.headers.get("set-cookie", "").lower()
+
+
+def test_login_cookie_secure_on_cloud_run(api, monkeypatch):
+    monkeypatch.delenv("WINSPOOL_BEHIND_PROXY", raising=False)
+    monkeypatch.setenv("K_SERVICE", "pika")
+    r = api.post("/api/login", json={"name": "Nate Robinson", "pin": PIN})
+    assert "secure" in r.headers.get("set-cookie", "").lower()
+
+
+# --- boot-time guard: a real deployment must bring its own session secret ---
+
+def test_configured_store_without_session_secret_refuses_to_boot(monkeypatch):
+    monkeypatch.setenv("STORE", "sqlite")
+    monkeypatch.delenv("SESSION_SECRET", raising=False)
+    with pytest.raises(RuntimeError, match="SESSION_SECRET"):
+        server.seed_dev_league()
+
+
+def test_configured_store_with_secret_seeds_nothing(monkeypatch, tmp_path):
+    monkeypatch.setenv("STORE", "sqlite")
+    monkeypatch.setenv("SESSION_SECRET", "real-secret")
+    s = SqliteStore(tmp_path / "l.db")
+    set_store(s)
+    try:
+        server.seed_dev_league()
+        with pytest.raises(LookupError):
+            s.get()          # no dev league conjured into a real store
+    finally:
+        set_store(None)
+        s.close()
+
+
+def test_local_dev_still_gets_a_default_secret(monkeypatch):
+    monkeypatch.delenv("STORE", raising=False)
+    monkeypatch.delenv("SESSION_SECRET", raising=False)
+    s = InMemoryStore()
+    set_store(s)
+    try:
+        server.seed_dev_league()
+        assert os.environ["SESSION_SECRET"] == "dev-secret"
+        assert s.get()["players"]        # dev league seeded
+    finally:
+        set_store(None)
+
+
+
+def _complete_draft(api, store):
+    n, _ = login(api, "Nate Robinson")
+    n.post("/api/league/randomize")
+    doc = store.get()
+    for i in range(30):
+        who = name_for_slot(doc, PICK_ORDER[i])
+        c, _ = login(api, who)
+        c.post("/api/league/pick", json={"team": TEAMS[i]})
+        doc = store.get()
+    assert doc["status"] == "done"
+    return n
+
+
+def test_projections_409_until_draft_is_done(api, store):
+    c, _ = login(api, "Mitch Fischer")
+    assert c.get("/api/league/projections").status_code == 409
+    assert c.get("/api/league/sample_season?seed=1").status_code == 409
+
+
+def test_projections_readable_by_any_player_and_keyed_by_name(api, store):
+    _complete_draft(api, store)
+    c, _ = login(api, "Mitch Fischer")
+    r = c.get("/api/league/projections")
+    assert r.status_code == 200
+    body = r.json()
+    rows = body["rows"]
+    assert sorted(x["player"] for x in rows) == sorted(PLAYERS)
+    assert body["n_sims"] > 0 and len(body["x"]) > 0
+    view = league.view(store.get())
+    for row in rows:
+        codes = [t["code"] for t in row["teams"]]
+        assert sorted(codes) == sorted(view["rosters"][row["player"]])
+        assert len(row["dist"]) == len(body["x"])
+        assert abs(sum(row["dist"]) - 1) < 1e-3
+        assert row["p10"] <= row["p90"]
+        assert abs(sum(t["exp_wins"] for t in row["teams"]) - row["exp_wins"]) < 0.2
+    # >= rule: ties count for both, so the sum is at least 1
+    assert 0.99 <= sum(x["pwin"] for x in rows) <= 1.2
+    # sorted by chance to win, descending
+    assert [x["pwin"] for x in rows] == sorted((x["pwin"] for x in rows), reverse=True)
+
+
+def test_sample_season_is_seeded_and_names_a_winner(api, store):
+    _complete_draft(api, store)
+    c, _ = login(api, "Eric Whitley")
+    a = c.get("/api/league/sample_season?seed=7").json()
+    b = c.get("/api/league/sample_season?seed=7").json()
+    assert a == b
+    assert set(a["winners"]) <= set(PLAYERS) and len(a["winners"]) >= 1
+    top = a["standings"][0]["total_wins"]
+    assert all(r["total_wins"] <= top for r in a["standings"])
+    assert all(r["total_wins"] == top for r in a["standings"] if r["player"] in a["winners"])
+
+
+def test_projections_do_not_write_to_store(api, store):
+    _complete_draft(api, store)
+    before = store.get()
+    c, _ = login(api, "Logan Borgelt")
+    c.get("/api/league/projections")
+    c.get("/api/league/sample_season?seed=3")
+    assert store.get() == before
+
+
+# --- Public read-only access once the draft is done -------------------------
+
+PUBLIC_READS = ["/api/league", "/api/standings", "/api/messages",
+                "/api/league/projections", "/api/league/sample_season?seed=1"]
+
+
+def test_anonymous_reads_401_until_draft_is_done(api, store):
+    for path in PUBLIC_READS:
+        assert api.get(path).status_code == 401, path
+    assert api.get("/api/me").status_code == 401
+
+
+def test_anonymous_reads_allowed_after_draft(api, store, monkeypatch):
+    monkeypatch.setattr(api_league._standings, "refresh_standings",
+                        lambda s: {"wins": {t: 0 for t in TEAMS}, "fetched_at": time.time(), "ok": True, "error": None})
+    _complete_draft(api, store)
+    anon = TestClient(server.app)
+    for path in PUBLIC_READS:
+        assert anon.get(path).status_code == 200, path
+    assert anon.get("/api/league").json()["status"] == "done"
+    assert anon.get("/api/me").status_code == 401
+
+
+def test_anonymous_cannot_write_after_draft(api, store):
+    _complete_draft(api, store)
+    anon = TestClient(server.app)
+    assert anon.post("/api/messages", json={"text": "hi"}).status_code == 401
+    assert anon.post("/api/league/undo").status_code == 401
+    assert anon.post("/api/standings/override", json={"team": "KC", "wins": 1}).status_code == 401
+    assert anon.post("/api/league/pick", json={"team": "KC"}).status_code == 401
