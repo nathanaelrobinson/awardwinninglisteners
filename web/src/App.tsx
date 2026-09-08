@@ -15,20 +15,23 @@ import Review from './components/Review';
 type Tab = 'draft' | 'review' | 'standings' | 'practice';
 
 export default function App() {
-  const [me, setMe] = useState<Me | null | undefined>(undefined); // undefined = checking
+  const [me, setMe] = useState<Me | null | undefined>(undefined); // undefined = checking, null = anonymous
+  const [needLogin, setNeedLogin] = useState(false);
   const [view, setView] = useState<LeagueView | null>(null);
   const [tab, setTab] = useState<Tab>('draft');
   const [selected, setSelected] = useState<string | null>(null);
   const tabChosen = useRef(false);
 
   const refreshMe = useCallback(() => {
-    getMe().then(setMe).catch(() => setMe(null));
+    getMe().then((m) => { setMe(m); setNeedLogin(false); }).catch(() => setMe(null));
   }, []);
   useEffect(refreshMe, [refreshMe]);
 
-  // Poll league state: 2s while lobby/drafting, 60s when done.
+  // Poll league state: 2s while lobby/drafting, 10s when done. Anonymous
+  // viewers get read-only access once the draft is done; before that the
+  // server answers 401 and we show the login screen.
   useEffect(() => {
-    if (!me) return;
+    if (me === undefined) return;
     let alive = true;
     let timer: number;
     const tick = async () => {
@@ -38,11 +41,14 @@ export default function App() {
         setView(v);
         if (!tabChosen.current) {
           tabChosen.current = true;
-          setTab(v.status === 'done' ? 'standings' : 'draft');
+          setTab(v.status === 'done' || !me ? 'standings' : 'draft');
         }
         timer = window.setTimeout(tick, v.status === 'done' ? 10_000 : 2_000);
       } catch (e) {
-        if ((e as Error).message === '401') { setMe(null); return; }
+        if ((e as Error).message === '401') {
+          if (me) setMe(null); else setNeedLogin(true);
+          return;
+        }
         timer = window.setTimeout(tick, 5_000);
       }
     };
@@ -68,13 +74,13 @@ export default function App() {
   }
 
   if (me === undefined) return null;
-  if (me === null) return <Login onDone={refreshMe} />;
+  if (me === null && needLogin) return <Login onDone={refreshMe} />;
   if (!view) return null;
 
-  const tabs: Tab[] = ['draft'];
+  const tabs: Tab[] = me ? ['draft'] : [];
   if (view.status === 'done') tabs.push('review');
   tabs.push('standings');
-  if (me.is_commissioner) tabs.push('practice');
+  if (me?.is_commissioner) tabs.push('practice');
   const LABEL: Record<Tab, string> = { draft: 'Draft', review: 'Review', standings: 'Standings', practice: 'Practice' };
 
   return (
@@ -86,14 +92,16 @@ export default function App() {
               {LABEL[t]}
             </button>
           ))}
-          <span className="tab-me">{me.name}</span>
+          {me
+            ? <span className="tab-me">{me.name}</span>
+            : <button className="tab-btn tab-signin" onClick={() => setNeedLogin(true)}>Sign in</button>}
         </div>
       </nav>
       <StatusBar view={view} me={me} selected={selected} onConfirm={confirmPick} />
-      <OrderTicker view={view} myName={me.name} />
+      <OrderTicker view={view} myName={me?.name ?? ''} />
       {tab !== 'practice' && (
         <main className="wrap">
-          {tab === 'draft' && (view.status === 'lobby' ? <Lobby view={view} me={me} /> : <LiveDraft view={view} me={me} onChange={setView} selected={selected} onSelect={setSelected} />)}
+          {tab === 'draft' && me && (view.status === 'lobby' ? <Lobby view={view} me={me} /> : <LiveDraft view={view} me={me} onChange={setView} selected={selected} onSelect={setSelected} />)}
           {tab === 'review' && <Review me={me} />}
           {tab === 'standings' && <Standings me={me} view={view} />}
         </main>

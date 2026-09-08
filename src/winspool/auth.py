@@ -48,6 +48,29 @@ def current_user(request: Request) -> str:
     return name
 
 
+def viewer(request: Request) -> str | None:
+    """Read-only access: any logged-in player, or anyone at all once the draft
+    is done (post-draft standings and projections are shared with friends).
+    Returns the player name, or None for an anonymous viewer."""
+    import sqlite3
+
+    from google.api_core import exceptions as gexc
+
+    from .store import get_store
+    name = verify(request.cookies.get(COOKIE))
+    if name is not None:
+        return name
+    try:
+        doc = get_store().get()
+    except LookupError:
+        raise HTTPException(503, "league not initialized")
+    except (gexc.GoogleAPICallError, gexc.RetryError, sqlite3.OperationalError):
+        raise HTTPException(503, "busy")
+    if doc["status"] != "done":
+        raise HTTPException(401, "login required")
+    return None
+
+
 def require_commissioner(request: Request) -> str:
     import sqlite3
 

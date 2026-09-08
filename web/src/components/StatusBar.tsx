@@ -6,7 +6,7 @@ const first = (n: string) => n.split(' ')[0];
 
 interface Props {
   view: LeagueView;
-  me: Me;
+  me: Me | null;
   selected?: string | null;
   onConfirm?: () => void;
 }
@@ -31,8 +31,8 @@ export default function StatusBar({ view, me, selected, onConfirm }: Props) {
   const onClock = view.current_player ?? nameOf(view.pick_order[i]);
   const upNext = nameOf(view.pick_order[i + 1]);
 
-  const mine = onClock === me.name;
-  const nextIsMine = !mine && upNext === me.name;
+  const mine = onClock === me?.name;
+  const nextIsMine = !mine && upNext === me?.name;
   const variant = mine ? 'status-mine' : nextIsMine ? 'status-next' : 'status-idle';
 
   return (
