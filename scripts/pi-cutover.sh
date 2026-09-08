@@ -29,8 +29,12 @@ echo "==> deploy"
 "$APP_DIR/scripts/pi-deploy.sh"
 
 echo "==> import $EXPORT"
+# The import runs as winspool, which cannot read a 600 file owned by nate.
+STAGED=/var/lib/winspool/import.json
+sudo install -o winspool -g winspool -m 600 "$EXPORT" "$STAGED"
 sudo -u winspool env $(sudo grep -v '^#' "$ENV_FILE" | xargs) \
-  "$APP_DIR/.venv/bin/winspool" import --from "$EXPORT" --force
+  "$APP_DIR/.venv/bin/winspool" import --from "$STAGED" --force
+sudo rm -f "$STAGED"
 sudo systemctl restart winspool
 sleep 2
 curl -fsS http://127.0.0.1:8080/api/teams >/dev/null && echo "==> app healthy"
