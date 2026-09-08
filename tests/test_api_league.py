@@ -461,3 +461,67 @@ def test_local_dev_still_gets_a_default_secret(monkeypatch):
         assert s.get()["players"]        # dev league seeded
     finally:
         set_store(None)
+
+
+
+def _complete_draft(api, store):
+    n, _ = login(api, "Nate Robinson")
+    n.post("/api/league/randomize")
+    doc = store.get()
+    for i in range(30):
+        who = name_for_slot(doc, PICK_ORDER[i])
+        c, _ = login(api, who)
+        c.post("/api/league/pick", json={"team": TEAMS[i]})
+        doc = store.get()
+    assert doc["status"] == "done"
+    return n
+
+
+def test_projections_409_until_draft_is_done(api, store):
+    c, _ = login(api, "Mitch Fischer")
+    assert c.get("/api/league/projections").status_code == 409
+    assert c.get("/api/league/sample_season?seed=1").status_code == 409
+
+
+def test_projections_readable_by_any_player_and_keyed_by_name(api, store):
+    _complete_draft(api, store)
+    c, _ = login(api, "Mitch Fischer")
+    r = c.get("/api/league/projections")
+    assert r.status_code == 200
+    body = r.json()
+    rows = body["rows"]
+    assert sorted(x["player"] for x in rows) == sorted(PLAYERS)
+    assert body["n_sims"] > 0 and len(body["x"]) > 0
+    view = league.view(store.get())
+    for row in rows:
+        codes = [t["code"] for t in row["teams"]]
+        assert sorted(codes) == sorted(view["rosters"][row["player"]])
+        assert len(row["dist"]) == len(body["x"])
+        assert abs(sum(row["dist"]) - 1) < 1e-3
+        assert row["p10"] <= row["p90"]
+        assert abs(sum(t["exp_wins"] for t in row["teams"]) - row["exp_wins"]) < 0.2
+    # >= rule: ties count for both, so the sum is at least 1
+    assert 0.99 <= sum(x["pwin"] for x in rows) <= 1.2
+    # sorted by chance to win, descending
+    assert [x["pwin"] for x in rows] == sorted((x["pwin"] for x in rows), reverse=True)
+
+
+def test_sample_season_is_seeded_and_names_a_winner(api, store):
+    _complete_draft(api, store)
+    c, _ = login(api, "Eric Whitley")
+    a = c.get("/api/league/sample_season?seed=7").json()
+    b = c.get("/api/league/sample_season?seed=7").json()
+    assert a == b
+    assert set(a["winners"]) <= set(PLAYERS) and len(a["winners"]) >= 1
+    top = a["standings"][0]["total_wins"]
+    assert all(r["total_wins"] <= top for r in a["standings"])
+    assert all(r["total_wins"] == top for r in a["standings"] if r["player"] in a["winners"])
+
+
+def test_projections_do_not_write_to_store(api, store):
+    _complete_draft(api, store)
+    before = store.get()
+    c, _ = login(api, "Logan Borgelt")
+    c.get("/api/league/projections")
+    c.get("/api/league/sample_season?seed=3")
+    assert store.get() == before

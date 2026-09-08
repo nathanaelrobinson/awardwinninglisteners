@@ -63,3 +63,21 @@ export const PLAYERS = [
   'Eric Whitley',
   'Mitch Fischer',
 ];
+
+export interface ProjTeam { code: string; exp_wins: number }
+export interface ProjRow {
+  player: string;
+  teams: ProjTeam[];
+  exp_wins: number;
+  pwin: number;
+  p10: number;
+  p90: number;
+  dist: number[];
+}
+export interface ProjectionsResponse { rows: ProjRow[]; x: number[]; n_sims: number }
+export interface SeasonSample {
+  standings: { player: string; teams: { code: string; wins: number }[]; total_wins: number }[];
+  winners: string[];
+}
+export const getProjections = () => call<ProjectionsResponse>('/api/league/projections');
+export const getSampleSeason = (seed: number) => call<SeasonSample>(`/api/league/sample_season?seed=${seed}`);

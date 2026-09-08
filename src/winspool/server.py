@@ -12,7 +12,7 @@ import os
 from pathlib import Path
 
 import numpy as np
-from fastapi import Depends, FastAPI
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
@@ -48,7 +48,7 @@ app.add_middleware(
 )
 
 from .api_league import router as league_router
-from .auth import require_commissioner
+from .auth import current_user, require_commissioner
 from . import league as _league
 from .store import InMemoryStore, get_store, set_store
 
@@ -456,6 +456,74 @@ def sample_season(req: SampleReq, _: str = Depends(require_commissioner)):
             "teams": sorted(teams, key=lambda x: x["wins"], reverse=True),
             "total_wins": int(sum(t["wins"] for t in teams)),
         })
+    out.sort(key=lambda r: r["total_wins"], reverse=True)
+    top = out[0]["total_wins"] if out else 0
+    return {"standings": out, "winners": [r["player"] for r in out if r["total_wins"] == top]}
+
+
+# ---- league-wide projections (read-only; any logged-in player, once the draft is done) ----
+
+def _final_rosters():
+    """{player_name: [team_idx, ...]} from the league doc. 409 until the draft is done."""
+    from .api_league import _doc
+    doc = _doc()
+    if doc["status"] != "done":
+        raise HTTPException(409, "draft not finished")
+    view = _league.view(doc)
+    return {p: [TEAM_INDEX[c] for c in codes] for p, codes in view["rosters"].items()}
+
+
+def _name_totals(rosters, wins):
+    """Per-player combined wins per simulated season: {name: (N,) array}."""
+    return {p: (wins[:, idx].sum(axis=1) if idx else np.zeros(wins.shape[0]))
+            for p, idx in rosters.items()}
+
+
+@app.get("/api/league/projections")
+def league_projections(_: str = Depends(current_user)):
+    """Post-draft season projection for every player, by name: projected wins per
+    team and combined, P(win the pool), 10th-90th pct range, and win distribution."""
+    _ensure_ready()
+    wins = _STATE["wins"]
+    rosters = _final_rosters()
+    totals = _name_totals(rosters, wins)
+    stack = np.stack(list(totals.values()), axis=1)
+    rowmax = stack.max(axis=1)
+    lo, hi = int(stack.min()), int(stack.max())
+    xs = list(range(lo, hi + 1))
+    rows = []
+    for p, col in totals.items():
+        counts = np.bincount((col - lo).astype(int), minlength=len(xs))
+        rows.append({
+            "player": p,
+            "teams": [{"code": TEAMS[t], "exp_wins": round(float(wins[:, t].mean()), 1)}
+                      for t in rosters[p]],
+            "exp_wins": round(float(col.mean()), 1),
+            "pwin": round(float((col >= rowmax).mean()), 3),
+            "p10": int(np.percentile(col, 10)),
+            "p90": int(np.percentile(col, 90)),
+            "dist": (counts / max(counts.sum(), 1)).round(5).tolist(),
+        })
+    for r in rows:
+        r["teams"].sort(key=lambda t: t["exp_wins"], reverse=True)
+    rows.sort(key=lambda r: (r["pwin"], r["exp_wins"]), reverse=True)
+    return {"rows": rows, "x": xs, "n_sims": int(wins.shape[0])}
+
+
+@app.get("/api/league/sample_season")
+def league_sample_season(seed: int = 0, _: str = Depends(current_user)):
+    """One concrete simulated season for the final rosters, by player name."""
+    _ensure_ready()
+    wins = _STATE["wins"]
+    rosters = _final_rosters()
+    rng = np.random.default_rng(seed)
+    season = wins[int(rng.integers(0, wins.shape[0]))]
+    out = []
+    for p, idx in rosters.items():
+        teams = [{"code": TEAMS[t], "wins": int(season[t])} for t in idx]
+        out.append({"player": p,
+                    "teams": sorted(teams, key=lambda x: x["wins"], reverse=True),
+                    "total_wins": int(sum(t["wins"] for t in teams))})
     out.sort(key=lambda r: r["total_wins"], reverse=True)
     top = out[0]["total_wins"] if out else 0
     return {"standings": out, "winners": [r["player"] for r in out if r["total_wins"] == top]}
