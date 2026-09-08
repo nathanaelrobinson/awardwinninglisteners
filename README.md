@@ -92,8 +92,18 @@ person theirs. `--force` is required if picks exist. Messages live in the Firest
 so all players read one stored result instead of each triggering a live fetch; the commissioner can
 override a team's wins by clicking the number.
 
-`POST /internal/refresh-standings` (header `X-Refresh-Token: $REFRESH_TOKEN`) refreshes the cache;
-Cloud Scheduler calls it every 15 minutes on Sun/Mon/Thu and every 4 hours otherwise.
+**Refresh jobs.** `POST /internal/refresh-standings` refreshes the wins cache and
+`POST /internal/refresh-live` recomputes the in-season projection (both take header
+`X-Refresh-Token: $REFRESH_TOKEN`). Four Cloud Scheduler jobs call them: standings every 15
+minutes on Sun/Mon/Thu and every 4 hours otherwise, live 5 minutes after each standings run.
+
+```bash
+make cr-jobs       # list the jobs and when they last ran
+make cr-refresh    # refresh standings + live projection right now
+make cr-schedule   # create/update the jobs (after a new service URL or token)
+```
+
+`scripts/cr-schedule.sh` reads the token from the running service, so nothing has to be typed.
 
 ## Raspberry Pi (self-hosted)
 
