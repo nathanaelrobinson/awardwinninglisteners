@@ -1,6 +1,7 @@
 import os
 import random
 import re
+import time
 import pytest
 from fastapi.testclient import TestClient
 
@@ -525,3 +526,35 @@ def test_projections_do_not_write_to_store(api, store):
     c.get("/api/league/projections")
     c.get("/api/league/sample_season?seed=3")
     assert store.get() == before
+
+
+# --- Public read-only access once the draft is done -------------------------
+
+PUBLIC_READS = ["/api/league", "/api/standings", "/api/messages",
+                "/api/league/projections", "/api/league/sample_season?seed=1"]
+
+
+def test_anonymous_reads_401_until_draft_is_done(api, store):
+    for path in PUBLIC_READS:
+        assert api.get(path).status_code == 401, path
+    assert api.get("/api/me").status_code == 401
+
+
+def test_anonymous_reads_allowed_after_draft(api, store, monkeypatch):
+    monkeypatch.setattr(api_league._standings, "refresh_standings",
+                        lambda s: {"wins": {t: 0 for t in TEAMS}, "fetched_at": time.time(), "ok": True, "error": None})
+    _complete_draft(api, store)
+    anon = TestClient(server.app)
+    for path in PUBLIC_READS:
+        assert anon.get(path).status_code == 200, path
+    assert anon.get("/api/league").json()["status"] == "done"
+    assert anon.get("/api/me").status_code == 401
+
+
+def test_anonymous_cannot_write_after_draft(api, store):
+    _complete_draft(api, store)
+    anon = TestClient(server.app)
+    assert anon.post("/api/messages", json={"text": "hi"}).status_code == 401
+    assert anon.post("/api/league/undo").status_code == 401
+    assert anon.post("/api/standings/override", json={"team": "KC", "wins": 1}).status_code == 401
+    assert anon.post("/api/league/pick", json={"team": "KC"}).status_code == 401

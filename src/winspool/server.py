@@ -48,7 +48,7 @@ app.add_middleware(
 )
 
 from .api_league import router as league_router
-from .auth import current_user, require_commissioner
+from .auth import require_commissioner, viewer
 from . import league as _league
 from .store import InMemoryStore, get_store, set_store
 
@@ -480,7 +480,7 @@ def _name_totals(rosters, wins):
 
 
 @app.get("/api/league/projections")
-def league_projections(_: str = Depends(current_user)):
+def league_projections(_: str | None = Depends(viewer)):
     """Post-draft season projection for every player, by name: projected wins per
     team and combined, P(win the pool), 10th-90th pct range, and win distribution."""
     _ensure_ready()
@@ -511,7 +511,7 @@ def league_projections(_: str = Depends(current_user)):
 
 
 @app.get("/api/league/sample_season")
-def league_sample_season(seed: int = 0, _: str = Depends(current_user)):
+def league_sample_season(seed: int = 0, _: str | None = Depends(viewer)):
     """One concrete simulated season for the final rosters, by player name."""
     _ensure_ready()
     wins = _STATE["wins"]
