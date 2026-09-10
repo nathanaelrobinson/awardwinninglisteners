@@ -138,3 +138,11 @@ export interface WeekResponse {
 }
 export const getWeek = (week?: number) =>
   call<WeekResponse>(week == null ? '/api/week' : `/api/week?week=${week}`);
+
+export interface AdminSource {
+  name: string; last_ok: number | null; age_s: number | null;
+  max_age_s: number; stale: boolean; last_error: string | null;
+}
+export interface AdminJob { name: string; at: number | null }
+export interface AdminHealth { sources: AdminSource[]; jobs: AdminJob[] }
+export const getAdminHealth = () => call<AdminHealth>('/api/admin/health');
