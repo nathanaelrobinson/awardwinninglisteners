@@ -6,6 +6,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getSimModel } from '../league';
 import type { Rolled, SimModel } from '../sim';
 import { rollAll, rollSeason, scheduleOf, sourceLabel } from '../sim';
+import type { RollRequest, RollResponse } from '../sim.worker';
 
 type View = 'all' | 'margin';
 type Mode = 'possible' | 'resim';
@@ -26,6 +27,7 @@ export default function Simulations({ myName }: { myName: string }) {
   const [error, setError] = useState<string | null>(null);
   const [rolled, setRolled] = useState<Rolled | null>(null);
   const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState(0);
 
   const [view, setView] = useState<View>('all');
   const [mode, setMode] = useState<Mode>('resim');
@@ -52,21 +54,51 @@ export default function Simulations({ myName }: { myName: string }) {
   // results have something to rule out. Rolling blocks for a moment, so paint
   // the busy state before starting.
   const cohorts = useRef(new Map<string, Rolled>());
+  const worker = useRef<Worker | null>(null);
+  const reqId = useRef(0);
+
+  useEffect(() => {
+    try {
+      worker.current = new Worker(new URL('../sim.worker.ts', import.meta.url), { type: 'module' });
+    } catch {
+      worker.current = null;          // fall back to rolling on this thread
+    }
+    return () => { worker.current?.terminate(); worker.current = null; };
+  }, []);
+
   useEffect(() => {
     if (!model) return;
     const key = `${mode}|${nSims}|${seed}`;
     const hit = cohorts.current.get(key);
     if (hit) { setRolled(hit); return; }
-    setBusy(true);
-    const id = window.setTimeout(() => {
-      const r = rollAll(model, nSims, seed, mode === 'possible');
+
+    const id = ++reqId.current;
+    const accept = (r: Rolled) => {
+      if (id !== reqId.current) return;   // a newer request has already started
       cohorts.current.set(key, r);
-      setRolled(r);
       cloudCache.current.clear();
-      setPicked(null); setHover(null); setBusy(false);
-    }, 16);
-    return () => window.clearTimeout(id);
+      setRolled(r); setPicked(null); setHover(null); setBusy(false);
+    };
+    setBusy(true); setDone(0);
+
+    const w = worker.current;
+    if (!w) {
+      const t = window.setTimeout(() =>
+        accept(rollAll(model, nSims, seed, mode === 'possible')), 16);
+      return () => window.clearTimeout(t);
+    }
+    const onMsg = (e: MessageEvent<RollResponse>) => {
+      if (e.data.id !== id) return;
+      if (e.data.type === 'progress') setDone(e.data.done);
+      else if (e.data.type === 'done') accept(e.data.rolled);
+      else { setBusy(false); setError('The simulation could not run: ' + e.data.message); }
+    };
+    w.addEventListener('message', onMsg);
+    const req: RollRequest = { id, model, nSims, seed, preseason: mode === 'possible' };
+    w.postMessage(req);
+    return () => w.removeEventListener('message', onMsg);
   }, [model, nSims, seed, mode]);
+
   useEffect(() => { cohorts.current.clear(); }, [model]);
 
   const locked = rolled?.playedWeeks ?? 0;
@@ -293,6 +325,7 @@ export default function Simulations({ myName }: { myName: string }) {
         <select value={nSims} onChange={(e) => setNSims(+e.target.value)}>
           {COUNTS.map((n) => <option key={n} value={n}>{n.toLocaleString()} sims</option>)}
         </select>
+        {busy && <span className="sim-bar"><i style={{ width: `${(done / nSims) * 100}%` }} /></span>}
         <span className="sim-alive">
           {mode === 'possible' && rolled && rolled.nAlive < nSims
             ? <><b>{rolled.nAlive.toLocaleString()}</b> of {nSims.toLocaleString()} still possible</>
@@ -321,7 +354,9 @@ export default function Simulations({ myName }: { myName: string }) {
             <span><i style={{ background: DEAD }} />ruled out — {(nSims - rolled.nAlive).toLocaleString()}</span>}
           {locked > 0 && view !== 'margin' && <span><i style={{ background: INK }} />what happened</span>}
           <span className="sim-hint">
-            {busy ? 'rolling…' : 'hover a line to read it, click to open it'}
+            {busy
+              ? `rolling ${(done || 0).toLocaleString()} of ${nSims.toLocaleString()}…`
+              : 'hover a line to read it, click to open it'}
           </span>
         </div>
 

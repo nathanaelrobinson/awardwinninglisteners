@@ -141,7 +141,8 @@ export function rollSeason(m: SimModel, seed: number, s: number, detail: Uint8Ar
  * can rule members of it out. Otherwise every season starts from today's banked
  * wins, which is what a live projection shows and which can never be wrong.
  */
-export function rollAll(m: SimModel, nSims: number, seed: number, preseason = false): Rolled {
+export function rollAll(m: SimModel, nSims: number, seed: number, preseason = false,
+                        onProgress?: (done: number) => void): Rolled {
   const sh = shapeOf(m, preseason);
   const { gh, ga, isEnd, owner, banked0, pbanked0, nT, nG, nP, nW } = sh;
 
@@ -152,7 +153,9 @@ export function rollAll(m: SimModel, nSims: number, seed: number, preseason = fa
   const st = new Float64Array(nT), acc = new Float64Array(nT), ptot = new Float64Array(nP);
   const { hfa, scale, weights } = m;
 
+  const step = Math.max(1, Math.ceil(nSims / 20));
   for (let s = 0; s < nSims; s++) {
+    if (onProgress && s > 0 && s % step === 0) onProgress(s);
     let a = (seed + Math.imul(s, 0x9e3779b1)) >>> 0;
     let spare = 0, hasSpare = false;
     const rand = () => {
