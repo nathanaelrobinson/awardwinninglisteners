@@ -55,7 +55,12 @@ function Matchup({ g, owner }: { g: WeekGame; owner: Record<string, string> }) {
 // How the market has moved this week. Scaled to the series' own min and max —
 // a zero-based axis would flatten every line on the board into the same
 // horizontal bar, and the whole interest is a move from, say, 55% to 57%.
-function Spark({ history }: { history: [number, number][] }) {
+// The series is the HOME team's win probability; a logo terminates the line
+// at the home team so a rise or fall into that logo reads without a legend.
+const SPARK_LINE_H = 14; // px — the plotted band, unchanged from before this task
+const SPARK_LOGO = 10; // px
+
+function Spark({ history, home }: { history: [number, number][]; home: string }) {
   if (history.length < 3) return null;
   const ys = history.map(([, p]) => p);
   const min = Math.min(...ys);
@@ -63,28 +68,52 @@ function Spark({ history }: { history: [number, number][] }) {
   const pad = Math.max(0.005, (max - min) * 0.15);
   const lo = min - pad;
   const hi = max + pad;
+  const yOf = (p: number) => (1 - (p - lo) / (hi - lo)) * 100;
   const t0 = history[0]![0];
   const span = history[history.length - 1]![0] - t0;
   const d = history
     .map(([t, p], i) => {
       const x = span > 0 ? ((t - t0) / span) * 100 : (i / (history.length - 1)) * 100;
-      const y = (1 - (p - lo) / (hi - lo)) * 100;
+      const y = yOf(p);
       return `${i ? 'L' : 'M'}${x.toFixed(2)} ${y.toFixed(2)}`;
     })
     .join(' ');
   const open = ys[0]!;
   const now = ys[ys.length - 1]!;
   const move = (now - open) * 100;
+  // The domain never expands to fit 0.5 — that would recompress a lopsided
+  // series (e.g. 61–65%) back down toward a flat line. Instead: draw the rule
+  // at its true position when 0.5 is in range, or pin it to the nearer edge,
+  // dashed, when the game has simply never been close to a coin flip.
+  const refRaw = yOf(0.5);
+  const refPinned = refRaw < 0 || refRaw > 100;
+  const refY = Math.min(100, Math.max(0, refRaw));
+  const logoTop = (Math.min(100, Math.max(0, yOf(now))) / 100) * SPARK_LINE_H;
   return (
-    <svg
-      className="pbspark"
-      viewBox="0 0 100 100"
-      preserveAspectRatio="none"
-      role="img"
-    >
-      <title>{`${(open * 100).toFixed(1)}% → ${(now * 100).toFixed(1)}% (${move >= 0 ? '+' : '−'}${Math.abs(move).toFixed(1)} pts)`}</title>
-      <path d={d} fill="none" vectorEffect="non-scaling-stroke" />
-    </svg>
+    <span className="pbsparkwrap" style={{ height: SPARK_LINE_H + SPARK_LOGO }}>
+      <svg
+        className="pbspark"
+        viewBox="0 0 100 100"
+        preserveAspectRatio="none"
+        role="img"
+        style={{ top: SPARK_LOGO / 2, height: SPARK_LINE_H }}
+      >
+        <title>{`home win probability: ${(open * 100).toFixed(1)}% → ${(now * 100).toFixed(1)}% (${move >= 0 ? '+' : '−'}${Math.abs(move).toFixed(1)} pts)`}</title>
+        <line
+          className="pbref"
+          x1="0"
+          y1={refY}
+          x2="100"
+          y2={refY}
+          vectorEffect="non-scaling-stroke"
+          strokeDasharray={refPinned ? '4 3' : undefined}
+        />
+        <path d={d} fill="none" vectorEffect="non-scaling-stroke" />
+      </svg>
+      <span className="pbsparklogo" style={{ top: logoTop, width: SPARK_LOGO, height: SPARK_LOGO }}>
+        <TeamLogo code={home} size={SPARK_LOGO} />
+      </span>
+    </span>
   );
 }
 
@@ -132,7 +161,7 @@ function ProbCell({ g, owner }: { g: WeekGame; owner: Record<string, string> }) 
       </span>
       <TeamLogo code={g.home} size={15} />
       <span className="pbval">{pct(used)}</span>
-      <Spark history={g.history} />
+      <Spark history={g.history} home={g.home} />
     </div>
   );
 }
