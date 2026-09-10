@@ -784,8 +784,25 @@ def test_week_is_503_before_a_projection_exists(api, store):
 
 def test_week_serves_the_current_week_from_the_live_doc(api, store):
     c, _ = login(api, PLAYERS[0])
-    store.put_live({"week": 1, "computed_at": 0.0, "rows": [], "games": []})
+    store.put_live({"week": 1, "computed_at": 0.0,
+                     "rows": [{"player": PLAYERS[0], "pwin": 0.11}], "games": []})
     body = c.get("/api/week").json()
     assert body["week"] == 1 and body["state"] in ("live", "final")
     assert isinstance(body["games"], list)
     assert {p["name"] for p in body["players"]}
+
+    # A past week must come from what was RECORDED at the time, not from a
+    # recompute against the live doc. Give the stored week-2 record a pwin
+    # for PLAYERS[0] that could only have come from that record, not the
+    # live doc above (0.11) — this fails if the route ever falls through to
+    # the live doc for a past week.
+    store.put_week(2, {"week": 2, "computed_at": 0.0,
+                        "rows": [{"player": PLAYERS[0], "pwin": 0.87}], "games": []})
+    past = c.get("/api/week?week=2").json()
+    assert past["week"] == 2
+    mine = next(p for p in past["players"] if p["name"] == PLAYERS[0])
+    assert mine["pwin"] == 0.87
+
+    # No recorded document for week 3, and it isn't the current live week
+    # either: 404, not a silent fall-through to the live doc.
+    assert c.get("/api/week?week=3").status_code == 404

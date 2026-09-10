@@ -286,7 +286,7 @@ def get_week(week: int | None = None, _: str | None = Depends(viewer)):
     if week is not None and not 1 <= week <= 18:
         raise HTTPException(422, "week out of range")
     store = get_store()
-    live_doc = store.get_live()
+    live_doc = _store_read(store.get_live)
     if live_doc is None:
         raise HTTPException(503, "projection not ready")
     target = live_doc["week"] if week is None else week
@@ -295,7 +295,7 @@ def get_week(week: int | None = None, _: str | None = Depends(viewer)):
     # with today's information would be a lie about what we knew.
     source_doc = live_doc
     if target != live_doc["week"]:
-        stored = next((w for w in store.list_weeks() if w["week"] == target), None)
+        stored = next((w for w in _store_read(store.list_weeks) if w["week"] == target), None)
         if stored is None:
             raise HTTPException(404, "no record for that week")
         source_doc = stored
