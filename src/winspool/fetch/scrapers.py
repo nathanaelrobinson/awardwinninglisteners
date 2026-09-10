@@ -104,6 +104,29 @@ def shrink_weight(n_plays: int, k: int = EPA_SHRINK_K) -> float:
     return float(n_plays) / (float(n_plays) + float(k))
 
 
+def _prepare(pbp):
+    """Filter to real scrimmage plays with a resolvable offence, defence, and
+    EPA value — the rows that actually enter the regression. The single
+    definition of "a play" that both `epa_adjusted` and `_usable_plays` use, so
+    they can never disagree about what they're counting."""
+    if "pass" in pbp.columns and "rush" in pbp.columns:
+        pbp = pbp[(pbp["pass"] == 1) | (pbp["rush"] == 1)]
+    p = pbp.dropna(subset=["epa", "posteam", "defteam"])
+    if not len(p):
+        return p, [], [], []
+    off_codes = [resolve(str(t)) for t in p["posteam"]]
+    def_codes = [resolve(str(t)) for t in p["defteam"]]
+    keep = [i for i, (o, d) in enumerate(zip(off_codes, def_codes))
+            if o is not None and d is not None]
+    return p, off_codes, def_codes, keep
+
+
+def _usable_plays(pbp) -> int:
+    """Count of plays that survive `_prepare` — what `shrink_weight` must be
+    fed. `EPA_SHRINK_K` is calibrated in these plays, not raw pbp rows."""
+    return len(_prepare(pbp)[3])
+
+
 def epa_adjusted(pbp, ridge: float = EPA_RIDGE) -> dict:
     """Opponent-adjusted net EPA per team, as a mean-centered points strength.
 
@@ -112,16 +135,7 @@ def epa_adjusted(pbp, ridge: float = EPA_RIDGE) -> dict:
     defence-team indicators separates the two: the fitted coefficients are what
     a team did *given who it played*. This is what DVOA provides and we cannot
     buy."""
-    if "pass" in pbp.columns and "rush" in pbp.columns:
-        pbp = pbp[(pbp["pass"] == 1) | (pbp["rush"] == 1)]
-    p = pbp.dropna(subset=["epa", "posteam", "defteam"])
-    if not len(p):
-        return {}
-
-    off_codes = [resolve(str(t)) for t in p["posteam"]]
-    def_codes = [resolve(str(t)) for t in p["defteam"]]
-    keep = [i for i, (o, d) in enumerate(zip(off_codes, def_codes))
-            if o is not None and d is not None]
+    p, off_codes, def_codes, keep = _prepare(pbp)
     if not keep:
         return {}
     y = p["epa"].to_numpy(dtype=float)[keep]
@@ -164,6 +178,6 @@ def epa_ratings():
         return prior_out
     if not prior_out:
         return cur_out
-    w = shrink_weight(len(cur_pbp))
+    w = shrink_weight(_usable_plays(cur_pbp))
     return {t: w * cur_out.get(t, 0.0) + (1 - w) * prior_out.get(t, 0.0)
             for t in set(cur_out) | set(prior_out)}
