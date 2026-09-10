@@ -86,8 +86,15 @@ Pi is not worth one weekly rating. No browser dependency ships to the Pi at all.
 This is a deletion, not a fade. The previous revision of this design proposed
 generalising `vegas_share` to decay stale sources toward zero; the owner's rule
 supersedes that. A source that is removed cannot drift back in, and there is no
-decay curve to argue about. `vegas_share` itself stays exactly as it is for the
-covers win totals, which are a live market but a season-long one.
+decay curve to argue about.
+
+**`vegas_share` itself is deleted too.** It exists because "pre-season win totals
+stop updating once the season starts", fading that voice to nothing by week 9 —
+and once covers is fetched daily from a live futures market, that premise is
+false. A source that updates every day should not be discounted for staleness it
+does not have. This is a deliberate change to the projection: from week 2 the
+totals voice stops being discounted and pool-win numbers move. Equal weight for
+every live source stands until phase 3 has evidence to change it.
 
 ### DVOA, and why we compute it rather than fetch it
 
