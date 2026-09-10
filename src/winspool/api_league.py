@@ -1,4 +1,5 @@
 import hmac
+import math
 import os
 import random
 import sqlite3
@@ -8,7 +9,7 @@ from pathlib import Path
 from fastapi import APIRouter, Depends, Header, HTTPException, Response
 from fastapi.responses import JSONResponse
 from google.api_core import exceptions as gexc
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from . import league
 from . import live as _live
@@ -18,10 +19,13 @@ from .auth import current_user, require_commissioner, set_cookie, viewer
 from .league import LeagueError
 from .store import get_store
 from .teams import resolve
+from .throttle import Throttle
 
 router = APIRouter()
 
 TOUCH_EVERY = 20.0  # seconds; Lobby considers a player online if seen within 30s
+
+_LOGIN_THROTTLE = Throttle()
 
 # In-season live projection. Same cache dir the sim reads; overridable for tests.
 LIVE_CACHE_DIR = os.environ.get("WINSPOOL_DATA_DIR") or str(
@@ -83,15 +87,30 @@ def _snapshot(store, reason: str) -> str:
 
 
 class LoginReq(BaseModel):
-    name: str
-    pin: str
+    # Bounded because the name is used as a throttle-table key.
+    name: str = Field(max_length=100)
+    pin: str = Field(max_length=100)
 
 
 @router.post("/api/login")
 def login(req: LoginReq, resp: Response):
+    """PINs are four digits and the player names are public, so the whole
+    keyspace is 10k guesses; without a penalty that is a couple of minutes of
+    scripted requests. Back off per name after a few misses.
+
+    The penalty is checked before the PIN is, so a guesser inside the window
+    cannot tell a right PIN from a wrong one.
+    """
     doc = _doc()
+    now = time.time()
+    wait = _LOGIN_THROTTLE.retry_after(req.name, now)
+    if wait > 0:
+        raise HTTPException(429, "too many attempts",
+                            headers={"Retry-After": str(math.ceil(wait))})
     if req.name not in doc["players"] or not league.check_pin(doc, req.name, req.pin):
+        _LOGIN_THROTTLE.fail(req.name, now)
         raise HTTPException(401, "bad name or pin")
+    _LOGIN_THROTTLE.succeed(req.name)
     set_cookie(resp, req.name)
     return {"name": req.name}
 
