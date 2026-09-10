@@ -15,8 +15,8 @@ const DRAW_N = 5000;           // lines actually painted; every count uses them 
 const COUNTS = [20000, 50000, 100000, 250000];
 
 const WIN = '#1b48e0';         // this player wins
-const HOVER = '#d50a0a';       // the season under the cursor
-const CLOUD = '#9aa1ad';       // someone else wins
+const LOSE = '#d50a0a';        // ...and the seasons they don't
+const CLOUD = '#a6a6a6';       // someone else wins (neutral, so blue reads as blue)
 const RULE = '#d6d9de';
 const DIM = '#626c80';
 
@@ -144,17 +144,27 @@ export default function Simulations({ myName }: { myName: string }) {
       off.width = w * dpr; off.height = h * dpr;
       const oc = off.getContext('2d')!;
       oc.setTransform(dpr, 0, 0, dpr, 0, 0);
+      // Translucent lines composite, so whichever class is drawn last wins the
+      // overlap. Painted in two passes, a 24%-of-seasons colour covered 60% of
+      // the ink. So interleave: same alpha, and alternate the two classes in
+      // slices, which leaves neither systematically on top.
       const a = Math.max(0.03, Math.min(0.16, 420 / Math.max(sample.length, 1)));
-      // losers first so the winning seasons read on top
-      for (const [wins, col, mul] of [[false, CLOUD, 0.8], [true, WIN, 1.3]] as [boolean, string, number][]) {
-        oc.strokeStyle = col; oc.globalAlpha = Math.min(a * mul, 0.5); oc.lineWidth = 1;
-        oc.beginPath();
-        for (const s of sample) {
-          if ((act.winner[s] === pi + 1) !== wins) continue;
-          oc.moveTo(X(0), Y(arr[s * nW]));
-          for (let k = 1; k < nW; k++) oc.lineTo(X(k), Y(arr[s * nW + k]));
+      const SLICES = 12, per = Math.ceil(sample.length / SLICES);
+      oc.lineWidth = 1;
+      oc.globalAlpha = a;
+      for (let slice = 0; slice < SLICES; slice++) {
+        const from = slice * per, to = Math.min(sample.length, from + per);
+        for (const [wins, col] of [[false, CLOUD], [true, WIN]] as [boolean, string][]) {
+          oc.strokeStyle = col;
+          oc.beginPath();
+          for (let i = from; i < to; i++) {
+            const s = sample[i];
+            if ((act.winner[s] === pi + 1) !== wins) continue;
+            oc.moveTo(X(0), Y(arr[s * nW]));
+            for (let k = 1; k < nW; k++) oc.lineTo(X(k), Y(arr[s * nW + k]));
+          }
+          oc.stroke();
         }
-        oc.stroke();
       }
       cloudCache.current.set(key, off);
     }
@@ -171,9 +181,11 @@ export default function Simulations({ myName }: { myName: string }) {
       c.save(); c.setLineDash([4, 4]); c.strokeStyle = DIM;
       c.beginPath(); c.moveTo(PAD.l, Y(0)); c.lineTo(w - PAD.r, Y(0)); c.stroke(); c.restore();
     }
-    for (const [sim, col] of [[picked, WIN], [hover, HOVER]] as [number | null, string][]) {
+    for (const sim of [picked, hover]) {
       if (sim == null) continue;
-      c.save(); c.strokeStyle = col; c.lineWidth = 2.25; c.lineJoin = 'round';
+      c.save();
+      c.strokeStyle = act.winner[sim] === pi + 1 ? WIN : LOSE;
+      c.lineWidth = 2.25; c.lineJoin = 'round';
       c.beginPath(); c.moveTo(X(0), Y(arr[sim * nW]));
       for (let k = 1; k < nW; k++) c.lineTo(X(k), Y(arr[sim * nW + k]));
       c.stroke(); c.restore();
