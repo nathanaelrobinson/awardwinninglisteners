@@ -30,10 +30,9 @@ def verify(token: str | None) -> str | None:
 
 def _secure_cookie() -> bool:
     """Mark the cookie HTTPS-only whenever the browser actually sees HTTPS:
-    behind the Cloudflare tunnel on the Pi (WINSPOOL_BEHIND_PROXY=1), or any
-    host that sets K_SERVICE. Plain http://localhost dev stays non-secure."""
-    return (os.environ.get("K_SERVICE") is not None
-            or os.environ.get("WINSPOOL_BEHIND_PROXY") == "1")
+    behind the Cloudflare tunnel on the Pi (WINSPOOL_BEHIND_PROXY=1). Plain
+    http://localhost dev stays non-secure."""
+    return os.environ.get("WINSPOOL_BEHIND_PROXY") == "1"
 
 
 def set_cookie(resp: Response, name: str) -> None:

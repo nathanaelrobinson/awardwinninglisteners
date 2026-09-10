@@ -49,7 +49,7 @@ systemctl daemon-reload
 
 echo "==> enabling timers"
 systemctl enable winspool-scores-gameday.timer winspool-scores-offday.timer \
-                 winspool-backup.timer >/dev/null
+                 winspool-backup.timer winspool-odds.timer >/dev/null
 
 echo
 echo "Provisioned. Remaining steps:"

@@ -90,8 +90,10 @@ person theirs. `--force` is required if picks exist. Messages are not wiped by `
 one stored result instead of each triggering a live fetch; the commissioner can override a
 team's wins by clicking the number.
 
-**Refresh jobs.** `POST /internal/refresh-standings` refreshes the wins cache and
-`POST /internal/refresh-live` recomputes the in-season projection (both take header
+**Refresh jobs.** `POST /internal/refresh-standings` refreshes the wins cache,
+`POST /internal/refresh-live` recomputes the in-season projection, and
+`POST /internal/refresh-odds` snapshots what each of the three betting-odds
+sources says about the current week's games, hourly (all three take header
 `X-Refresh-Token: $REFRESH_TOKEN`). On the Pi, systemd timers call them — see
 `docs/pi-runbook.md`.
 

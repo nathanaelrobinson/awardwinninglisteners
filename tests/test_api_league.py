@@ -406,7 +406,6 @@ def test_run_maps_transaction_exhaustion_to_503(monkeypatch):
 
 
 def test_login_cookie_not_secure_on_plain_http_dev(api, monkeypatch):
-    monkeypatch.delenv("K_SERVICE", raising=False)
     monkeypatch.delenv("WINSPOOL_BEHIND_PROXY", raising=False)
     r = api.post("/api/login", json={"name": "Nate Robinson", "pin": PIN})
     assert "secure" not in r.headers.get("set-cookie", "").lower()
@@ -415,15 +414,7 @@ def test_login_cookie_not_secure_on_plain_http_dev(api, monkeypatch):
 def test_login_cookie_secure_behind_cloudflare_tunnel(api, monkeypatch):
     """On the Pi the browser still talks HTTPS to Cloudflare, so the session
     cookie must be marked secure even though uvicorn is serving plain HTTP."""
-    monkeypatch.delenv("K_SERVICE", raising=False)
     monkeypatch.setenv("WINSPOOL_BEHIND_PROXY", "1")
-    r = api.post("/api/login", json={"name": "Nate Robinson", "pin": PIN})
-    assert "secure" in r.headers.get("set-cookie", "").lower()
-
-
-def test_login_cookie_secure_on_cloud_run(api, monkeypatch):
-    monkeypatch.delenv("WINSPOOL_BEHIND_PROXY", raising=False)
-    monkeypatch.setenv("K_SERVICE", "pika")
     r = api.post("/api/login", json={"name": "Nate Robinson", "pin": PIN})
     assert "secure" in r.headers.get("set-cookie", "").lower()
 

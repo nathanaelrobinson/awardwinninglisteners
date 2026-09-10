@@ -1,9 +1,0 @@
-venv/
-.venv/
-web/node_modules/
-web/dist/
-.git/
-data/history/
-tests/
-docs/
-**/__pycache__/

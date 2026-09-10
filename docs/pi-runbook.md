@@ -14,7 +14,7 @@ deploy, and the cutover checklist.
 | Database | `/var/lib/winspool/league.db` (SQLite, WAL) |
 | Backups | `/var/backups/winspool/league-YYYY-MM-DD.db` (nightly, 30 kept) |
 | Secrets | `/etc/winspool/env` (mode 600, owned by root) |
-| Units | `/etc/systemd/system/winspool*.{service,timer}` (source in `deploy/pi/`) |
+| Units | `/etc/systemd/system/winspool*.{service,timer}` (source in `deploy/pi/`), including `winspool-odds.{service,timer}` |
 
 The service runs as the `winspool` user but reads code from nate's home
 checkout. That needs `winspool` in the `nate` group, `/home/nate` at mode 750,
@@ -48,6 +48,7 @@ sudoedit /etc/winspool/env          # fill in SESSION_SECRET and REFRESH_TOKEN
 sudo systemctl enable --now winspool
 sudo systemctl start winspool-scores-gameday.timer winspool-scores-offday.timer
 sudo systemctl start winspool-backup.timer
+sudo systemctl start winspool-odds.timer
 ```
 
 ## Deploying a change
@@ -72,6 +73,7 @@ the checkout isn't handy.
 systemctl status winspool
 journalctl -u winspool -f                  # live logs
 journalctl -u winspool-scores -n 50        # standings refreshes
+journalctl -u winspool-odds -n 50          # odds snapshots
 systemctl list-timers 'winspool*'          # when the next refresh/backup fires
 sqlite3 /var/lib/winspool/league.db 'select count(*) from messages;'
 ```
@@ -95,7 +97,8 @@ sudo -u winspool cp /var/backups/winspool/league-2026-09-14.db /var/lib/winspool
 sudo systemctl start winspool
 ```
 
-A JSON export is the portable form, and works against any store:
+A JSON export is the portable form, and works against any store. It now
+carries the odds log alongside everything else:
 
 ```bash
 sudo -u winspool env $(sudo cat /etc/winspool/env | grep -v '^#' | xargs) \
