@@ -6,9 +6,23 @@ succeeded, so a dead scraper silently changed what the model was. Per-source
 rows remove that class of bug. Staleness is surfaced instead, and makes the
 health check fail rather than the model quietly age.
 """
+import math
 import time
 
+from .teams import N_TEAMS
+
 DAY = 86400.0
+
+# A power/totals/distribution doc covering fewer teams than this is recorded as
+# a FAILURE, not a partial success. A partial parse is worse than no parse:
+# `data.sources_from_store` fills the missing teams with 0.0 (league average)
+# and `ratings.to_common_scale` then z-scores the source, so its standard
+# deviation SHRINKS and the surviving teams' votes are INFLATED. The ensemble
+# silently over-weights whatever ESPN happened to still name correctly. Two
+# teams of slack absorbs a single rebranded club without red-lighting the box.
+MIN_TEAM_COVERAGE = 30
+
+WINS_PMF_LEN = 18                 # wins 0..17 inclusive
 
 # A source past this age has not merely blipped — something is wrong and the
 # ensemble is drifting on stale information. These make the endpoint 503.
@@ -43,9 +57,46 @@ def default_sources(store) -> dict:
         "espn_fpi": ("power", lambda s, w: espn_fpi()),
         "covers": ("totals", lambda s, w: covers_totals()),
         "kalshi": ("distribution", lambda s, w: kalshi_distributions()),
-        "epa_adj": ("power", lambda s, w: epa_ratings()),
+        "epa_adj": ("power", lambda s, w: epa_ratings(w)),
         "market_strength": ("power", _market),
     }
+
+
+def team_entries(doc: dict) -> dict:
+    """The team-keyed part of a stored doc. Sources may attach `__meta__`
+    (epa_adj records its play count and shrink weight); those keys are
+    bookkeeping and must never be counted as coverage."""
+    return {k: v for k, v in doc.items() if not str(k).startswith("__")}
+
+
+def _coverage_error(doc: dict) -> str | None:
+    n = len(team_entries(doc))
+    if n < MIN_TEAM_COVERAGE:
+        return (f"partial parse: {n}/{N_TEAMS} teams "
+                f"(need {MIN_TEAM_COVERAGE}); a partial source inflates the "
+                "teams it did cover, so it is refused outright")
+    return None
+
+
+def _pmf_error(doc: dict) -> str | None:
+    """A malformed win-distribution row surfaces late and unhelpfully — deep
+    inside `rng.choice` during a live refresh, in a numpy message naming
+    neither the team nor the source. Catch it here, where the source's name is
+    still known."""
+    bad = []
+    for code, pmf in team_entries(doc).items():
+        try:
+            vals = [float(x) for x in pmf]
+        except (TypeError, ValueError):
+            bad.append(code)
+            continue
+        if (len(vals) != WINS_PMF_LEN
+                or not all(math.isfinite(v) for v in vals)
+                or sum(vals) <= 0.0):
+            bad.append(code)
+    if bad:
+        return f"malformed win distribution for {', '.join(sorted(bad))}"
+    return None
 
 
 def refresh_ratings(store, *, season: int, week: int, sources=None,
@@ -61,14 +112,17 @@ def refresh_ratings(store, *, season: int, week: int, sources=None,
             store.add_rating({"source": name, "kind": kind, "fetched_at": stamp,
                               "ok": False, "doc": {"error": errors[name]}})
             continue
-        if not doc:
-            errors[name] = "empty result"
+        bad = "empty result" if not doc else _coverage_error(doc)
+        if not bad and kind == "distribution":
+            bad = _pmf_error(doc)
+        if bad:
+            errors[name] = bad
             store.add_rating({"source": name, "kind": kind, "fetched_at": stamp,
-                              "ok": False, "doc": {"error": "empty result"}})
+                              "ok": False, "doc": {"error": bad}})
             continue
         store.add_rating({"source": name, "kind": kind, "fetched_at": stamp,
                           "ok": True, "doc": doc})
-        written[name] = len(doc)
+        written[name] = len(team_entries(doc))
     return {"season": int(season), "week": int(week),
             "written": written, "errors": errors}
 
