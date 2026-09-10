@@ -141,6 +141,7 @@ def test_optimizer_routes_commissioner_only(api):
     assert c.post("/api/recommend", json={"slot": 1, "taken": []}).status_code == 403
     assert c.post("/api/results", json={"slot": 1, "taken": []}).status_code == 403
     assert c.post("/api/advance", json={"slot": 1, "taken": []}).status_code == 403
+    assert c.get("/api/admin/health").status_code == 403
     assert api.get("/api/teams").status_code == 200  # open
 
 

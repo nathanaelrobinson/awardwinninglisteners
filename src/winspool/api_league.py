@@ -383,3 +383,32 @@ def internal_refresh_ratings(x_refresh_token: str | None = Header(default=None))
         return JSONResponse(status_code=503, content={
             "ok": False, **out, "stale": {k: round(v) for k, v in aged.items()}})
     return {"ok": True, **out}
+
+
+@router.get("/api/admin/health")
+def admin_health(_: str = Depends(require_commissioner)):
+    store = get_store()
+    latest = store.latest_ratings()
+    now = time.time()
+    sources = []
+    for name, limit in _ratingsjob.MAX_AGE_S.items():
+        row = latest.get(name)
+        hist = store.ratings_history(name)
+        # Newest-first scan for the latest failure; a source can be currently
+        # healthy and still carry a stale error worth surfacing.
+        last_err = next((r["doc"].get("error") for r in reversed(hist)
+                         if not r["ok"]), None)
+        age = None if row is None else now - float(row["fetched_at"])
+        # No row at all is the worst state, not a neutral one: it must read
+        # as stale, never as absent or healthy.
+        sources.append({"name": name,
+                        "last_ok": None if row is None else row["fetched_at"],
+                        "age_s": None if age is None else round(age),
+                        "max_age_s": limit,
+                        "stale": age is None or age > limit,
+                        "last_error": last_err})
+    live_doc = store.get_live() or {}
+    standings = store.get_standings() or {}
+    jobs = [{"name": "live", "at": live_doc.get("computed_at")},
+            {"name": "standings", "at": standings.get("fetched_at")}]
+    return {"sources": sources, "jobs": jobs}
