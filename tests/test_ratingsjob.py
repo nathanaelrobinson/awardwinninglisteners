@@ -96,3 +96,48 @@ def test_a_malformed_win_distribution_fails_the_source_at_write_time():
     assert refresh_ratings(store, season=2026, week=5, now=100.0,
                            sources={"kalshi": ("distribution", lambda s, w: good)}
                            )["written"] == {"kalshi": len(TEAMS)}
+
+
+def test_a_source_whose_store_write_fails_does_not_cost_the_later_sources():
+    """The design promise is that a source which fails is recorded and skipped
+    while the others still write — one source being down must never cost us the
+    other two, which is most of the argument for having three. The per-source
+    try used to wrap only the fetch, so a store write that raised escaped it and
+    aborted the loop mid-iteration: every later source produced no row at all,
+    not even the failure row. Here the FETCH succeeds and the WRITE is what
+    breaks, which is exactly the case that shipped."""
+    class PickyStore(InMemoryStore):
+        def add_rating(self, row):
+            if row["source"] == "kalshi" and row["ok"]:
+                raise TypeError("Object of type ndarray is not JSON serializable")
+            return super().add_rating(row)
+
+    store = PickyStore({})
+    sources = {
+        "espn_fpi": ("power", lambda s, w: _full(1.0)),
+        "kalshi": ("distribution", lambda s, w: {t: [1.0 / 18] * 18 for t in TEAMS}),
+        "epa_adj": ("power", lambda s, w: _full(2.0)),
+    }
+    out = refresh_ratings(store, season=2026, week=5, sources=sources, now=100.0)
+
+    assert set(out["written"]) == {"espn_fpi", "epa_adj"}, \
+        "the sources after the broken one must still be written"
+    assert "ndarray" in out["errors"]["kalshi"]
+    assert set(store.latest_ratings()) == {"espn_fpi", "epa_adj"}
+    # the failure itself is recorded, so Admin health can name it
+    assert [r["ok"] for r in store.ratings_history("kalshi")] == [False]
+
+    # ...and the degenerate case: if the STORE is what is broken, the ok=False
+    # row cannot be written either. That must not recurse, must not raise and
+    # must not go quiet — the run finishes every source and the report still
+    # names each failure, which is what makes the endpoint 503 and the systemd
+    # unit go red.
+    class DeadStore(InMemoryStore):
+        def add_rating(self, row):
+            raise RuntimeError("disk is gone")
+
+    out = refresh_ratings(DeadStore({}), season=2026, week=5, now=100.0,
+                          sources={k: v for k, v in sources.items() if k != "kalshi"})
+    assert out["written"] == {}
+    assert set(out["errors"]) == {"espn_fpi", "epa_adj"}
+    assert "could not be stored" in out["errors"]["espn_fpi"]

@@ -42,3 +42,27 @@ def test_rows_are_appended_never_replaced_and_survive_a_round_trip(store, tmp_pa
         dst.put_rating(row)
     assert [r["id"] for r in dst.ratings_history("epa_adj")] == \
            [r["id"] for r in store.ratings_history("epa_adj")]
+
+
+def test_a_real_kalshi_doc_survives_the_store(store):
+    """Every other test builds its docs by hand as plain dicts, so no REAL
+    source output had ever been pushed through the store. `ladder_to_pmf`
+    returns an ndarray, `SqliteStore.put_rating` calls `json.dumps`, and the
+    TypeError took the whole refresh down. Feed the store what the fetcher
+    actually produces — on memory this is trivially true, on sqlite it is the
+    assertion that matters, and that divergence is why this fixture is
+    parametrised over both."""
+    import json as _json
+
+    from winspool.fetch.kalshi import events_to_distributions
+
+    events = _json.load(open("tests/fixtures/kalshi_kxnflwins.json"))["events"]
+    doc = events_to_distributions(events)
+    assert doc, "the fixture must yield at least one team, or this proves nothing"
+
+    store.add_rating({"source": "kalshi", "kind": "distribution",
+                      "fetched_at": 100.0, "ok": True, "doc": doc})
+    back = store.latest_ratings()["kalshi"]["doc"]
+    assert set(back) == set(doc)
+    for code, pmf in doc.items():
+        assert [float(x) for x in back[code]] == pytest.approx(list(pmf))

@@ -99,30 +99,57 @@ def _pmf_error(doc: dict) -> str | None:
     return None
 
 
+class _Refused(Exception):
+    """A source rejected by validation. Carries an already-worded reason, so it
+    is reported verbatim rather than as `_Refused: ...`."""
+
+
+def _record_failure(store, name, kind, stamp, reason, errors) -> None:
+    """Note the failure in the returned report, and try to persist it.
+
+    If the store itself is what is broken, the failure row cannot be written
+    either. That is not a reason to retry, and not a reason to raise: the
+    report is the authority the endpoint reads, and a source recorded there is
+    a source the endpoint turns into a 503. Say in the message that the row is
+    missing, so the Admin health box's silence is explained rather than
+    mysterious, then carry on to the next source."""
+    errors[name] = reason
+    try:
+        store.add_rating({"source": name, "kind": kind, "fetched_at": stamp,
+                          "ok": False, "doc": {"error": reason}})
+    except Exception as e:                        # noqa: BLE001 - reported, not raised
+        errors[name] = (f"{reason} [and the failure row could not be stored: "
+                        f"{type(e).__name__}: {e}]")[:400]
+
+
 def refresh_ratings(store, *, season: int, week: int, sources=None,
                     now: float | None = None) -> dict:
+    """Fetch, validate and store every source. Each source is wrapped whole —
+    fetch, validation AND store write — so that one source's failure of any
+    kind costs only that source. A store write that blows up used to escape the
+    handler and abort the loop, which silently cost every source after it: no
+    row at all, not even a failure row. Three voices exist so that one being
+    down is survivable; that only holds if the boundary covers the write too."""
     stamp = now if now is not None else time.time()
     src = default_sources(store) if sources is None else sources
     written, errors = {}, {}
     for name, (kind, fn) in src.items():
         try:
             doc = fn(season, week)
+            bad = "empty result" if not doc else _coverage_error(doc)
+            if not bad and kind == "distribution":
+                bad = _pmf_error(doc)
+            if bad:
+                raise _Refused(bad)
+            store.add_rating({"source": name, "kind": kind, "fetched_at": stamp,
+                              "ok": True, "doc": doc})
+        except _Refused as e:
+            _record_failure(store, name, kind, stamp, str(e), errors)
         except Exception as e:                    # noqa: BLE001 - recorded, not raised
-            errors[name] = f"{type(e).__name__}: {e}"[:200]
-            store.add_rating({"source": name, "kind": kind, "fetched_at": stamp,
-                              "ok": False, "doc": {"error": errors[name]}})
-            continue
-        bad = "empty result" if not doc else _coverage_error(doc)
-        if not bad and kind == "distribution":
-            bad = _pmf_error(doc)
-        if bad:
-            errors[name] = bad
-            store.add_rating({"source": name, "kind": kind, "fetched_at": stamp,
-                              "ok": False, "doc": {"error": bad}})
-            continue
-        store.add_rating({"source": name, "kind": kind, "fetched_at": stamp,
-                          "ok": True, "doc": doc})
-        written[name] = len(team_entries(doc))
+            _record_failure(store, name, kind, stamp,
+                            f"{type(e).__name__}: {e}"[:200], errors)
+        else:
+            written[name] = len(team_entries(doc))
     return {"season": int(season), "week": int(week),
             "written": written, "errors": errors}
 

@@ -119,7 +119,12 @@ def events_to_distributions(events):
             print(f"  WARNING: kalshi {code}: only {n} priced rungs (<{MIN_PRICED_RUNGS}), omitting")
             continue
         pmf = ladder_to_pmf(markets)
-        out[code] = pmf
+        # Plain floats, not the ndarray `ladder_to_pmf` returns: this dict is
+        # stored verbatim as a rating doc, and `json.dumps` cannot serialize an
+        # ndarray. Converting here, at the boundary where a computed array
+        # becomes a document, keeps every consumer JSON-safe — the numeric
+        # consumers all go through `np.asarray`, which is indifferent.
+        out[code] = [float(x) for x in pmf]
     return out
 
 
