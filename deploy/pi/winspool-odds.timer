@@ -4,6 +4,7 @@ Description=winspool odds snapshot (hourly)
 [Timer]
 OnCalendar=*-*-* *:20:00
 Persistent=true
+Unit=winspool-odds.service
 
 [Install]
 WantedBy=timers.target
