@@ -32,11 +32,14 @@ def _spread_from(o: GameOdds) -> float | None:
 
 
 def closing_spreads(store, season: int, weeks) -> list:
-    """(home, away, spread, week) per game, from the last read before kickoff.
+    """(home, away, spread, week) per game, from the last read logged for it.
 
-    The odds log's retention pass preserves that closing read specifically
-    because it must never be thinned away; this is the thing it was preserved
-    for."""
+    For a finished week that is the true closing line, before kickoff — the
+    odds log's retention pass preserves that read specifically because it must
+    never be thinned away; this is the thing it was preserved for. For the
+    week still in progress, "last read" instead means the most recent snapshot
+    logged so far, which may be days ahead of that game's own kickoff and is
+    not yet a settled closing line."""
     out = []
     for week in weeks:
         rows = store.odds_for_week(season, week)

@@ -32,7 +32,11 @@ def default_sources(store) -> dict:
     from .marketstrength import closing_spreads, strength_from_spreads
 
     def _market(season, week):
-        games = closing_spreads(store, season, range(1, max(1, week)))
+        # Include the current week: a posted-but-not-yet-closed line is still a
+        # valid market estimate, and it's the freshest one we have. Restricting
+        # to completed weeks would make this source fail every week 1, for a
+        # cold start that including the current week removes entirely.
+        games = closing_spreads(store, season, range(1, week + 1))
         return strength_from_spreads(games, current_week=week)
 
     return {
