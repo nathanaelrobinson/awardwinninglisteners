@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 
 from . import league
 from . import live as _live
+from . import oddslog as _oddslog
 from . import simmodel as _simmodel
 from . import standings as _standings
 from .auth import current_user, require_commissioner, set_cookie, viewer
@@ -31,6 +32,7 @@ _LOGIN_THROTTLE = Throttle()
 LIVE_CACHE_DIR = os.environ.get("WINSPOOL_DATA_DIR") or str(
     Path(__file__).resolve().parents[2] / "data" / "cache")
 LIVE_N_SEASONS = 5000
+SEASON = int(os.environ.get("WINSPOOL_SEASON", "2026"))
 
 
 def _doc():
@@ -320,3 +322,14 @@ def internal_refresh_standings(x_refresh_token: str | None = Header(default=None
             "ok": False, "fetched_at": doc["fetched_at"], "error": doc["error"]})
     return {"ok": True, "fetched_at": doc["fetched_at"],
             "teams_with_wins": sum(1 for w in doc["wins"].values() if w > 0)}
+
+
+@router.post("/internal/refresh-odds", include_in_schema=False)
+def internal_refresh_odds(x_refresh_token: str | None = Header(default=None)):
+    _check_refresh_token(x_refresh_token)
+    try:
+        df = _live._load_schedule_cached()
+        out = _oddslog.refresh_odds(get_store(), df, SEASON)
+    except Exception as e:
+        return JSONResponse(status_code=503, content={"ok": False, "error": str(e)[:200]})
+    return {"ok": True, **out}

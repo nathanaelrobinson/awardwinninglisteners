@@ -753,3 +753,10 @@ def test_oversized_login_fields_are_rejected_before_they_reach_the_throttle(api,
     r = login(api, "x" * 10_000, "y" * 10_000)[1]
     assert r.status_code == 422
     assert len(fast_throttle) == 0
+
+
+def test_refresh_odds_requires_the_token(api, store, monkeypatch):
+    monkeypatch.setenv("REFRESH_TOKEN", "secret")
+    assert api.post("/internal/refresh-odds").status_code == 403
+    assert api.post("/internal/refresh-odds",
+                    headers={"X-Refresh-Token": "wrong"}).status_code == 403
