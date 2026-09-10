@@ -50,6 +50,7 @@ export const undoPick = () => call<LeagueView>('/api/league/undo', { method: 'PO
 export const getMessages = (since?: number) =>
   call<Message[]>(since ? `/api/messages?since=${since}` : '/api/messages');
 export const postMessage = (text: string) => call<Message>('/api/messages', json({ text }));
+export const getSimModel = () => call<import('./sim').SimModel>('/api/league/sim-model');
 export const getStandings = (refresh = false) =>
   call<StandingsResponse>(refresh ? '/api/standings?refresh=1' : '/api/standings');
 export const setOverride = (team: string, wins: number | null) =>
