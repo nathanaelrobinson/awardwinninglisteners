@@ -39,6 +39,11 @@ def refresh_odds(store, sched_df, season: int, *, sources=None,
     argument for having three."""
     week = week_of(sched_df)
     pairs = week_pairs(sched_df, week)
+    # One stamp threaded through every snapshot below: the fetchers each call
+    # time.time() of their own, and week.py's sparkline recovers a cycle by
+    # grouping snapshots on exact `fetched_at` equality. Drop the `now=` and the
+    # chart silently degenerates to one point per source. Guarded by
+    # test_refresh_odds_shares_one_fetched_at.
     stamp = now if now is not None else time.time()
     written, errors = {}, {}
 

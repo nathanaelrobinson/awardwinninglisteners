@@ -159,8 +159,12 @@ class InMemoryStore:
         return row["id"]
 
     def put_odds(self, snapshot: dict) -> None:
+        # Matches SqliteStore's INSERT OR REPLACE: an id-less row later makes
+        # thin_week/delete_odds raise, and a re-import must replace, not double.
+        row = {**snapshot, "id": snapshot.get("id") or uuid.uuid4().hex}
         with self._lock:
-            self._odds.append(dict(snapshot))
+            self._odds = [r for r in self._odds if r.get("id") != row["id"]]
+            self._odds.append(row)
 
     def odds_for_week(self, season: int, week: int) -> list[dict]:
         rows = [r for r in self._odds

@@ -117,3 +117,23 @@ def test_thinning_keeps_every_source_separately():
     thin_week(store, FINISHED, 2026, 1)
     kept = store.odds_for_week(2026, 1)
     assert sorted(r["source"] for r in kept) == ["book", "book", "kalshi", "kalshi"]
+
+
+def test_refresh_odds_shares_one_fetched_at():
+    """A cycle is recovered downstream by grouping snapshots on exact
+    `fetched_at` equality (week.py's sparkline), and the only thing holding
+    that together is the single `stamp` threaded through every snapshot here.
+    Each fetcher stamps its own quotes with its own clock — as below — so a
+    refactor that drops the `now=` would silently split one cycle into one
+    point per source. This is the test that would catch it."""
+    store = InMemoryStore({})
+    refresh_odds(store, SCHED, 2026, sources={
+        "book": lambda s, w, p: [GameOdds(source="book", home="KC", away="DEN",
+                                          fetched_at=101.0, ml_home=-148, ml_away=124)],
+        "kalshi": lambda s, w, p: [GameOdds(source="kalshi", home="KC", away="DEN",
+                                            fetched_at=202.0, yes_home=0.55,
+                                            yes_away=0.47)],
+    })
+    rows = store.odds_for_week(2026, 1)
+    assert {r["source"] for r in rows} == {"book", "kalshi", "nflverse"}
+    assert len({r["fetched_at"] for r in rows}) == 1

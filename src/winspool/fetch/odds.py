@@ -9,6 +9,7 @@ Adapters return raw quoted values. The only transformation permitted here is
 normalising team codes.
 """
 import re
+import sys
 import time
 
 import pandas as pd
@@ -110,12 +111,21 @@ def parse_kalshi(markets: list[dict], pairs: set, fetched_at: float) -> list[Gam
     return out
 
 
+KALSHI_LIMIT = 1000
+
+
 def fetch_kalshi(pairs: set) -> list[GameOdds]:
     r = requests.get(KALSHI_URL, params={"series_ticker": KALSHI_SERIES,
-                                         "status": "open", "limit": 1000},
+                                         "status": "open", "limit": KALSHI_LIMIT},
                      headers=HEADERS, timeout=TIMEOUT)
     r.raise_for_status()
-    return parse_kalshi(r.json().get("markets") or [], pairs, time.time())
+    markets = r.json().get("markets") or []
+    # We do not page. A full page means there may be more, and the games past
+    # the cut would just vanish from the consensus — say so rather than not.
+    if len(markets) >= KALSHI_LIMIT:
+        print(f"  WARNING: Kalshi returned a full page of {len(markets)} markets; "
+              "some games may be missing", file=sys.stderr)
+    return parse_kalshi(markets, pairs, time.time())
 
 
 def week_pairs(df: pd.DataFrame, week: int) -> set:
