@@ -118,3 +118,22 @@ export interface WeekSlim { player: string; pwin: number; exp_wins: number }
 export interface WeekPoint { week: number; rows: WeekSlim[]; views: Record<string, WeekSlim[]> }
 export const getLive = () => call<LiveProjection>('/api/league/live');
 export const getWeeks = () => call<WeekPoint[]>('/api/league/weeks');
+
+export interface WeekGame {
+  home: string; away: string; kickoff: string | null; state: 'pre' | 'final';
+  spread: number | null; total: number | null;
+  p_model: number | null; p_used: number | null;
+  p_book: number | null; p_kalshi: number | null;
+  home_score: number | null; away_score: number | null;
+  swing: Record<string, number>;
+}
+export interface WeekPlayer {
+  name: string; teams: string[]; locks: number; banked: number;
+  chalk: number; dist: number[]; actual: number | null; pwin: number | null;
+}
+export interface WeekResponse {
+  season: number; week: number; state: 'live' | 'final';
+  games: WeekGame[]; players: WeekPlayer[];
+}
+export const getWeek = (week?: number) =>
+  call<WeekResponse>(week == null ? '/api/week' : `/api/week?week=${week}`);
