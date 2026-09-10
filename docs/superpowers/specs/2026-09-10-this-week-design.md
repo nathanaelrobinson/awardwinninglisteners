@@ -150,10 +150,13 @@ CREATE TABLE odds (
 CREATE INDEX odds_week ON odds (season, week, source, fetched_at);
 ```
 
-Firestore gets `leagues/2026/odds/{id}` with the same fields, so the Cloud Run
-rollback host stays functional. `winspool export` and `winspool import` both
-grow an `odds` array; the runbook's promise that an export is a complete move
-has to keep holding.
+`winspool export` and `winspool import` both grow an `odds` array; the
+runbook's promise that an export is a complete move has to keep holding.
+
+Firestore gets the same methods for Protocol consistency, but **Cloud Run and
+Firestore were retired on 2026-09-10** — the Pi is the permanent host and there
+is no rollback target. That code is dead weight awaiting a separate cleanup,
+not a supported path.
 
 ### Scheduling
 
@@ -170,9 +173,8 @@ one snapshot each, and returns a per-source count. A source that fails is logged
 and skipped; the other two still write. One source being down must never cost us
 the other two, which is most of the argument for three of them.
 
-On Cloud Run the equivalent is a fifth Cloud Scheduler job created by
-`scripts/cr-schedule.sh`. Cloud Run is a paused rollback host and this is a
-cheap consistency, not a live path.
+There is no Cloud Run equivalent. Cloud Run and Firestore were retired on
+2026-09-10; the Pi timer is the only scheduler.
 
 ## Using the market
 
