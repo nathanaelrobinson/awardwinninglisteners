@@ -69,7 +69,7 @@ def test_export_writes_expected_keys(tmp_path):
     run(["export", "--out", str(out)], populated())
     payload = json.loads(out.read_text())
     assert set(payload) == {"league", "messages", "snapshots", "standings",
-                            "preseason", "live", "weeks", "odds", "exported_at"}
+                            "preseason", "live", "weeks", "odds", "ratings", "exported_at"}
     assert len(payload["messages"]) == 2
     assert len(payload["snapshots"]) == 2
     assert payload["league"]["players"] == PLAYERS

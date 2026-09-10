@@ -204,6 +204,7 @@ def main(argv=None):
             "live": store.get_live(),
             "weeks": store.list_weeks(),
             "odds": store.all_odds(),
+            "ratings": store.all_ratings(),
             "exported_at": _time.time(),
         }
         with open(args.out, "w") as f:
@@ -212,6 +213,7 @@ def main(argv=None):
               f"{len(payload['messages'])} messages, "
               f"{len(payload['snapshots'])} snapshots, "
               f"{len(payload['odds'])} odds snapshots, "
+              f"{len(payload['ratings'])} ratings, "
               f"standings={'yes' if payload['standings'] else 'no'} "
               f"live={'yes' if payload['live'] else 'no'} weeks={len(payload['weeks'])} -> {args.out}")
         return 0
@@ -251,10 +253,13 @@ def main(argv=None):
             store.put_week(w["week"], w)
         for row in payload.get("odds") or []:
             store.put_odds(row)
+        for row in payload.get("ratings") or []:
+            store.put_rating(row)
         print(f"imported {len(payload['league'].get('picks', []))} picks, "
               f"{len(payload.get('messages') or [])} messages, "
               f"{len(payload.get('snapshots') or [])} snapshots, "
               f"{len(payload.get('odds') or [])} odds snapshots, "
+              f"{len(payload.get('ratings') or [])} ratings, "
               f"standings={'yes' if payload.get('standings') else 'no'}")
         return 0
 
