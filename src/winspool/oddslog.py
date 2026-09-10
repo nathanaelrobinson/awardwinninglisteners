@@ -55,5 +55,34 @@ def refresh_odds(store, sched_df, season: int, *, sources=None,
         store.add_odds(snapshot(name, season, week, odds, now=stamp))
         written[name] = len(odds)
 
+    if week > 1:
+        try:
+            thin_week(store, sched_df, season, week - 1)
+        except Exception:
+            pass                  # retention is housekeeping, never a failure path
+
     return {"season": int(season), "week": int(week), "written": written,
             "errors": errors}
+
+
+def thin_week(store, sched_df, season: int, week: int) -> int:
+    """Once a week is over, keep the opening read and each source's last read.
+
+    That closing read is what calibration scores against and is never thinned
+    away. A week still being played is left at full hourly resolution."""
+    from .live import split_schedule
+    _played, remaining = split_schedule(sched_df)
+    if len(remaining[remaining["week"] == week]):
+        return 0
+
+    rows = store.odds_for_week(season, week)
+    keep = set()
+    by_source: dict[str, list] = {}
+    for r in rows:
+        by_source.setdefault(r["source"], []).append(r)
+    for source_rows in by_source.values():
+        source_rows.sort(key=lambda r: r["fetched_at"])
+        keep.add(source_rows[0]["id"])
+        keep.add(source_rows[-1]["id"])
+
+    return store.delete_odds([r["id"] for r in rows if r["id"] not in keep])

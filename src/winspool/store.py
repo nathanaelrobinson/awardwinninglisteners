@@ -36,6 +36,7 @@ class Store(Protocol):
     def odds_for_week(self, season: int, week: int) -> list[dict]: ...
     def latest_odds(self, season: int, week: int) -> list[dict]: ...
     def all_odds(self) -> list[dict]: ...
+    def delete_odds(self, ids: list[str]) -> int: ...
 
 
 SNAPSHOT_CAP = 50
@@ -174,6 +175,12 @@ class InMemoryStore:
 
     def all_odds(self) -> list[dict]:
         return sorted(self._odds, key=lambda r: r["fetched_at"])
+
+    def delete_odds(self, ids: list[str]) -> int:
+        drop = set(ids)
+        before = len(self._odds)
+        self._odds = [r for r in self._odds if r["id"] not in drop]
+        return before - len(self._odds)
 
 
 class SqliteStore:
@@ -398,6 +405,14 @@ class SqliteStore:
         rows = self._db.execute(
             "SELECT doc FROM odds ORDER BY fetched_at, rowid").fetchall()
         return [json.loads(r[0]) for r in rows]
+
+    def delete_odds(self, ids: list[str]) -> int:
+        if not ids:
+            return 0
+        with self._lock:
+            marks = ",".join("?" * len(ids))
+            cur = self._db.execute(f"DELETE FROM odds WHERE id IN ({marks})", tuple(ids))
+            return cur.rowcount
 
     def close(self) -> None:
         self._db.close()

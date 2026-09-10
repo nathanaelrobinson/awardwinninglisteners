@@ -73,3 +73,61 @@ def test_every_refresh_appends_rather_than_replacing():
                      sources={"book": lambda s, w, p: _book()}, now=ts)
     rows = [r for r in store.odds_for_week(2026, 1) if r["source"] == "book"]
     assert len(rows) == 2
+
+
+FINISHED = pd.DataFrame([
+    {"week": 1, "game_type": "REG", "home_team": "KC", "away_team": "DEN",
+     "spread_line": 2.5, "total_line": 43.5, "home_score": 24, "away_score": 17,
+     "gameday": "2026-09-14", "gametime": "20:15"},
+])
+
+
+def _at(ts, spread):
+    return {"season": 2026, "week": 1, "source": "book", "fetched_at": ts,
+            "games": [{"home": "KC", "away": "DEN", "spread": spread, "total": 43.5,
+                       "ml_home": -148, "ml_away": 124, "yes_home": None,
+                       "yes_away": None, "p_home": None}]}
+
+
+def test_thinning_keeps_the_opening_and_the_last_read_before_kickoff():
+    from winspool.oddslog import thin_week
+    store = InMemoryStore({})
+    # kickoff is 2026-09-14T20:15 local; these are ordered, not absolute
+    for ts, spread in [(100.0, -1.5), (200.0, -2.0), (300.0, -2.5)]:
+        store.add_odds(_at(ts, spread))
+    removed = thin_week(store, FINISHED, 2026, 1)
+    kept = store.odds_for_week(2026, 1)
+    assert removed == 1
+    assert [r["fetched_at"] for r in kept] == [100.0, 300.0]
+
+
+def test_thinning_a_week_that_is_still_being_played_removes_nothing():
+    from winspool.oddslog import thin_week
+    store = InMemoryStore({})
+    store.add_odds(_at(100.0, -1.5))
+    store.add_odds(_at(200.0, -2.0))
+    unplayed = FINISHED.copy()
+    unplayed["home_score"] = [None]
+    unplayed["away_score"] = [None]
+    assert thin_week(store, unplayed, 2026, 1) == 0
+    assert len(store.odds_for_week(2026, 1)) == 2
+
+
+def test_thinning_is_idempotent():
+    from winspool.oddslog import thin_week
+    store = InMemoryStore({})
+    for ts, spread in [(100.0, -1.5), (200.0, -2.0), (300.0, -2.5)]:
+        store.add_odds(_at(ts, spread))
+    thin_week(store, FINISHED, 2026, 1)
+    assert thin_week(store, FINISHED, 2026, 1) == 0
+
+
+def test_thinning_keeps_every_source_separately():
+    from winspool.oddslog import thin_week
+    store = InMemoryStore({})
+    for ts in (100.0, 200.0, 300.0):
+        store.add_odds(_at(ts, -2.0))
+        store.add_odds({**_at(ts, -2.0), "source": "kalshi"})
+    thin_week(store, FINISHED, 2026, 1)
+    kept = store.odds_for_week(2026, 1)
+    assert sorted(r["source"] for r in kept) == ["book", "book", "kalshi", "kalshi"]
