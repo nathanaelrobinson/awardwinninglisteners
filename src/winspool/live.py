@@ -373,16 +373,29 @@ def compute_live(rosters: dict, sched_df: pd.DataFrame, *, totals_path, power_pa
 
 
 _LAST_SCHEDULE: pd.DataFrame | None = None
+_LAST_SCHEDULE_AT: float | None = None
+
+# Scores only move on winspool-scores.timer (every 15 min on game days), so a
+# 2-minute window is already tighter than anything downstream needs it to be
+# — while still collapsing five clients' 60s polling to at most one fetch
+# per window instead of one per request.
+_SCHEDULE_TTL_S = 120
 
 
 def _load_schedule_cached() -> pd.DataFrame:
-    """Live schedule from nfl_data_py; on failure, the last frame that worked.
+    """Live schedule from nfl_data_py, refetched at most once per
+    _SCHEDULE_TTL_S; on a failed refetch, the last frame that worked.
     Raises if there has never been a good fetch in this process."""
-    global _LAST_SCHEDULE
+    global _LAST_SCHEDULE, _LAST_SCHEDULE_AT
     from . import standings
+    now = time.time()
+    if (_LAST_SCHEDULE is not None and _LAST_SCHEDULE_AT is not None
+            and now - _LAST_SCHEDULE_AT < _SCHEDULE_TTL_S):
+        return _LAST_SCHEDULE
     try:
         df = standings._load_schedule()
         _LAST_SCHEDULE = df
+        _LAST_SCHEDULE_AT = now
         return df
     except Exception:
         if _LAST_SCHEDULE is None:

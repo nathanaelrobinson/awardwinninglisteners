@@ -322,3 +322,29 @@ def test_views_season_over_are_all_banked(inseason):
     for rows in doc["views"].values():
         for r in rows:
             assert r["exp_wins"] == r["banked"]
+
+
+@pytest.fixture
+def reset_schedule_cache(monkeypatch):
+    """Each test gets a clean cache: an unset fetch time forces a real fetch."""
+    monkeypatch.setattr(live, "_LAST_SCHEDULE", None)
+    monkeypatch.setattr(live, "_LAST_SCHEDULE_AT", None)
+
+
+def test_schedule_cache_hit_within_ttl_does_not_refetch(monkeypatch, inseason, reset_schedule_cache):
+    from winspool import standings
+    calls = []
+    monkeypatch.setattr(standings, "_load_schedule", lambda: calls.append(1) or inseason)
+    live._load_schedule_cached()
+    live._load_schedule_cached()
+    assert calls == [1]
+
+
+def test_schedule_cache_expired_ttl_refetches(monkeypatch, inseason, reset_schedule_cache):
+    from winspool import standings
+    calls = []
+    monkeypatch.setattr(standings, "_load_schedule", lambda: calls.append(1) or inseason)
+    live._load_schedule_cached()
+    monkeypatch.setattr(live, "_LAST_SCHEDULE_AT", live._LAST_SCHEDULE_AT - live._SCHEDULE_TTL_S - 1)
+    live._load_schedule_cached()
+    assert calls == [1, 1]
