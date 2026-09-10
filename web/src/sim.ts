@@ -40,39 +40,55 @@ export interface Rolled {
   winner: Uint8Array;
   /** index into model.sources */
   source: Uint8Array;
-  /** week each season became impossible, 255 while it never does */
-  elim: Uint8Array;
-  /** what actually happened, per player per week, over the locked weeks */
+  /** 1 once results have made this season impossible */
+  dead: Uint8Array;
+  /** how many of these seasons are still possible */
+  nAlive: number;
+  /** weeks that have at least one final; where the real line stops */
+  playedWeeks: number;
+  /** real player totals after each played week */
   realPath: number[][];
-  /** the stand-in reality's per-game outcomes */
-  realDetail: Uint8Array;
-  realitySim: number;
+  /** rolled over the whole season from zero, rather than from today */
+  preseason: boolean;
 }
 
 interface Shape {
   gh: Uint8Array; ga: Uint8Array; gw: Uint8Array;
   weekEnd: Int32Array; isEnd: Uint8Array;
   owner: Int8Array; banked0: Float64Array; pbanked0: Float64Array;
-  nT: number; nG: number; nP: number; nW: number;
+  nT: number; nG: number; nP: number; nW: number; weeksAll: number[];
 }
 
-function shapeOf(m: SimModel): Shape {
-  const nT = m.teams.length, nG = m.games.length, nP = m.players.length;
-  const nW = m.weeks.length;
+/** The games a cohort plays: everything from week 1 for a preseason roll,
+ *  only what is left for a live one. */
+export function scheduleOf(m: SimModel, preseason: boolean): [number, string, string][] {
+  if (!preseason) return m.games;
+  const all: [number, string, string][] = [
+    ...m.played.map(([w, h, a]) => [w, h, a] as [number, string, string]), ...m.games,
+  ];
+  return all.sort((x, y) => x[0] - y[0]);
+}
+
+function shapeOf(m: SimModel, preseason = false): Shape {
+  const games = scheduleOf(m, preseason);
+  const nT = m.teams.length, nG = games.length, nP = m.players.length;
+  const weeksAll = [...new Set(games.map((g) => g[0]))].sort((a, b) => a - b);
+  const nW = weeksAll.length;
   const ti = new Map(m.teams.map((c, i) => [c, i]));
   const gh = new Uint8Array(nG), ga = new Uint8Array(nG), gw = new Uint8Array(nG);
-  m.games.forEach((g, i) => { gw[i] = g[0]; gh[i] = ti.get(g[1])!; ga[i] = ti.get(g[2])!; });
-  const wkIdx = new Map(m.weeks.map((w, i) => [w, i]));
+  games.forEach((g, i) => { gw[i] = g[0]; gh[i] = ti.get(g[1])!; ga[i] = ti.get(g[2])!; });
+  const wkIdx = new Map(weeksAll.map((w, i) => [w, i]));
   const weekEnd = new Int32Array(nW);
   for (let i = 0; i < nG; i++) weekEnd[wkIdx.get(gw[i])!] = i;
   const isEnd = new Uint8Array(nG);
   for (let k = 0; k < nW; k++) isEnd[weekEnd[k]] = 1;
   const owner = new Int8Array(nT).fill(-1);
   m.players.forEach((p, pi) => m.rosters[p].forEach((c) => { owner[ti.get(c)!] = pi; }));
-  const banked0 = Float64Array.from(m.banked);
+  // a preseason cohort starts from nothing; a live one starts from what is banked
+  const banked0 = preseason ? new Float64Array(nT) : Float64Array.from(m.banked);
   const pbanked0 = new Float64Array(nP);
   for (let t = 0; t < nT; t++) if (owner[t] >= 0) pbanked0[owner[t]] += banked0[t];
-  return { gh, ga, gw, weekEnd, isEnd, owner, banked0, pbanked0, nT, nG, nP, nW };
+  return { gh, ga, gw, weekEnd, isEnd, owner, banked0, pbanked0, nT, nG, nP, nW, weeksAll };
 }
 
 /** mulberry32 plus Box-Muller, as plain locals so the hot loop stays monomorphic */
@@ -102,8 +118,9 @@ function streamFor(seed: number, s: number) {
  * the loop in `rollAll`, which is why both draw in the same order: source,
  * then one nudge per team, then one flip per game.
  */
-export function rollSeason(m: SimModel, seed: number, s: number, detail: Uint8Array): number {
-  const sh = shapeOf(m);
+export function rollSeason(m: SimModel, seed: number, s: number, detail: Uint8Array,
+                           preseason = false): number {
+  const sh = shapeOf(m, preseason);
   const { rand, gauss } = streamFor(seed, s);
   const u0 = rand();
   let src = m.weights.length - 1, cum = 0;
@@ -118,8 +135,14 @@ export function rollSeason(m: SimModel, seed: number, s: number, detail: Uint8Ar
   return src;
 }
 
-export function rollAll(m: SimModel, nSims: number, seed: number, realitySim = 0): Rolled {
-  const sh = shapeOf(m);
+/**
+ * `preseason` replays the whole season from zero, including games that have
+ * since been decided, so the cohort is what we believed in August and results
+ * can rule members of it out. Otherwise every season starts from today's banked
+ * wins, which is what a live projection shows and which can never be wrong.
+ */
+export function rollAll(m: SimModel, nSims: number, seed: number, preseason = false): Rolled {
+  const sh = shapeOf(m, preseason);
   const { gh, ga, isEnd, owner, banked0, pbanked0, nT, nG, nP, nW } = sh;
 
   const paths = m.players.map(() => new Int16Array(nSims * nW));
@@ -176,56 +199,67 @@ export function rollAll(m: SimModel, nSims: number, seed: number, realitySim = 0
     winner[s] = tie ? 0 : bi + 1;
   }
 
-  const { elim, realPath, realDetail } = eliminate(m, sh, finals, nSims, seed, realitySim);
-  return { nSims, nWeeks: nW, nPlayers: nP, nTeams: nT, weeks: m.weeks,
-           paths, winner, source, elim, realPath, realDetail, realitySim };
+  const { dead, nAlive, realPath, playedWeeks } = eliminate(m, sh, finals, nSims, preseason);
+  return { nSims, nWeeks: nW, nPlayers: nP, nTeams: nT, weeks: sh.weeksAll,
+           paths, winner, source, dead, nAlive, playedWeeks, realPath, preseason };
 }
 
 /**
- * A season is a whole-season prediction of where every player lands. Once a week
- * has actually been played, a prediction is dead if a player has already banked
- * more wins than it allowed them, or can no longer reach the number it gave
- * them. The pool only reads player totals, so that is where the test belongs —
- * testing all 32 teams instead kills 99.8% of seasons by week 8, which is
- * technically true and useless.
+ * A season rolled from zero is a whole-season prediction of where every player
+ * lands. Results rule it out once a player has already banked more wins than it
+ * allowed them, or can no longer reach the number it gave them.
+ *
+ * The pool only reads player totals, so that is where the test belongs. Testing
+ * all 32 teams instead kills 99.8% of seasons by week 8 — true, and useless.
+ *
+ * A cohort rolled from today's banked wins is consistent with results by
+ * construction, so nothing is ever ruled out there.
  */
 function eliminate(m: SimModel, sh: Shape, finals: Int16Array, nSims: number,
-                   seed: number, realitySim: number) {
-  const { gh, ga, weekEnd, owner, pbanked0, nP, nW, nG } = sh;
-  const realDetail = new Uint8Array(nG);
-  rollSeason(m, seed, realitySim, realDetail);
+                   preseason: boolean) {
+  const { owner, nP, nT } = sh;
+  const ti = new Map(m.teams.map((c, i) => [c, i]));
 
-  const banked = new Int16Array(nW * nP), pt = new Float64Array(nP);
-  pt.set(pbanked0);
-  let w = 0;
-  for (let g = 0; g < nG; g++) {
-    const wt = realDetail[g] ? gh[g] : ga[g];
-    const o = owner[wt];
-    if (o >= 0) pt[o]++;
-    if (g === weekEnd[w]) { for (let p = 0; p < nP; p++) banked[w * nP + p] = pt[p]; w++; }
+  // what the players have actually banked, and how much is still to come
+  const realP = new Float64Array(nP);
+  for (let t = 0; t < nT; t++) if (owner[t] >= 0) realP[owner[t]] += m.banked[t];
+  const remP = new Int32Array(nP);
+  for (const [, home, away] of m.games) {
+    const oh = owner[ti.get(home)!], oa = owner[ti.get(away)!];
+    if (oh >= 0) remP[oh]++;
+    if (oa >= 0) remP[oa]++;
   }
-  const remAfter = new Int16Array(nW * nP);
-  for (let k = 0; k < nW; k++)
-    for (let g = weekEnd[k] + 1; g < nG; g++) {
-      const oh = owner[gh[g]], oa = owner[ga[g]];
-      if (oh >= 0) remAfter[k * nP + oh]++;
-      if (oa >= 0) remAfter[k * nP + oa]++;
-    }
-  const elim = new Uint8Array(nSims).fill(255);
-  for (let s = 0; s < nSims; s++) {
-    if (s === realitySim) continue;
-    for (let k = 0; k < nW; k++) {
-      let dead = false;
-      for (let p = 0; p < nP; p++) {
-        const pred = finals[s * nP + p], b = banked[k * nP + p];
-        if (pred < b || pred > b + remAfter[k * nP + p]) { dead = true; break; }
+
+  // real player totals after each week that has a final, for the "what happened" line
+  const weeksWithFinals = [...new Set(m.played.map((g) => g[0]))].sort((a, b) => a - b);
+  const running = new Float64Array(nP);
+  const realPath: number[][] = m.players.map(() => []);
+  for (const wk of weeksWithFinals) {
+    for (const [w, home, away, hw] of m.played) {
+      if (w !== wk) continue;
+      if (hw === -1) {
+        const oh = owner[ti.get(home)!], oa = owner[ti.get(away)!];
+        if (oh >= 0) running[oh] += 0.5;
+        if (oa >= 0) running[oa] += 0.5;
+      } else {
+        const o = owner[ti.get(hw === 1 ? home : away)!];
+        if (o >= 0) running[o]++;
       }
-      if (dead) { elim[s] = k + 1; break; }
+    }
+    for (let p = 0; p < nP; p++) realPath[p].push(running[p]);
+  }
+
+  const dead = new Uint8Array(nSims);
+  let nAlive = nSims;
+  if (preseason && m.played.length) {
+    for (let s = 0; s < nSims; s++) {
+      for (let p = 0; p < nP; p++) {
+        const pred = finals[s * nP + p];
+        if (pred < realP[p] || pred > realP[p] + remP[p]) { dead[s] = 1; nAlive--; break; }
+      }
     }
   }
-  const realPath = m.players.map((_, p) =>
-    Array.from({ length: nW }, (_, k) => banked[k * nP + p]));
-  return { elim, realPath, realDetail };
+  return { dead, nAlive, realPath, playedWeeks: weeksWithFinals.length };
 }
 
 /**
@@ -234,7 +268,7 @@ function eliminate(m: SimModel, sh: Shape, finals: Int16Array, nSims: number,
  * line are the same rolls the season already made.
  */
 export function resimulate(r: Rolled, lockedWeeks: number) {
-  if (lockedWeeks <= 0) return { paths: r.paths, winner: r.winner };
+  if (lockedWeeks <= 0 || !r.realPath[0]?.length) return { paths: r.paths, winner: r.winner };
   const { nSims, nWeeks: nW, nPlayers: nP } = r, k = lockedWeeks;
   const paths = r.paths.map(() => new Int16Array(nSims * nW));
   const winner = new Uint8Array(nSims);

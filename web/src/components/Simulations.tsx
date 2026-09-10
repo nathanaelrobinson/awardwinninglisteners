@@ -5,7 +5,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getSimModel } from '../league';
 import type { Rolled, SimModel } from '../sim';
-import { resimulate, rollAll, rollSeason, sourceLabel } from '../sim';
+import { rollAll, rollSeason, scheduleOf, sourceLabel } from '../sim';
 
 type View = 'all' | 'margin';
 type Mode = 'possible' | 'resim';
@@ -31,8 +31,6 @@ export default function Simulations({ myName }: { myName: string }) {
   const [mode, setMode] = useState<Mode>('resim');
   const [nSims, setNSims] = useState(100000);
   const [seed, setSeed] = useState(12345);
-  const [realitySim, setRealitySim] = useState(0);
-  const [locked, setLocked] = useState(0);
   const [meIdx, setMeIdx] = useState(0);
   const [picked, setPicked] = useState<number | null>(null);
   const [hover, setHover] = useState<number | null>(null);
@@ -49,31 +47,35 @@ export default function Simulations({ myName }: { myName: string }) {
     return () => { alive = false; };
   }, [myName]);
 
-  // Rolling 100k seasons blocks for a few hundred ms; paint the busy state first.
+  // Two cohorts, rolled lazily and kept. "Resimulate" starts every season from
+  // today's banked wins; "Still possible" replays the whole season from zero so
+  // results have something to rule out. Rolling blocks for a moment, so paint
+  // the busy state before starting.
+  const cohorts = useRef(new Map<string, Rolled>());
   useEffect(() => {
     if (!model) return;
+    const key = `${mode}|${nSims}|${seed}`;
+    const hit = cohorts.current.get(key);
+    if (hit) { setRolled(hit); return; }
     setBusy(true);
     const id = window.setTimeout(() => {
-      setRolled(rollAll(model, nSims, seed, realitySim));
+      const r = rollAll(model, nSims, seed, mode === 'possible');
+      cohorts.current.set(key, r);
+      setRolled(r);
       cloudCache.current.clear();
       setPicked(null); setHover(null); setBusy(false);
     }, 16);
     return () => window.clearTimeout(id);
-  }, [model, nSims, seed, realitySim]);
+  }, [model, nSims, seed, mode]);
+  useEffect(() => { cohorts.current.clear(); }, [model]);
 
-  // How many weeks of results are real. Before any game is played the slider
-  // stands a simulated season in for reality so the mechanic is visible.
-  const playedWeeks = useMemo(() => {
-    if (!model) return 0;
-    return model.weeks.filter((w) => w < model.week).length;
-  }, [model]);
-  useEffect(() => { setLocked(playedWeeks); }, [playedWeeks]);
+  const locked = rolled?.playedWeeks ?? 0;
 
+  // Resimulate already starts from banked wins, so its lines need no re-anchoring.
   const act = useMemo(() => {
     if (!rolled) return null;
-    return mode === 'resim' ? resimulate(rolled, locked)
-                            : { paths: rolled.paths, winner: rolled.winner };
-  }, [rolled, mode, locked]);
+    return { paths: rolled.paths, winner: rolled.winner };
+  }, [rolled]);
 
   const margins = useMemo(() => {
     if (!rolled || !act || view !== 'margin') return null;
@@ -89,12 +91,11 @@ export default function Simulations({ myName }: { myName: string }) {
     return out;
   }, [rolled, act, view, meIdx]);
 
-  const aliveAt = useCallback((s: number) =>
-    mode === 'resim' || !rolled || rolled.elim[s] > locked, [mode, rolled, locked]);
+  const aliveAt = useCallback((s: number) => !rolled || !rolled.dead[s], [rolled]);
+  // a ruled-out season stops at the boundary between results and everything after
   const liveEnd = useCallback((s: number) => {
     if (!rolled) return 0;
-    return (rolled.elim[s] === 255 || rolled.elim[s] > locked)
-      ? rolled.nWeeks : Math.min(rolled.nWeeks, rolled.elim[s]);
+    return rolled.dead[s] ? Math.max(2, Math.min(rolled.nWeeks, locked)) : rolled.nWeeks;
   }, [rolled, locked]);
 
   // 100k lines need an alpha so low each is invisible, so paint a sample of
@@ -128,7 +129,7 @@ export default function Simulations({ myName }: { myName: string }) {
     const X = (i: number) => PAD.l + (w - PAD.l - PAD.r) * (nW === 1 ? 0.5 : i / (nW - 1));
     const Y = (v: number) => PAD.t + (h - PAD.t - PAD.b) * (1 - (v - lo) / (hi - lo || 1));
 
-    const key = `${pi}|${view}|${mode}|${w}|${h}|${locked}|${realitySim}|${seed}|${nSims}`;
+    const key = `${pi}|${view}|${mode}|${w}|${h}|${locked}|${seed}|${nSims}`;
     let off = cloudCache.current.get(key);
     if (!off) {
       cloudCache.current.clear();
@@ -197,7 +198,7 @@ export default function Simulations({ myName }: { myName: string }) {
     c.fillText(`W${rolled.weeks[0]}`, X(0), h - PAD.b + 5);
     c.fillText(`W${rolled.weeks[nW - 1]}`, X(nW - 1), h - PAD.b + 5);
     return { X, Y, lo, hi };
-  }, [rolled, act, sample, seriesFor, liveEnd, aliveAt, view, mode, locked, realitySim, seed, nSims, picked, hover]);
+  }, [rolled, act, sample, seriesFor, liveEnd, aliveAt, view, mode, locked, seed, nSims, picked, hover]);
 
   const panelsRef = useRef<(HTMLCanvasElement | null)[]>([]);
   const soloRef = useRef<HTMLCanvasElement>(null);
@@ -256,7 +257,7 @@ export default function Simulations({ myName }: { myName: string }) {
       .sort((a, b) => b[1] - a[1]);
     tip.innerHTML =
       `<strong>Simulation #${found + 1}</strong> · ${sourceLabel(model!.sources[rolled.source[found]])}` +
-      (aliveAt(found) ? '' : ` · <span style="color:${DEAD}">out in week ${rolled.elim[found]}</span>`) +
+      (aliveAt(found) ? '' : ` · <span style="color:${DEAD}">no longer possible</span>`) +
       '<br>' + fin.map(([p, v], i) => `${i === 0 ? '🏆 ' : ''}${p} — ${v}`).join('<br>');
     tip.style.opacity = '1';
     tip.style.left = `${Math.min(e.clientX - r.left + 14, wrap.clientWidth - 220)}px`;
@@ -266,7 +267,6 @@ export default function Simulations({ myName }: { myName: string }) {
   if (error) return <div className="panel sim-empty">{error}</div>;
   if (!model) return <div className="panel sim-empty">Loading…</div>;
 
-  const nAlive = rolled ? (() => { let n = 0; for (let s = 0; s < rolled.nSims; s++) if (aliveAt(s)) n++; return n; })() : 0;
   const pct = (pi: number) => {
     if (!rolled || !act) return '—';
     let n = 0, c = 0;
@@ -293,36 +293,22 @@ export default function Simulations({ myName }: { myName: string }) {
         <select value={nSims} onChange={(e) => setNSims(+e.target.value)}>
           {COUNTS.map((n) => <option key={n} value={n}>{n.toLocaleString()} sims</option>)}
         </select>
-        <div className="sim-scrub">
-          <label htmlFor="sim-wk">Weeks in</label>
-          <input id="sim-wk" type="range" min={playedWeeks} max={model.weeks.length}
-                 value={locked} onChange={(e) => setLocked(+e.target.value)} />
-          <span className="sim-alive">
-            {mode === 'resim' || locked === 0
-              ? <><b>{nSims.toLocaleString()}</b> futures</>
-              : <><b>{nAlive.toLocaleString()}</b> of {nSims.toLocaleString()} possible</>}
-          </span>
-        </div>
+        <span className="sim-alive">
+          {mode === 'possible' && rolled && rolled.nAlive < nSims
+            ? <><b>{rolled.nAlive.toLocaleString()}</b> of {nSims.toLocaleString()} still possible</>
+            : <><b>{nSims.toLocaleString()}</b> futures</>}
+        </span>
         <button className="btn" onClick={() => setSeed(Math.floor(Math.random() * 1e9))}>
           Reroll
         </button>
-        {locked > playedWeeks && (
-          <button className="btn" onClick={() => setRealitySim(Math.floor(Math.random() * nSims))}>
-            New results
-          </button>
-        )}
       </div>
 
       {model.played.length > 0 && (
         <p className="sim-note">
-          {model.played.length} game{model.played.length === 1 ? ' is' : 's are'} final and banked into
-          every one of these {nSims.toLocaleString()} seasons.
-        </p>
-      )}
-      {locked > playedWeeks && (
-        <p className="sim-note">
-          Only {playedWeeks === 0 ? 'no weeks have' : `${playedWeeks} week${playedWeeks === 1 ? ' has' : 's have'}`} actually
-          been played. Weeks past that use simulation #{realitySim + 1} as stand-in results.
+          {model.played.length} game{model.played.length === 1 ? ' is' : 's are'} final.{' '}
+          {mode === 'resim'
+            ? `Every one of these ${nSims.toLocaleString()} seasons starts from those results.`
+            : `These ${nSims.toLocaleString()} seasons were rolled before any of them, so results can rule them out.`}
         </p>
       )}
 
@@ -331,8 +317,8 @@ export default function Simulations({ myName }: { myName: string }) {
           <span><i style={{ background: WIN }} />
             {view === 'margin' ? `${model.players[meIdx].split(' ')[0]} wins` : 'this player wins'}</span>
           <span><i style={{ background: CLOUD }} />someone else wins</span>
-          {mode === 'possible' && locked > 0 &&
-            <span><i style={{ background: DEAD }} />ruled out — {(nSims - nAlive).toLocaleString()}</span>}
+          {mode === 'possible' && rolled && rolled.nAlive < nSims &&
+            <span><i style={{ background: DEAD }} />ruled out — {(nSims - rolled.nAlive).toLocaleString()}</span>}
           {locked > 0 && view !== 'margin' && <span><i style={{ background: INK }} />what happened</span>}
           <span className="sim-hint">
             {busy ? 'rolling…' : 'hover a line to read it, click to open it'}
@@ -359,68 +345,79 @@ export default function Simulations({ myName }: { myName: string }) {
 
       {picked != null && rolled && act
         ? <SeasonDetail model={model} rolled={rolled} sim={picked} seed={seed}
-                        locked={locked} mode={mode} alive={aliveAt(picked)} />
+                        alive={aliveAt(picked)} />
         : <div className="panel sim-empty">Click any line to open that simulation.</div>}
     </div>
   );
 }
 
-function SeasonDetail({ model, rolled, sim, seed, locked, mode, alive }: {
-  model: SimModel; rolled: Rolled;
-  sim: number; seed: number; locked: number; mode: Mode; alive: boolean;
+function SeasonDetail({ model, rolled, sim, seed, alive }: {
+  model: SimModel; rolled: Rolled; sim: number; seed: number; alive: boolean;
 }) {
   const [lit, setLit] = useState<string | null>(null);
   const d = useMemo(() => {
-    const detail = new Uint8Array(model.games.length);
-    const src = model.sources[rollSeason(model, seed, sim, detail)];
+    const pre = rolled.preseason;
+    const sched = scheduleOf(model, pre);
+    const detail = new Uint8Array(sched.length);
+    const src = model.sources[rollSeason(model, seed, sim, detail, pre)];
     const ti = new Map(model.teams.map((c, i) => [c, i]));
     const str = model.strength[model.sources.indexOf(src)];
-    const lockedThrough = locked > 0 ? model.weeks[locked - 1] : -1;
-    const tw = Float64Array.from(model.banked);
-    const byWeek = new Map<number, { locked: boolean; games: { w: string; l: string; upset: boolean; conflict: boolean; final?: boolean; tie?: boolean; h: string; a: string }[] }>();
-    let upsets = 0, conflicts = 0;
-    // Games with a real score are already in `banked`; show them as settled.
-    for (const [wk, home, away, hw] of model.played) {
-      if (!byWeek.has(wk)) byWeek.set(wk, { locked: false, games: [] });
-      byWeek.get(wk)!.games.push({
-        w: hw === 0 ? away : home, l: hw === 0 ? home : away,
-        upset: false, conflict: false, final: true, tie: hw === -1, h: home, a: away,
-      });
+
+    // real results, so a preseason season can be checked against them
+    const real = new Map(model.played.map(([w, h, a, hw]) => [`${w}|${h}|${a}`, hw]));
+
+    type G = { w: string; l: string; upset: boolean; conflict: boolean; final?: boolean; tie?: boolean; h: string; a: string };
+    const byWeek = new Map<number, G[]>();
+    const push = (wk: number, g: G) => {
+      if (!byWeek.has(wk)) byWeek.set(wk, []);
+      byWeek.get(wk)!.push(g);
+    };
+
+    // a live cohort never plays the finals, so list them from the real results
+    if (!pre) {
+      for (const [wk, home, away, hw] of model.played) {
+        push(wk, { w: hw === 0 ? away : home, l: hw === 0 ? home : away,
+                   upset: false, conflict: false, final: true, tie: hw === -1, h: home, a: away });
+      }
     }
-    model.games.forEach((g, i) => {
-      const wk = g[0], h = ti.get(g[1])!, a = ti.get(g[2])!;
-      const isLocked = wk <= lockedThrough;
-      const hw = (mode === 'resim' && isLocked) ? rolled.realDetail[i] : detail[i];
+
+    const tw = pre ? new Float64Array(model.teams.length) : Float64Array.from(model.banked);
+    let upsets = 0, conflicts = 0;
+    sched.forEach(([wk, home, away], i) => {
+      const h = ti.get(home)!, a = ti.get(away)!;
+      const hw = detail[i];
       tw[hw ? h : a]++;
       const upset = (str[h] - str[a] + model.hfa) * (hw ? 1 : -1) < 0;
-      const conflict = isLocked && mode !== 'resim' && detail[i] !== rolled.realDetail[i];
+      const realHW = real.get(`${wk}|${home}|${away}`);
+      const conflict = realHW !== undefined && realHW !== -1 && realHW !== hw;
       if (upset) upsets++;
       if (conflict) conflicts++;
-      if (!byWeek.has(wk)) byWeek.set(wk, { locked: isLocked, games: [] });
-      const bucket = byWeek.get(wk)!;
-      if (isLocked) bucket.locked = true;
-      bucket.games.push({
-        w: hw ? g[1] : g[2], l: hw ? g[2] : g[1], upset, conflict, h: g[1], a: g[2],
-      });
+      push(wk, { w: hw ? home : away, l: hw ? away : home, upset, conflict,
+                 final: realHW !== undefined && !conflict, h: home, a: away });
     });
+
     const owners = model.players.map((p) => {
       const codes = model.rosters[p].map((c) => ({ c, n: tw[ti.get(c)!] }))
         .sort((x, y) => y.n - x.n);
       return { p, codes, total: codes.reduce((t, x) => t + x.n, 0) };
     }).sort((a, b) => b.total - a.total);
-    return { src, byWeek: [...byWeek].sort((a, b) => a[0] - b[0]), owners, upsets, conflicts,
-             finals: model.played.length };
-  }, [model, rolled, sim, seed, locked, mode]);
+
+    const weeks = [...byWeek].sort((a, b) => a[0] - b[0]);
+    return { src, weeks, owners, upsets, conflicts, finals: model.played.length, pre };
+  }, [model, rolled, sim, seed]);
 
   const best = d.owners[0].total;
   return (
     <div className="panel sim-detail">
       <h2>Simulation #{sim + 1} using {sourceLabel(d.src)} rankings</h2>
       <p className="sim-meta">
-        {d.finals > 0 && <><b>{d.finals} already final</b>, banked into every simulation. </>}
-        {d.upsets} {d.finals > 0 ? 'of the rest were' : 'games were'} upsets.{' '}
-        {alive ? 'This outcome is still possible.'
-          : `Ruled out in week ${rolled.elim[sim]}${d.conflicts ? `, ${d.conflicts} played result${d.conflicts === 1 ? '' : 's'} went the other way.` : '.'}`}
+        {d.pre
+          ? <>Rolled from week 1, before anything was played. </>
+          : d.finals > 0 && <><b>{d.finals} already final</b>, banked in. </>}
+        {d.upsets} {d.pre || d.finals === 0 ? 'games were' : 'of the rest were'} upsets.{' '}
+        {alive
+          ? 'This outcome is still possible.'
+          : `No longer possible${d.conflicts ? `: ${d.conflicts} game${d.conflicts === 1 ? '' : 's'} went the other way.` : '.'}`}
       </p>
       <div className="sim-owners">
         {d.owners.map((o) => (
@@ -438,12 +435,12 @@ function SeasonDetail({ model, rolled, sim, seed, locked, mode, alive }: {
         ))}
       </div>
       <div className={`sim-weeks${lit ? ' dim' : ''}`}>
-        {d.byWeek.map(([wk, o]) => (
+        {d.weeks.map(([wk, games]) => (
           <div key={wk} className="sim-wk">
-            <div className="sim-wk-lab">Wk {wk}{o.locked && <span> played</span>}</div>
-            {o.games.map((g, i) => (
+            <div className="sim-wk-lab">Wk {wk}</div>
+            {games.map((g, i) => (
               <div key={i}
-                   className={`sim-g${g.final ? ' final' : g.conflict ? ' conflict' : o.locked ? ' locked' : ''}${lit && (g.h === lit || g.a === lit) ? ' hit' : ''}`}>
+                   className={`sim-g${g.conflict ? ' conflict' : g.final ? ' final' : ''}${lit && (g.h === lit || g.a === lit) ? ' hit' : ''}`}>
                 <span className={g.upset ? 'w up' : 'w'}>{g.tie ? '—' : g.w}</span>
                 <span className="l">{g.tie ? `${g.h}/${g.a}` : g.l}</span>
               </div>
