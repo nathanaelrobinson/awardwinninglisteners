@@ -50,8 +50,10 @@ def test_events_to_distributions_from_fixture():
     dists = events_to_distributions(events)
     assert set(dists) == {"BUF", "ARI"}
     for code, pmf in dists.items():
-        assert pmf.shape == (18,)
-        assert pytest.approx(pmf.sum(), abs=1e-6) == 1.0
+        # plain floats, not an ndarray: this dict is stored as a rating doc
+        assert isinstance(pmf, list) and all(type(x) is float for x in pmf)
+        assert len(pmf) == 18
+        assert pytest.approx(sum(pmf), abs=1e-6) == 1.0
     # sanity: BUF (a good team) has a higher implied mean than ARI (a weak team)
     assert pmf_mean(dists["BUF"]) > pmf_mean(dists["ARI"])
 
@@ -86,7 +88,7 @@ def test_events_to_distributions_omits_thin_ladder():
     assert "ARI" not in dists
     assert "BUF" not in dists
     assert "KC" in dists
-    assert pytest.approx(dists["KC"].sum(), abs=1e-9) == 1.0
+    assert pytest.approx(sum(dists["KC"]), abs=1e-9) == 1.0
 
 
 def test_ladder_to_pmf_skips_market_missing_floor_strike():
