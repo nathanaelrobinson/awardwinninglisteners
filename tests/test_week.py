@@ -144,3 +144,19 @@ def test_history_is_one_market_prob_per_cycle_and_skips_unpriced_ones():
     assert [fetched_at for fetched_at, _ in kc["history"]] == [1.0, 2.0]
     assert kc["history"][-1][1] == pytest.approx(kc["p_book"], abs=1e-4)
     assert len(la["history"]) == 1
+
+
+def test_a_kickoff_carries_the_eastern_offset_for_its_own_date():
+    """nflverse quotes kickoffs in US/Eastern with no offset, and a browser
+    reads an offset-less date-time as local time — every kickoff would render
+    three hours early on the west coast. The season crosses the DST boundary,
+    so September is -04:00 and December is -05:00."""
+    sept = build_week(LIVE, ROSTERS, SCHED, 1, [])
+    assert {g["kickoff"] for g in sept["games"]} == {
+        "2026-09-14T20:15:00-04:00", "2026-09-14T16:25:00-04:00",
+        "2026-09-11T20:15:00-04:00"}
+
+    december = SCHED.assign(gameday="2026-12-06")
+    dec = build_week(LIVE, ROSTERS, december, 1, [])
+    assert {g["kickoff"] for g in dec["games"]} == {
+        "2026-12-06T20:15:00-05:00", "2026-12-06T16:25:00-05:00"}

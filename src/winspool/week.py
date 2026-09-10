@@ -4,6 +4,9 @@ Assembles the tab's payload from three things that already exist — the live
 doc's per-game swings, the odds log, and the schedule frame. Nothing here
 simulates anything; the season projection has already paid that cost.
 """
+from datetime import datetime
+from zoneinfo import ZoneInfo
+
 from .gameodds import GameOdds, market_prob, to_prob
 from .live import split_schedule
 from .teams import resolve
@@ -25,12 +28,28 @@ def poisson_binomial(ps) -> list[float]:
     return dist
 
 
+EASTERN = ZoneInfo("America/New_York")
+
+
 def _kickoff(row) -> str | None:
+    """An ISO kickoff carrying its offset.
+
+    nflverse quotes `gameday`/`gametime` in US/Eastern with no offset, and a
+    browser reads an offset-less date-time as *local* time — a 10am Pacific
+    kickoff would render as 1pm for everyone west of the seaboard. The season
+    crosses the DST boundary in November, so the offset is resolved per game
+    date rather than hardcoded."""
     day = getattr(row, "gameday", None)
     clock = getattr(row, "gametime", None)
     if not day:
         return None
-    return f"{day}T{clock}" if clock else str(day)
+    if not clock:
+        return str(day)
+    try:
+        stamp = datetime.fromisoformat(f"{day}T{clock}").replace(tzinfo=EASTERN)
+    except ValueError:
+        return f"{day}T{clock}"
+    return stamp.isoformat()
 
 
 def _odds_by_game(odds_rows) -> dict:
