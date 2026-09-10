@@ -352,6 +352,14 @@ def refresh_live(store, cache_dir, *, n_seasons=5000) -> dict:
         ratings_fetched_at=ratings_fetched_at(cache_dir),
         n_seasons=n_seasons)
     store.put_live(doc)
+    # The Simulations tab needs the ensemble itself, not this summary of it.
+    # Build it here off the schedule we already have: on its own it would refetch
+    # the season from nfl_data_py, which costs ~2s a request.
+    from . import simmodel as _simmodel
+    try:
+        _simmodel.refresh_model(store, cache_dir, sched_df=df)
+    except Exception:
+        pass                      # a stale model beats failing the live refresh
     if not any(w["week"] == doc["week"] for w in store.list_weeks()):
         store.put_week(doc["week"], doc)
     return doc
