@@ -30,10 +30,9 @@ def verify(token: str | None) -> str | None:
 
 def _secure_cookie() -> bool:
     """Mark the cookie HTTPS-only whenever the browser actually sees HTTPS:
-    Cloud Run (K_SERVICE), or behind the Cloudflare tunnel on the Pi
-    (WINSPOOL_BEHIND_PROXY=1). Plain http://localhost dev stays non-secure."""
-    return (os.environ.get("K_SERVICE") is not None
-            or os.environ.get("WINSPOOL_BEHIND_PROXY") == "1")
+    behind the Cloudflare tunnel on the Pi (WINSPOOL_BEHIND_PROXY=1). Plain
+    http://localhost dev stays non-secure."""
+    return os.environ.get("WINSPOOL_BEHIND_PROXY") == "1"
 
 
 def set_cookie(resp: Response, name: str) -> None:
@@ -54,8 +53,6 @@ def viewer(request: Request) -> str | None:
     Returns the player name, or None for an anonymous viewer."""
     import sqlite3
 
-    from google.api_core import exceptions as gexc
-
     from .store import get_store
     name = verify(request.cookies.get(COOKIE))
     if name is not None:
@@ -64,7 +61,7 @@ def viewer(request: Request) -> str | None:
         doc = get_store().get()
     except LookupError:
         raise HTTPException(503, "league not initialized")
-    except (gexc.GoogleAPICallError, gexc.RetryError, sqlite3.OperationalError):
+    except sqlite3.OperationalError:
         raise HTTPException(503, "busy")
     if doc["status"] != "done":
         raise HTTPException(401, "login required")
@@ -74,15 +71,13 @@ def viewer(request: Request) -> str | None:
 def require_commissioner(request: Request) -> str:
     import sqlite3
 
-    from google.api_core import exceptions as gexc
-
     from .store import get_store
     name = current_user(request)
     try:
         doc = get_store().get()
     except LookupError:
         raise HTTPException(503, "league not initialized")
-    except (gexc.GoogleAPICallError, gexc.RetryError, sqlite3.OperationalError):
+    except sqlite3.OperationalError:
         raise HTTPException(503, "busy")
     if name != doc["commissioner"]:
         raise HTTPException(403, "commissioner only")

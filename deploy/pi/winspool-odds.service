@@ -1,0 +1,12 @@
+[Unit]
+Description=Snapshot the game odds for the current week
+After=winspool.service
+Requires=winspool.service
+
+[Service]
+Type=oneshot
+TimeoutStartSec=300
+EnvironmentFile=/etc/winspool/env
+ExecStart=/usr/bin/curl -fsS --max-time 120 \
+    -X POST -H "X-Refresh-Token: ${REFRESH_TOKEN}" \
+    http://127.0.0.1:8080/internal/refresh-odds

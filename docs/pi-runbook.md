@@ -14,7 +14,7 @@ deploy, and the cutover checklist.
 | Database | `/var/lib/winspool/league.db` (SQLite, WAL) |
 | Backups | `/var/backups/winspool/league-YYYY-MM-DD.db` (nightly, 30 kept) |
 | Secrets | `/etc/winspool/env` (mode 600, owned by root) |
-| Units | `/etc/systemd/system/winspool*.{service,timer}` (source in `deploy/pi/`) |
+| Units | `/etc/systemd/system/winspool*.{service,timer}` (source in `deploy/pi/`) — `scripts/pi-deploy.sh` installs and enables every `*.timer` there on every deploy, so adding a unit needs no re-run of setup |
 
 The service runs as the `winspool` user but reads code from nate's home
 checkout. That needs `winspool` in the `nate` group, `/home/nate` at mode 750,
@@ -31,7 +31,7 @@ WINSPOOL_DB=/var/lib/winspool/league.db
 WINSPOOL_DATA_DIR=/home/nate/awardwinninglisteners/data/cache
 WINSPOOL_WEB_DIST=/home/nate/awardwinninglisteners/web/dist
 WINSPOOL_BEHIND_PROXY=1     # marks the session cookie Secure behind the tunnel
-SESSION_SECRET=...          # MUST equal the Cloud Run value, or everyone is logged out
+SESSION_SECRET=...          # changing it invalidates every session cookie
 REFRESH_TOKEN=...           # only the scores timer uses it
 ```
 
@@ -46,9 +46,10 @@ sudo usermod -aG nate winspool && chmod 750 /home/nate   # let the service read 
 sudoedit /etc/winspool/env          # fill in SESSION_SECRET and REFRESH_TOKEN
 /home/nate/awardwinninglisteners/scripts/pi-deploy.sh
 sudo systemctl enable --now winspool
-sudo systemctl start winspool-scores-gameday.timer winspool-scores-offday.timer
-sudo systemctl start winspool-backup.timer
 ```
+
+`pi-deploy.sh` installs and enables every timer in `deploy/pi/` (see below), so
+no manual `systemctl start` of the timers is needed here or after adding one.
 
 ## Deploying a change
 
@@ -56,9 +57,12 @@ sudo systemctl start winspool-backup.timer
 ssh pi '/home/nate/awardwinninglisteners/scripts/pi-deploy.sh'
 ```
 
-Runs as nate (re-execs via sudo if launched as root). Pulls `main`, re-syncs Python deps, rebuilds the front end, restarts the
-service, and polls `/api/teams` for up to 60s. On failure it prints the last 40
-journal lines and exits non-zero.
+Runs as nate (re-execs via sudo if launched as root). Pulls `main`, re-syncs Python deps, rebuilds the front end, installs
+every `deploy/pi/*.service` and `*.timer` into `/etc/systemd/system/`, reloads
+systemd, and runs `systemctl enable --now` on every `*.timer` (derived from the
+directory listing, so a newly added timer is picked up with no other change).
+Then it restarts the `winspool` service and polls `/api/teams` for up to 60s.
+On failure it prints the last 40 journal lines and exits non-zero.
 
 ## Day-to-day
 
@@ -72,6 +76,7 @@ the checkout isn't handy.
 systemctl status winspool
 journalctl -u winspool -f                  # live logs
 journalctl -u winspool-scores -n 50        # standings refreshes
+journalctl -u winspool-odds -n 50          # odds snapshots
 systemctl list-timers 'winspool*'          # when the next refresh/backup fires
 sqlite3 /var/lib/winspool/league.db 'select count(*) from messages;'
 ```
@@ -95,7 +100,8 @@ sudo -u winspool cp /var/backups/winspool/league-2026-09-14.db /var/lib/winspool
 sudo systemctl start winspool
 ```
 
-A JSON export is the portable form, and works against any store:
+A JSON export is the portable form, and works against any store. It now
+carries the odds log alongside everything else:
 
 ```bash
 sudo -u winspool env $(sudo cat /etc/winspool/env | grep -v '^#' | xargs) \
@@ -128,43 +134,6 @@ sudo cloudflared --config /etc/cloudflared/config.yml tunnel ingress rule https:
 To rebuild it from scratch: `cloudflared tunnel login`, `cloudflared tunnel
 create pi`, `cloudflared tunnel route dns pi <hostname>` for each name, write
 the config above, then `sudo cloudflared service install`.
-
-**The tunnel serves nothing until the zone is active on Cloudflare** — i.e.
-until the nameservers move (cutover step 5). Until then the CNAMEs exist only
-inside the Cloudflare zone and public DNS still answers from Cloud DNS.
-
-## Cutover from Cloud Run (day after the draft)
-
-Preconditions: draft `status == done`, completion snapshot exists, Pi service
-green with a test import.
-
-1. **Freeze** — tell the group standings/comments are read-only for ~10 minutes.
-2. **Export** from the laptop that has gcloud ADC:
-   ```bash
-   STORE=firestore GOOGLE_CLOUD_PROJECT=snowpack-pika \
-     uv run winspool export --out league_export.json
-   ```
-3. **Copy and import** on the Pi (or run `./scripts/pi-cutover.sh /tmp/league_export.json`, which does steps 3–4 plus the permissions/env/unit setup):
-   ```bash
-   scp league_export.json pi:/tmp/
-   sudo -u winspool env $(sudo cat /etc/winspool/env | grep -v '^#' | xargs) \
-     /home/nate/awardwinninglisteners/.venv/bin/winspool import --from /tmp/league_export.json --force
-   sudo systemctl restart winspool
-   ```
-4. **Verify locally** — `curl -fsS localhost:8080/api/teams`, then log in and
-   confirm 30 picks, the full feed, the completion snapshot, and cached standings.
-5. **Switch DNS** to the Cloudflare nameservers (see the design doc §4).
-6. **Verify publicly** at https://awardwinninglisteners.com — existing devices
-   stay logged in if `SESSION_SECRET` matched.
-7. **Run the scores timer once**: `sudo systemctl start winspool-scores.service`.
-8. **Wind down GCP** — pause both Cloud Scheduler jobs, set Cloud Run
-   `--min-instances 0`, switch `.github/workflows/deploy.yml` to
-   `workflow_dispatch` only. Keep everything for 7 days as the rollback window,
-   then delete.
-
-Rollback before step 8's deletions: point the nameservers back at
-`ns-cloud-e*.googledomains.com`. Cloud DNS records and the Cloud Run service are
-untouched and still hold the data as of the freeze.
 
 ## Failure modes
 

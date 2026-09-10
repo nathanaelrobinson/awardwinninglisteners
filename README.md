@@ -57,66 +57,48 @@ shows live pick recommendations. Toggle **Deep analysis** for the opponent-aware
 Dev mode (hot reload): `uv run winspool-serve` in one terminal, `cd web && npm run dev` in
 another (Vite proxies `/api` to `:8000`).
 
-## Live league (Cloud Run)
+## Live league (Raspberry Pi)
 
 Shared live draft + standings for the 5-person league. Each player logs in with their name
 and a personal PIN; the commissioner (Nate) is the only one who sees the optimizer.
 
-**Deploy:**
+The app runs on a Pi with SQLite and a Cloudflare Tunnel — no cloud bill, no port
+forwarding. Design: `docs/superpowers/specs/2026-09-08-raspberry-pi-hosting-design.md`.
+Operations: `docs/pi-runbook.md`.
 
 ```bash
-export SESSION_SECRET=...   # must be the SAME value on every redeploy, or all sessions are invalidated
-./scripts/deploy.sh
+sudo ./scripts/pi-setup.sh                     # user, dirs, env template, systemd units
+sudoedit /etc/winspool/env                     # fill in SESSION_SECRET and REFRESH_TOKEN
+./scripts/pi-deploy.sh                         # pull, build, install/enable units, restart, health-check
 ```
 
-Builds from a clean `git archive HEAD` plus the local `data/cache/` — so `data/cache/sim_matrix.npz`
-must exist and be current (run `uv run winspool-serve` once locally to build it). GCP project
-`snowpack-pika`, region `us-west1`, service `pika`.
+`pi-deploy.sh` installs and enables every timer under `deploy/pi/` on each run, so a
+newly added timer starts working on the next deploy — no re-run of `pi-setup.sh` needed.
 
 **Initialize / reset the league** (wipes picks; run before draft night):
 
 ```bash
-STORE=firestore GOOGLE_CLOUD_PROJECT=snowpack-pika uv run winspool league-init \
+STORE=sqlite WINSPOOL_DB=/var/lib/winspool/league.db uv run winspool league-init \
   --players "Nate Robinson,Evan Goguillon-Bader,Logan Borgelt,Eric Whitley,Mitch Fischer" \
   --commissioner "Nate Robinson" [--pins "Name=1234,..."] [--force]
 ```
 
 Without `--pins` it generates a random 4-digit PIN per player and prints them once — text each
-person theirs. `--force` is required if picks exist. Messages live in the Firestore subcollection
-`leagues/2026/messages` and are not wiped by `league-init`; delete them in the console if needed.
+person theirs. `--force` is required if picks exist. Messages are not wiped by `league-init`.
 
 **Local dev:** `uv run winspool-serve` seeds an in-memory league; every player's PIN is `1234`
 (override with `LEAGUE_DEV_PIN`).
 
-**Standings:** regular-season wins from `nfl_data_py`, cached in Firestore (`leagues/2026/cache/standings`)
-so all players read one stored result instead of each triggering a live fetch; the commissioner can
-override a team's wins by clicking the number.
+**Standings:** regular-season wins from `nfl_data_py`, cached in the store so all players read
+one stored result instead of each triggering a live fetch; the commissioner can override a
+team's wins by clicking the number.
 
-**Refresh jobs.** `POST /internal/refresh-standings` refreshes the wins cache and
-`POST /internal/refresh-live` recomputes the in-season projection (both take header
-`X-Refresh-Token: $REFRESH_TOKEN`). Four Cloud Scheduler jobs call them: standings every 15
-minutes on Sun/Mon/Thu and every 4 hours otherwise, live 5 minutes after each standings run.
-
-```bash
-make cr-jobs       # list the jobs and when they last ran
-make cr-refresh    # refresh standings + live projection right now
-make cr-schedule   # create/update the jobs (after a new service URL or token)
-```
-
-`scripts/cr-schedule.sh` reads the token from the running service, so nothing has to be typed.
-
-## Raspberry Pi (self-hosted)
-
-The same app runs on a Pi with SQLite instead of Firestore and a Cloudflare
-Tunnel instead of Cloud Run — no cloud bill, no port forwarding. Design:
-`docs/superpowers/specs/2026-09-08-raspberry-pi-hosting-design.md`.
-Operations: `docs/pi-runbook.md`.
-
-```bash
-sudo ./scripts/pi-setup.sh                     # user, dirs, env template, systemd units
-sudoedit /etc/winspool/env                     # SESSION_SECRET must match Cloud Run
-./scripts/pi-deploy.sh                         # pull, build, restart, health-check
-```
+**Refresh jobs.** `POST /internal/refresh-standings` refreshes the wins cache,
+`POST /internal/refresh-live` recomputes the in-season projection, and
+`POST /internal/refresh-odds` snapshots what each of the three betting-odds
+sources says about the current week's games, hourly (all three take header
+`X-Refresh-Token: $REFRESH_TOKEN`). On the Pi, systemd timers call them — see
+`docs/pi-runbook.md`.
 
 `STORE=sqlite` selects the SQLite store; the database path comes from
 `WINSPOOL_DB` (default `data/league.db`). `WINSPOOL_BEHIND_PROXY=1` marks the
@@ -124,14 +106,15 @@ session cookie `Secure` when the browser reaches the app over HTTPS through the
 tunnel. With `STORE` set the app refuses to start without `SESSION_SECRET`
 rather than falling back to the dev value.
 
-**Moving data between stores** — the Cloud Run → Pi cutover, and any backup:
+**Backup and restore** — export the live SQLite database to portable JSON, and
+restore it into any SQLite database:
 
 ```bash
-# read from wherever STORE points
-STORE=firestore GOOGLE_CLOUD_PROJECT=snowpack-pika uv run winspool export --out league_export.json
+# dump the source database to JSON
+STORE=sqlite WINSPOOL_DB=/var/lib/winspool/league.db uv run winspool export --out league_export.json
 
-# write into wherever STORE points (refuses a non-empty target without --force)
-STORE=sqlite WINSPOOL_DB=/var/lib/winspool/league.db uv run winspool import --from league_export.json
+# load it into a database (refuses a non-empty target without --force)
+STORE=sqlite WINSPOOL_DB=/path/to/restored/league.db uv run winspool import --from league_export.json
 ```
 
 Export carries the league doc, every message (uncapped), full snapshots, and the
@@ -159,9 +142,5 @@ See `docs/superpowers/specs/` and `docs/superpowers/plans/` for the design and b
 
 GitHub Actions (`.github/workflows/`) runs on every push and pull request: `ci.yml` runs the
 Python test suite (`uv sync --extra dev && uv run pytest -q`) and the web build/lint
-(`npm ci && npm run build && npx oxlint src`). Merging to `main` triggers `deploy.yml`, which
-deploys to Cloud Run (service `pika`, project `snowpack-pika`, region `us-west1`) using Workload
-Identity Federation — no long-lived service account key.
-
-Required repo **variables**: `GCP_WIF_PROVIDER`, `GCP_DEPLOY_SA`.
-Required repo **secrets**: `SESSION_SECRET`, `REFRESH_TOKEN` (same values as the live revision).
+(`npm ci && npm run build && npx oxlint src`). Merging to `main` does not auto-deploy; run
+`scripts/pi-deploy.sh` on the Pi (see `docs/pi-runbook.md`).

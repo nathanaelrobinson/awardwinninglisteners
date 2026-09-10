@@ -34,7 +34,7 @@ WINSPOOL_DB=$DATA_DIR/league.db
 WINSPOOL_DATA_DIR=$APP_DIR/data/cache
 WINSPOOL_WEB_DIST=$APP_DIR/web/dist
 WINSPOOL_BEHIND_PROXY=1
-# MUST match the Cloud Run revision, or every player is logged out on cutover.
+# Changing this invalidates every session cookie.
 SESSION_SECRET=
 REFRESH_TOKEN=
 ENVEOF
@@ -48,8 +48,13 @@ install -m 644 "$UNITS_DIR"/*.service "$UNITS_DIR"/*.timer /etc/systemd/system/
 systemctl daemon-reload
 
 echo "==> enabling timers"
-systemctl enable winspool-scores-gameday.timer winspool-scores-offday.timer \
-                 winspool-backup.timer >/dev/null
+# Derived from the directory listing, not a hardcoded list — a hardcoded list
+# is exactly how a unit added later (e.g. winspool-odds) silently never
+# started. scripts/pi-deploy.sh enables the same way on every subsequent
+# deploy, so the two scripts can't drift apart on which timers exist.
+for timer in "$UNITS_DIR"/*.timer; do
+  systemctl enable "$(basename "$timer")" >/dev/null
+done
 
 echo
 echo "Provisioned. Remaining steps:"

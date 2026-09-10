@@ -1,6 +1,5 @@
 """League persistence. One league document + a messages subcollection.
-InMemoryStore for tests/dev; SqliteStore for the Pi (STORE=sqlite);
-FirestoreStore for Cloud Run (STORE=firestore)."""
+InMemoryStore for tests/dev; SqliteStore for the Pi (STORE=sqlite)."""
 import json
 import os
 import sqlite3
@@ -32,6 +31,12 @@ class Store(Protocol):
     def add_snapshot(self, snapshot: dict) -> str: ...
     def clear_messages(self) -> int: ...
     def list_snapshots(self) -> list[dict]: ...
+    def add_odds(self, snapshot: dict) -> str: ...
+    def put_odds(self, snapshot: dict) -> None: ...
+    def odds_for_week(self, season: int, week: int) -> list[dict]: ...
+    def latest_odds(self, season: int, week: int) -> list[dict]: ...
+    def all_odds(self) -> list[dict]: ...
+    def delete_odds(self, ids: list[str]) -> int: ...
 
 
 SNAPSHOT_CAP = 50
@@ -47,6 +52,7 @@ class InMemoryStore:
         self._live: dict | None = None
         self._weeks: dict[int, dict] = {}
         self._snapshots: list[dict] = []
+        self._odds: list[dict] = []
         self._lock = threading.Lock()
 
     def get(self) -> dict:
@@ -144,123 +150,49 @@ class InMemoryStore:
             self._snapshots = [x for x in self._snapshots if x["id"] != snap["id"]]
             self._snapshots.append(dict(snap))
 
+    # --- odds log (append only) ---
 
-class FirestoreStore:
-    def __init__(self, project: str | None = None):
-        from google.cloud import firestore  # imported lazily: prod-only dep
-        self._fs = firestore
-        self._db = firestore.Client(project=project)
-        self._ref = self._db.collection("leagues").document(LEAGUE_ID)
+    def add_odds(self, snapshot: dict) -> str:
+        row = {**snapshot, "id": snapshot.get("id") or uuid.uuid4().hex}
+        with self._lock:
+            self._odds.append(row)
+        return row["id"]
 
-    def get(self):
-        snap = self._ref.get()
-        if not snap.exists:
-            raise LookupError("league not initialized")
-        return snap.to_dict()
+    def put_odds(self, snapshot: dict) -> None:
+        # Matches SqliteStore's INSERT OR REPLACE: an id-less row later makes
+        # thin_week/delete_odds raise, and a re-import must replace, not double.
+        row = {**snapshot, "id": snapshot.get("id") or uuid.uuid4().hex}
+        with self._lock:
+            self._odds = [r for r in self._odds if r.get("id") != row["id"]]
+            self._odds.append(row)
 
-    def put(self, doc):
-        self._ref.set(doc)
+    def odds_for_week(self, season: int, week: int) -> list[dict]:
+        rows = [r for r in self._odds
+                if r["season"] == season and r["week"] == week]
+        return sorted(rows, key=lambda r: r["fetched_at"])
 
-    def update(self, fn):
-        transaction = self._db.transaction(max_attempts=10)
-        ref = self._ref
+    def latest_odds(self, season: int, week: int) -> list[dict]:
+        best: dict[str, dict] = {}
+        for r in self.odds_for_week(season, week):
+            best[r["source"]] = r
+        return list(best.values())
 
-        @self._fs.transactional
-        def _run(tx):
-            snap = ref.get(transaction=tx)
-            if not snap.exists:
-                raise LookupError("league not initialized")
-            new = fn(snap.to_dict())
-            tx.set(ref, new)
-            return new
+    def all_odds(self) -> list[dict]:
+        return sorted(self._odds, key=lambda r: r["fetched_at"])
 
-        return _run(transaction)
-
-    def add_message(self, by, text):
-        m = {"by": by, "text": text, "ts": time.time()}
-        _, ref = self._ref.collection("messages").add(m)
-        return {"id": ref.id, **m}
-
-    def messages(self, since):
-        from google.cloud.firestore_v1.base_query import FieldFilter
-        q = self._ref.collection("messages").order_by("ts")
-        if since is not None:
-            q = q.where(filter=FieldFilter("ts", ">", since))
-        docs = list(q.limit_to_last(MSG_CAP).get()) if since is None else list(q.limit(MSG_CAP).get())
-        return [{"id": d.id, **d.to_dict()} for d in docs]
-
-    def get_standings(self):
-        snap = self._ref.collection("cache").document("standings").get()
-        return snap.to_dict() if snap.exists else None
-
-    def put_standings(self, doc):
-        self._ref.collection("cache").document("standings").set(doc)
-
-    def get_preseason(self):
-        snap = self._ref.collection("cache").document("preseason").get()
-        return snap.to_dict() if snap.exists else None
-
-    def put_preseason(self, doc):
-        self._ref.collection("cache").document("preseason").set(doc)
-
-    def get_live(self):
-        snap = self._ref.collection("cache").document("live").get()
-        return snap.to_dict() if snap.exists else None
-
-    def put_live(self, doc):
-        self._ref.collection("cache").document("live").set(doc)
-
-    def get_sim_model(self):
-        snap = self._ref.collection("cache").document("sim_model").get()
-        return snap.to_dict() if snap.exists else None
-
-    def put_sim_model(self, doc):
-        self._ref.collection("cache").document("sim_model").set(doc)
-
-    def put_week(self, week, doc):
-        self._ref.collection("weeks").document(str(int(week))).set(doc)
-
-    def list_weeks(self):
-        docs = [d.to_dict() for d in self._ref.collection("weeks").stream()]
-        return sorted(docs, key=lambda d: d["week"])
-
-    def add_snapshot(self, snapshot):
-        _, ref = self._ref.collection("snapshots").add(snapshot)
-        return ref.id
-
-    def clear_messages(self):
-        docs = list(self._ref.collection("messages").stream())
-        n = 0
-        for i in range(0, len(docs), 400):
-            batch = self._db.batch()
-            for d in docs[i:i + 400]:
-                batch.delete(d.reference)
-            batch.commit()
-            n += len(docs[i:i + 400])
-        return n
-
-    def list_snapshots(self):
-        q = self._ref.collection("snapshots").order_by(
-            "taken_at", direction=self._fs.Query.DESCENDING).limit(SNAPSHOT_CAP)
-        return [{"id": d.id, **d.to_dict()} for d in q.get()]
-
-    def all_messages(self):
-        """Every message, oldest first, uncapped (MSG_CAP does not apply). Export only."""
-        q = self._ref.collection("messages").order_by("ts")
-        return [{"id": d.id, **d.to_dict()} for d in q.stream()]
-
-    def all_snapshots(self):
-        """Full snapshot docs, oldest first, uncapped. Export only."""
-        q = self._ref.collection("snapshots").order_by("taken_at")
-        return [{"id": d.id, **d.to_dict()} for d in q.stream()]
+    def delete_odds(self, ids: list[str]) -> int:
+        drop = set(ids)
+        before = len(self._odds)
+        self._odds = [r for r in self._odds if r["id"] not in drop]
+        return before - len(self._odds)
 
 
 class SqliteStore:
-    """Single-file SQLite store. Same semantics as FirestoreStore, no cloud.
+    """Single-file SQLite store.
 
     One connection in autocommit mode (isolation_level=None) guarded by a lock,
     so `update` can drive its own BEGIN IMMEDIATE ... COMMIT. That write lock is
-    what gives us Firestore's "one pick at a time" transactional guarantee.
+    what gives us a "one pick at a time" transactional guarantee.
     """
 
     SCHEMA = """
@@ -272,6 +204,10 @@ class SqliteStore:
     CREATE INDEX IF NOT EXISTS snapshots_taken_at ON snapshots(taken_at);
     CREATE TABLE IF NOT EXISTS kv        (k TEXT PRIMARY KEY, v TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS weeks     (week INTEGER PRIMARY KEY, doc TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS odds (id TEXT PRIMARY KEY, season INTEGER NOT NULL,
+                                     week INTEGER NOT NULL, source TEXT NOT NULL,
+                                     fetched_at REAL NOT NULL, doc TEXT NOT NULL);
+    CREATE INDEX IF NOT EXISTS odds_week ON odds(season, week, fetched_at);
     """
 
     def __init__(self, path: str | os.PathLike):
@@ -327,7 +263,7 @@ class SqliteStore:
 
     def messages(self, since: float | None) -> list[dict]:
         # Oldest-first either way: without `since` the newest MSG_CAP, with it the
-        # first MSG_CAP after `since` — same contract as the Firestore path.
+        # first MSG_CAP after `since`.
         if since is None:
             rows = self._db.execute(
                 'SELECT id, "by", text, ts FROM messages ORDER BY ts DESC, rowid DESC LIMIT ?',
@@ -441,6 +377,47 @@ class SqliteStore:
                 (snap["id"], snap.get("taken_at"), snap.get("reason"),
                  snap.get("n_picks"), snap.get("status"), json.dumps(doc)))
 
+    # --- odds log (append only) ---
+
+    def add_odds(self, snapshot: dict) -> str:
+        row = {**snapshot, "id": snapshot.get("id") or uuid.uuid4().hex}
+        self.put_odds(row)
+        return row["id"]
+
+    def put_odds(self, snapshot: dict) -> None:
+        with self._lock:
+            self._db.execute(
+                "INSERT OR REPLACE INTO odds (id, season, week, source, fetched_at, doc) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (snapshot["id"], int(snapshot["season"]), int(snapshot["week"]),
+                 snapshot["source"], float(snapshot["fetched_at"]),
+                 json.dumps(snapshot)))
+
+    def odds_for_week(self, season: int, week: int) -> list[dict]:
+        rows = self._db.execute(
+            "SELECT doc FROM odds WHERE season=? AND week=? ORDER BY fetched_at, rowid",
+            (int(season), int(week))).fetchall()
+        return [json.loads(r[0]) for r in rows]
+
+    def latest_odds(self, season: int, week: int) -> list[dict]:
+        best: dict[str, dict] = {}
+        for r in self.odds_for_week(season, week):
+            best[r["source"]] = r
+        return list(best.values())
+
+    def all_odds(self) -> list[dict]:
+        rows = self._db.execute(
+            "SELECT doc FROM odds ORDER BY fetched_at, rowid").fetchall()
+        return [json.loads(r[0]) for r in rows]
+
+    def delete_odds(self, ids: list[str]) -> int:
+        if not ids:
+            return 0
+        with self._lock:
+            marks = ",".join("?" * len(ids))
+            cur = self._db.execute(f"DELETE FROM odds WHERE id IN ({marks})", tuple(ids))
+            return cur.rowcount
+
     def close(self) -> None:
         self._db.close()
 
@@ -452,9 +429,7 @@ def get_store() -> Store:
     global _STORE
     if _STORE is None:
         kind = os.environ.get("STORE")
-        if kind == "firestore":
-            _STORE = FirestoreStore(os.environ.get("GOOGLE_CLOUD_PROJECT"))
-        elif kind == "sqlite":
+        if kind == "sqlite":
             _STORE = SqliteStore(os.environ.get("WINSPOOL_DB") or "data/league.db")
         else:
             _STORE = InMemoryStore()

@@ -59,22 +59,6 @@ clean:  ## Remove build output and caches
 	rm -rf web/dist web/node_modules/.vite .pytest_cache
 	find . -name __pycache__ -type d -prune -exec rm -rf {} +
 
-# == Cloud Run (snowpack-pika / pika)
-
-.PHONY: cr-schedule
-cr-schedule:  ## Create/update the Cloud Scheduler jobs that refresh standings + live projection
-	scripts/cr-schedule.sh
-
-.PHONY: cr-refresh
-cr-refresh:  ## Refresh standings and the live projection on Cloud Run right now
-	gcloud scheduler jobs run pika-scores-offday --project snowpack-pika --location us-west1
-	gcloud scheduler jobs run pika-live-offday   --project snowpack-pika --location us-west1
-	@echo "triggered; check: curl -s https://awardwinninglisteners.com/api/league/live | head -c 200"
-
-.PHONY: cr-jobs
-cr-jobs:  ## List the Cloud Scheduler jobs and when they last ran
-	gcloud scheduler jobs list --project snowpack-pika --location us-west1 --format 'table(name.basename(),schedule,lastAttemptTime,state)'
-
 # == Pi operations (this machine)
 
 .PHONY: status

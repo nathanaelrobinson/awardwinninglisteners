@@ -8,13 +8,14 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Response
 from fastapi.responses import JSONResponse
-from google.api_core import exceptions as gexc
 from pydantic import BaseModel, Field
 
 from . import league
 from . import live as _live
+from . import oddslog as _oddslog
 from . import simmodel as _simmodel
 from . import standings as _standings
+from . import week as _week
 from .auth import current_user, require_commissioner, set_cookie, viewer
 from .league import LeagueError
 from .store import get_store
@@ -31,6 +32,7 @@ _LOGIN_THROTTLE = Throttle()
 LIVE_CACHE_DIR = os.environ.get("WINSPOOL_DATA_DIR") or str(
     Path(__file__).resolve().parents[2] / "data" / "cache")
 LIVE_N_SEASONS = 5000
+SEASON = int(os.environ.get("WINSPOOL_SEASON", "2026"))
 
 
 def _doc():
@@ -38,7 +40,7 @@ def _doc():
         return get_store().get()
     except LookupError:
         raise HTTPException(503, "league not initialized")
-    except (gexc.GoogleAPICallError, gexc.RetryError, sqlite3.OperationalError):
+    except sqlite3.OperationalError:
         raise HTTPException(503, "busy")
 
 
@@ -47,7 +49,7 @@ def _store_read(fn):
         return fn()
     except LookupError:
         raise HTTPException(503, "league not initialized")
-    except (gexc.GoogleAPICallError, gexc.RetryError, sqlite3.OperationalError):
+    except sqlite3.OperationalError:
         raise HTTPException(503, "busy")
 
 
@@ -63,8 +65,7 @@ def _run(fn):
         raise HTTPException(e.status, e.detail)
     except LookupError:
         raise HTTPException(503, "league not initialized")
-    except (gexc.Aborted, gexc.GoogleAPICallError, gexc.RetryError,
-            sqlite3.OperationalError):
+    except sqlite3.OperationalError:
         raise HTTPException(503, "busy")
     except ValueError as e:
         if "Failed to commit transaction" in str(e):
@@ -280,6 +281,32 @@ def get_live(_: str | None = Depends(viewer)):
     return doc
 
 
+@router.get("/api/week")
+def get_week(week: int | None = None, _: str | None = Depends(viewer)):
+    if week is not None and not 1 <= week <= 18:
+        raise HTTPException(422, "week out of range")
+    store = get_store()
+    live_doc = _store_read(store.get_live)
+    if live_doc is None:
+        raise HTTPException(503, "projection not ready")
+    target = live_doc["week"] if week is None else week
+
+    # A past week is served from what we recorded at the time. Recomputing it
+    # with today's information would be a lie about what we knew.
+    source_doc = live_doc
+    if target != live_doc["week"]:
+        stored = next((w for w in _store_read(store.list_weeks) if w["week"] == target), None)
+        if stored is None:
+            raise HTTPException(404, "no record for that week")
+        source_doc = stored
+
+    rosters = league.view(_doc())["rosters"]
+    df = _live._load_schedule_cached()
+    out = _week.build_week(source_doc, rosters, df, target,
+                           store.odds_for_week(SEASON, target))
+    return {"season": SEASON, **out}
+
+
 @router.get("/api/league/weeks")
 def get_weeks(_: str | None = Depends(viewer)):
     weeks = _store_read(get_store().list_weeks)
@@ -320,3 +347,22 @@ def internal_refresh_standings(x_refresh_token: str | None = Header(default=None
             "ok": False, "fetched_at": doc["fetched_at"], "error": doc["error"]})
     return {"ok": True, "fetched_at": doc["fetched_at"],
             "teams_with_wins": sum(1 for w in doc["wins"].values() if w > 0)}
+
+
+@router.post("/internal/refresh-odds", include_in_schema=False)
+def internal_refresh_odds(x_refresh_token: str | None = Header(default=None)):
+    _check_refresh_token(x_refresh_token)
+    try:
+        df = _live._load_schedule_cached()
+        out = _oddslog.refresh_odds(get_store(), df, SEASON)
+    except Exception as e:
+        return JSONResponse(status_code=503, content={"ok": False, "error": str(e)[:200]})
+    # The nflverse baseline is read off a frame we already have, so it writes
+    # even when every live source is dead. Reporting ok on that would let both
+    # books stay down for a season with the timer green and nobody looking:
+    # the pre-kickoff reads are gone the moment they are missed. Go red instead.
+    # The snapshots that did land stay written — partial success, loudly.
+    live_written = [n for n in out["written"] if n != "nflverse"]
+    if out["errors"] or not live_written:
+        return JSONResponse(status_code=503, content={"ok": False, **out})
+    return {"ok": True, **out}

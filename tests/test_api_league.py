@@ -406,7 +406,6 @@ def test_run_maps_transaction_exhaustion_to_503(monkeypatch):
 
 
 def test_login_cookie_not_secure_on_plain_http_dev(api, monkeypatch):
-    monkeypatch.delenv("K_SERVICE", raising=False)
     monkeypatch.delenv("WINSPOOL_BEHIND_PROXY", raising=False)
     r = api.post("/api/login", json={"name": "Nate Robinson", "pin": PIN})
     assert "secure" not in r.headers.get("set-cookie", "").lower()
@@ -415,15 +414,7 @@ def test_login_cookie_not_secure_on_plain_http_dev(api, monkeypatch):
 def test_login_cookie_secure_behind_cloudflare_tunnel(api, monkeypatch):
     """On the Pi the browser still talks HTTPS to Cloudflare, so the session
     cookie must be marked secure even though uvicorn is serving plain HTTP."""
-    monkeypatch.delenv("K_SERVICE", raising=False)
     monkeypatch.setenv("WINSPOOL_BEHIND_PROXY", "1")
-    r = api.post("/api/login", json={"name": "Nate Robinson", "pin": PIN})
-    assert "secure" in r.headers.get("set-cookie", "").lower()
-
-
-def test_login_cookie_secure_on_cloud_run(api, monkeypatch):
-    monkeypatch.delenv("WINSPOOL_BEHIND_PROXY", raising=False)
-    monkeypatch.setenv("K_SERVICE", "pika")
     r = api.post("/api/login", json={"name": "Nate Robinson", "pin": PIN})
     assert "secure" in r.headers.get("set-cookie", "").lower()
 
@@ -614,6 +605,11 @@ def test_live_404_until_refreshed_and_public_after_draft(api, store, live_env):
     # six teams each play once; a game between two of a player's own teams is one locked chip
     assert all(sum(2 if g["lock"] else 1 for g in r["games"]) == 6 for r in body["this_week"])
     assert store.get_live()["week"] == 2
+    # The model's own per-game read is logged too, or the completed-week
+    # model-against-market comparison has nothing to score.
+    model = [r for r in store.all_odds() if r["source"] == "model"]
+    assert model and model[-1]["games"]
+    assert all(g["p_home"] is not None for g in model[-1]["games"])
 
 
 def test_live_and_weeks_401_before_draft_done(api, store, live_env):
@@ -753,3 +749,86 @@ def test_oversized_login_fields_are_rejected_before_they_reach_the_throttle(api,
     r = login(api, "x" * 10_000, "y" * 10_000)[1]
     assert r.status_code == 422
     assert len(fast_throttle) == 0
+
+
+def test_refresh_odds_requires_the_token(api, store, monkeypatch):
+    monkeypatch.setenv("REFRESH_TOKEN", "secret")
+    assert api.post("/internal/refresh-odds").status_code == 403
+    assert api.post("/internal/refresh-odds",
+                    headers={"X-Refresh-Token": "wrong"}).status_code == 403
+
+
+def test_week_requires_a_viewer(api):
+    assert api.get("/api/week").status_code in (401, 403)
+
+
+def test_week_rejects_an_out_of_range_week(api, store):
+    c, _ = login(api, PLAYERS[0])
+    assert c.get("/api/week?week=0").status_code == 422
+    assert c.get("/api/week?week=19").status_code == 422
+
+
+def test_week_is_503_before_a_projection_exists(api, store):
+    c, _ = login(api, PLAYERS[0])
+    assert c.get("/api/week").status_code == 503
+
+
+def test_week_serves_the_current_week_from_the_live_doc(api, store):
+    c, _ = login(api, PLAYERS[0])
+    store.put_live({"week": 1, "computed_at": 0.0,
+                     "rows": [{"player": PLAYERS[0], "pwin": 0.11}], "games": []})
+    body = c.get("/api/week").json()
+    assert body["week"] == 1 and body["state"] in ("live", "final")
+    assert isinstance(body["games"], list)
+    assert {p["name"] for p in body["players"]}
+
+    # A past week must come from what was RECORDED at the time, not from a
+    # recompute against the live doc. Give the stored week-2 record a pwin
+    # for PLAYERS[0] that could only have come from that record, not the
+    # live doc above (0.11) — this fails if the route ever falls through to
+    # the live doc for a past week.
+    store.put_week(2, {"week": 2, "computed_at": 0.0,
+                        "rows": [{"player": PLAYERS[0], "pwin": 0.87}], "games": []})
+    past = c.get("/api/week?week=2").json()
+    assert past["week"] == 2
+    mine = next(p for p in past["players"] if p["name"] == PLAYERS[0])
+    assert mine["pwin"] == 0.87
+
+    # No recorded document for week 3, and it isn't the current live week
+    # either: 404, not a silent fall-through to the live doc.
+    assert c.get("/api/week?week=3").status_code == 404
+
+
+def test_refresh_odds_goes_red_unless_a_live_source_wrote(api, store, monkeypatch):
+    """The nflverse baseline writes off a frame we already hold, so it lands
+    even with both books dead. `curl -fsS` in the systemd unit only fails on a
+    non-2xx, so anything short of 503 here means the irreplaceable pre-kickoff
+    reads can go missing all season with every signal green."""
+    monkeypatch.setenv("REFRESH_TOKEN", "tok")
+    monkeypatch.setattr(api_league._live, "_load_schedule_cached", lambda: None)
+    hdr = {"X-Refresh-Token": "tok"}
+
+    def _returns(out):
+        monkeypatch.setattr(api_league._oddslog, "refresh_odds",
+                            lambda *a, **k: out)
+
+    _returns({"season": 2026, "week": 1, "errors": {},
+              "written": {"nflverse": 2, "book": 2, "kalshi": 2}})
+    r = api.post("/internal/refresh-odds", headers=hdr)
+    assert r.status_code == 200 and r.json()["ok"] is True
+
+    _returns({"season": 2026, "week": 1, "errors": {"book": "espn is down"},
+              "written": {"nflverse": 2, "kalshi": 2}})
+    r = api.post("/internal/refresh-odds", headers=hdr)
+    assert r.status_code == 503
+    # what did land is still reported, and is still written
+    assert r.json()["written"] == {"nflverse": 2, "kalshi": 2}
+
+    _returns({"season": 2026, "week": 1,
+              "errors": {"book": "down", "kalshi": "down"},
+              "written": {"nflverse": 2}})
+    assert api.post("/internal/refresh-odds", headers=hdr).status_code == 503
+
+    # even with no error recorded, a baseline-only write is not a success
+    _returns({"season": 2026, "week": 1, "errors": {}, "written": {"nflverse": 2}})
+    assert api.post("/internal/refresh-odds", headers=hdr).status_code == 503

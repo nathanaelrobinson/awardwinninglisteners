@@ -1,4 +1,4 @@
-"""Regular-season wins per team from nfl_data_py, refreshed via a Firestore
+"""Regular-season wins per team from nfl_data_py, refreshed via a store
 cache document (see store.get_standings/put_standings) rather than an
 in-process TTL — a scheduler calls refresh_standings() once and every reader
 reads the stored result."""
