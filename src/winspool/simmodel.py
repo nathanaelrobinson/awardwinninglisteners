@@ -83,13 +83,18 @@ def build_model(rosters: dict, sched_df: pd.DataFrame, *, totals_path, power_pat
     }
 
 
-def refresh_model(store, cache_dir) -> dict:
-    """Rebuild from the league's rosters and the current schedule + ratings."""
+def refresh_model(store, cache_dir, sched_df: pd.DataFrame | None = None) -> dict:
+    """Rebuild from the league's rosters and the current schedule + ratings, and
+    store it. Pass `sched_df` when the caller already has the schedule in hand:
+    loading it means pulling the season from nfl_data_py, which is the whole
+    reason this is precomputed rather than built per request."""
     from . import league as _league
     rosters = _league.view(store.get())["rosters"]
-    return build_model(
-        rosters, live._load_schedule_cached(),
+    doc = build_model(
+        rosters, live._load_schedule_cached() if sched_df is None else sched_df,
         totals_path=os.path.join(cache_dir, "win_totals.csv"),
         power_path=os.path.join(cache_dir, "power_ratings.csv"),
         kalshi_dist_path=os.path.join(cache_dir, "kalshi_distributions.csv"),
         ratings_fetched_at=live.ratings_fetched_at(cache_dir))
+    store.put_sim_model(doc)
+    return doc

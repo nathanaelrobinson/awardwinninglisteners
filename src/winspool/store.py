@@ -25,6 +25,8 @@ class Store(Protocol):
     def put_preseason(self, doc: dict) -> None: ...
     def get_live(self) -> dict | None: ...
     def put_live(self, doc: dict) -> None: ...
+    def get_sim_model(self) -> dict | None: ...
+    def put_sim_model(self, doc: dict) -> None: ...
     def put_week(self, week: int, doc: dict) -> None: ...
     def list_weeks(self) -> list[dict]: ...
     def add_snapshot(self, snapshot: dict) -> str: ...
@@ -41,6 +43,7 @@ class InMemoryStore:
         self._msgs: list[dict] = []
         self._standings: dict | None = None
         self._preseason: dict | None = None
+        self._sim_model: dict | None = None
         self._live: dict | None = None
         self._weeks: dict[int, dict] = {}
         self._snapshots: list[dict] = []
@@ -90,6 +93,13 @@ class InMemoryStore:
     def put_live(self, doc):
         with self._lock:
             self._live = doc
+
+    def get_sim_model(self):
+        return self._sim_model
+
+    def put_sim_model(self, doc):
+        with self._lock:
+            self._sim_model = doc
 
     def put_week(self, week, doc):
         with self._lock:
@@ -199,6 +209,13 @@ class FirestoreStore:
 
     def put_live(self, doc):
         self._ref.collection("cache").document("live").set(doc)
+
+    def get_sim_model(self):
+        snap = self._ref.collection("cache").document("sim_model").get()
+        return snap.to_dict() if snap.exists else None
+
+    def put_sim_model(self, doc):
+        self._ref.collection("cache").document("sim_model").set(doc)
 
     def put_week(self, week, doc):
         self._ref.collection("weeks").document(str(int(week))).set(doc)
@@ -360,6 +377,15 @@ class SqliteStore:
     def put_live(self, doc: dict) -> None:
         with self._lock:
             self._db.execute("INSERT OR REPLACE INTO kv (k, v) VALUES ('live', ?)",
+                             (json.dumps(doc),))
+
+    def get_sim_model(self) -> dict | None:
+        row = self._db.execute("SELECT v FROM kv WHERE k='sim_model'").fetchone()
+        return json.loads(row[0]) if row else None
+
+    def put_sim_model(self, doc: dict) -> None:
+        with self._lock:
+            self._db.execute("INSERT OR REPLACE INTO kv (k, v) VALUES ('sim_model', ?)",
                              (json.dumps(doc),))
 
     def put_week(self, week: int, doc: dict) -> None:

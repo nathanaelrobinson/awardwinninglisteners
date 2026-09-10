@@ -145,3 +145,54 @@ def test_a_tie_is_reported_and_split(rosters):
     m = build(df, rosters)
     assert m["played"][0][3] == -1
     assert sum(m["banked"]) == 1.0            # half a win each side
+
+
+class _StubStore:
+    """Just the two methods refresh_model touches."""
+    def __init__(self):
+        self.saved = None
+
+    def get(self):
+        return {}
+
+    def put_sim_model(self, doc):
+        self.saved = doc
+
+
+def test_refresh_model_stores_it(rosters, monkeypatch):
+    """The endpoint serves a stored doc, so refreshing has to leave one."""
+    from winspool import league as lg
+    monkeypatch.setattr(lg, "view", lambda _doc: {"rosters": rosters})
+    store = _StubStore()
+
+    doc = simmodel.refresh_model(store, CACHE, sched_df=full_schedule(played_weeks=1))
+    assert store.saved is doc
+    assert doc["week"] == 2
+    assert len(doc["games"]) == 3 * (N_TEAMS // 2)
+
+
+def test_a_supplied_schedule_is_not_refetched(rosters, monkeypatch):
+    """Loading the schedule pulls the season from nfl_data_py, about 2s. That is
+    why refresh_live hands over the frame it already has."""
+    from winspool import league as lg
+    monkeypatch.setattr(lg, "view", lambda _doc: {"rosters": rosters})
+    calls = []
+    monkeypatch.setattr(simmodel.live, "_load_schedule_cached",
+                        lambda: calls.append(1) or full_schedule())
+
+    simmodel.refresh_model(_StubStore(), CACHE, sched_df=full_schedule())
+    assert calls == []
+
+    simmodel.refresh_model(_StubStore(), CACHE)
+    assert calls == [1], "without one it must fall back to loading the schedule"
+
+
+def test_every_store_round_trips_the_model(tmp_path):
+    from winspool.store import InMemoryStore, SqliteStore
+    from winspool import league as lg
+    names = ["A", "B", "C", "D", "E"]
+    doc = lg.new_league(names, "A", {n: "1111" for n in names})
+    for store in (InMemoryStore(doc), SqliteStore(str(tmp_path / "s.db"))):
+        assert store.get_sim_model() is None
+        store.put_sim_model({"week": 7})
+        assert store.get_sim_model() == {"week": 7}

@@ -47,6 +47,11 @@ def _store_read(fn):
         raise HTTPException(503, "busy")
 
 
+def _run_read(fn):
+    """_store_read for a call that also writes back to the store."""
+    return _store_read(fn)
+
+
 def _run(fn):
     try:
         return league.view(get_store().update(fn))
@@ -233,20 +238,18 @@ def set_override(req: OverrideReq, _: str = Depends(require_commissioner)):
     return {"overrides": _doc()["overrides"]}
 
 
-_MODEL_CACHE: dict = {}
-
-
 @router.get("/api/league/sim-model")
 def get_sim_model(_: str | None = Depends(viewer)):
     """The ensemble itself, so the browser can roll its own seasons.
 
-    Memoised for a minute: the inputs only move on a ratings refresh or a final
-    score, and assembling the mixture takes a couple of seconds cold."""
-    hit = _MODEL_CACHE.get("doc")
-    if hit and time.time() - hit["computed_at"] < 60:
-        return hit
-    doc = _store_read(lambda: _simmodel.refresh_model(get_store(), LIVE_CACHE_DIR))
-    _MODEL_CACHE["doc"] = doc
+    Served from the store, where the live refresh leaves it. Building it means
+    pulling the season schedule from nfl_data_py and calibrating the mixture,
+    about two seconds; doing that per request put a visible stall in front of
+    the Simulations tab. The on-demand build below is the first-run path only.
+    """
+    doc = _store_read(get_store().get_sim_model)
+    if doc is None:
+        doc = _run_read(lambda: _simmodel.refresh_model(get_store(), LIVE_CACHE_DIR))
     return doc
 
 
