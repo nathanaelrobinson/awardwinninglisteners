@@ -142,6 +142,7 @@ export const getWeek = (week?: number) =>
 export interface AdminSource {
   name: string; last_ok: number | null; age_s: number | null;
   max_age_s: number; stale: boolean; last_error: string | null;
+  last_error_at: number | null;
 }
 export interface AdminJob { name: string; at: number | null }
 export interface AdminHealth { sources: AdminSource[]; jobs: AdminJob[] }

@@ -69,7 +69,13 @@ export default function Admin() {
                   {' '}(limit {formatLimit(s.max_age_s)})
                 </span>
               </div>
-              {s.last_error && <div className="admin-error">Last error: {s.last_error}</div>}
+              {s.last_error && (
+                <div className="admin-error">
+                  Last error{s.last_error_at == null
+                    ? ''
+                    : ` (${formatAgo((Date.now() / 1000) - s.last_error_at)})`}: {s.last_error}
+                </div>
+              )}
             </div>
           ))}
         </div>

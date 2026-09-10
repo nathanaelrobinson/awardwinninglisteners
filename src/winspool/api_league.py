@@ -396,8 +396,11 @@ def admin_health(_: str = Depends(require_commissioner)):
         hist = store.ratings_history(name)
         # Newest-first scan for the latest failure; a source can be currently
         # healthy and still carry a stale error worth surfacing.
-        last_err = next((r["doc"].get("error") for r in reversed(hist)
-                         if not r["ok"]), None)
+        # ...and WHEN it happened: a months-old error and a five-minute-old one
+        # render identically without it, in the one view whose job is saying
+        # what is broken now.
+        err_row = next((r for r in reversed(hist) if not r["ok"]), None)
+        last_err = None if err_row is None else err_row["doc"].get("error")
         age = None if row is None else now - float(row["fetched_at"])
         # No row at all is the worst state, not a neutral one: it must read
         # as stale, never as absent or healthy.
@@ -406,7 +409,9 @@ def admin_health(_: str = Depends(require_commissioner)):
                         "age_s": None if age is None else round(age),
                         "max_age_s": limit,
                         "stale": age is None or age > limit,
-                        "last_error": last_err})
+                        "last_error": last_err,
+                        "last_error_at": (None if err_row is None
+                                          else float(err_row["fetched_at"]))})
     live_doc = store.get_live() or {}
     standings = store.get_standings() or {}
     jobs = [{"name": "live", "at": live_doc.get("computed_at")},
