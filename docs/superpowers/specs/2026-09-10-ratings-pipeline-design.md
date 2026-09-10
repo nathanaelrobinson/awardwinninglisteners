@@ -96,6 +96,23 @@ does not have. This is a deliberate change to the projection: from week 2 the
 totals voice stops being discounted and pool-win numbers move. Equal weight for
 every live source stands until phase 3 has evidence to change it.
 
+**How big that shift actually is.** "The totals voice stops being discounted" is
+an understatement of what deleting `vegas_share` does, and the honest number is
+worth writing down. Three of the five voices are market-derived — covers win
+totals, Kalshi win distributions, and `market_strength` inverted from closing
+spreads — and covers and Kalshi are the *same quantity* (a team's season win
+total) quoted at two venues, empirically ~0.98 correlated. Under `vegas_share`
+the market's effective weight was roughly 2/7 at week 1, fading toward 1/7 by
+week 9. With it deleted and every live source weighted equally, effective market
+weight is a flat ~3/5, of which two fifths are near-duplicates of each other.
+
+That is defensible: the market is the best single forecaster available, and the
+alternative — a hand-tuned discount on the most accurate voice — is worse. It is
+also a considerably bigger change to the projection than the paragraph above
+claims on its own, and it is recorded here so the phase that revisits weighting
+starts from the real starting point. This paragraph changes no weights; the
+weighting question is explicitly deferred to that later phase.
+
 ### DVOA, and why we compute it rather than fetch it
 
 DVOA is the obvious candidate for an opponent-adjusted voice, and it is not

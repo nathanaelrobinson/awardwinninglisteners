@@ -776,6 +776,11 @@ def test_week_is_503_before_a_projection_exists(api, store):
     assert c.get("/api/week").status_code == 503
 
 
+# /api/week reaches nflverse through _load_schedule_cached(), so this one is
+# not hermetic: it failed with ConnectionResetError during review. Marked so
+# the default expression deselects it, rather than leaving one known-leaky test
+# exempt from a discipline enforced everywhere else.
+@pytest.mark.network
 def test_week_serves_the_current_week_from_the_live_doc(api, store):
     c, _ = login(api, PLAYERS[0])
     store.put_live({"week": 1, "computed_at": 0.0,
