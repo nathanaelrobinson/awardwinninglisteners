@@ -309,3 +309,61 @@ def test_schedule_cache_expired_ttl_refetches(monkeypatch, inseason, reset_sched
     monkeypatch.setattr(live, "_LAST_SCHEDULE_AT", live._LAST_SCHEDULE_AT - live._SCHEDULE_TTL_S - 1)
     live._load_schedule_cached()
     assert calls == [1, 1]
+
+
+def test_market_distributions_hands_back_stored_pmfs_verbatim():
+    """The store path is the only consumer of stored `distribution` rows outside
+    the ensemble, and it does NO validation: whatever the Kalshi fetcher wrote
+    is what reaches `rng.choice(p=...)`. A truncated or mid-write ladder sums to
+    less than 1 there, and numpy raises inside the unattended refresh rather
+    than degrading. That is the current contract; pin it so it cannot change
+    silently in either direction."""
+    from winspool.store import InMemoryStore
+    store = InMemoryStore({})
+    assert live._market_distributions(None, store) is None    # no rows yet
+
+    good = {"BUF": [0.0] * 9 + [1.0] + [0.0] * 8,             # BUF always 9
+            "KC": [0.0] * 10 + [1.0] + [0.0] * 7}             # KC always 10
+    store.add_rating({"source": "kalshi", "kind": "distribution", "ok": True,
+                      "fetched_at": 100.0, "doc": good})
+    codes, mat = live._market_distributions(None, store)
+    assert codes == ["BUF", "KC"] and mat.shape == (2, 18)
+    rng = np.random.default_rng(0)
+    assert live.market_pwin({"A": ["KC"], "B": ["BUF"]}, None, 200, rng,
+                            store=store) == {"A": 1.0, "B": 0.0}
+
+    # A newer, truncated ladder wins on fetched_at and is passed through as-is:
+    # not normalised, not rejected, sums still short of 1.
+    truncated = {t: [v * 0.8 for v in pmf] for t, pmf in good.items()}
+    store.add_rating({"source": "kalshi", "kind": "distribution", "ok": True,
+                      "fetched_at": 200.0, "doc": truncated})
+    _codes, mat = live._market_distributions(None, store)
+    assert mat.sum(axis=1) == pytest.approx([0.8, 0.8])
+    with pytest.raises(ValueError):
+        live.market_pwin({"A": ["KC"], "B": ["BUF"]}, None, 10,
+                         np.random.default_rng(0), store=store)
+
+
+def test_ensemble_cache_key_tracks_the_stores_newest_rating(monkeypatch):
+    """The file branch keys on mtimes; the store branch keys on the newest
+    fetched_at, and nothing asserted that. If that key were constant a ratings
+    refresh would land and the projection would keep serving the strengths it
+    built at boot -- indefinitely, with every health check green."""
+    from conftest import seed_fixture_ratings
+    from winspool import recommend
+    from winspool.store import InMemoryStore
+    home, away = _fixture_matchups()
+    store = InMemoryStore({})
+    seed_fixture_ratings(store, fetched_at=1000.0)
+    calls = []
+    real = recommend._assemble_sources
+    monkeypatch.setattr(recommend, "_assemble_sources",
+                        lambda *a, **k: (calls.append(1), real(*a, **k))[1])
+    live._ENSEMBLE_CACHE.clear()
+    for _ in range(2):
+        live.source_matrix(None, None, None, home, away, store=store)
+    assert len(calls) == 1, "unchanged ratings must not rebuild the ensemble"
+
+    seed_fixture_ratings(store, fetched_at=2000.0)      # a refresh lands
+    live.source_matrix(None, None, None, home, away, store=store)
+    assert len(calls) == 2, "a newer rating row must invalidate the cache"
