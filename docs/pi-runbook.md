@@ -14,7 +14,7 @@ deploy, and the cutover checklist.
 | Database | `/var/lib/winspool/league.db` (SQLite, WAL) |
 | Backups | `/var/backups/winspool/league-YYYY-MM-DD.db` (nightly, 30 kept) |
 | Secrets | `/etc/winspool/env` (mode 600, owned by root) |
-| Units | `/etc/systemd/system/winspool*.{service,timer}` (source in `deploy/pi/`), including `winspool-odds.{service,timer}` |
+| Units | `/etc/systemd/system/winspool*.{service,timer}` (source in `deploy/pi/`) — `scripts/pi-deploy.sh` installs and enables every `*.timer` there on every deploy, so adding a unit needs no re-run of setup |
 
 The service runs as the `winspool` user but reads code from nate's home
 checkout. That needs `winspool` in the `nate` group, `/home/nate` at mode 750,
@@ -46,10 +46,10 @@ sudo usermod -aG nate winspool && chmod 750 /home/nate   # let the service read 
 sudoedit /etc/winspool/env          # fill in SESSION_SECRET and REFRESH_TOKEN
 /home/nate/awardwinninglisteners/scripts/pi-deploy.sh
 sudo systemctl enable --now winspool
-sudo systemctl start winspool-scores-gameday.timer winspool-scores-offday.timer
-sudo systemctl start winspool-backup.timer
-sudo systemctl start winspool-odds.timer
 ```
+
+`pi-deploy.sh` installs and enables every timer in `deploy/pi/` (see below), so
+no manual `systemctl start` of the timers is needed here or after adding one.
 
 ## Deploying a change
 
@@ -57,9 +57,12 @@ sudo systemctl start winspool-odds.timer
 ssh pi '/home/nate/awardwinninglisteners/scripts/pi-deploy.sh'
 ```
 
-Runs as nate (re-execs via sudo if launched as root). Pulls `main`, re-syncs Python deps, rebuilds the front end, restarts the
-service, and polls `/api/teams` for up to 60s. On failure it prints the last 40
-journal lines and exits non-zero.
+Runs as nate (re-execs via sudo if launched as root). Pulls `main`, re-syncs Python deps, rebuilds the front end, installs
+every `deploy/pi/*.service` and `*.timer` into `/etc/systemd/system/`, reloads
+systemd, and runs `systemctl enable --now` on every `*.timer` (derived from the
+directory listing, so a newly added timer is picked up with no other change).
+Then it restarts the `winspool` service and polls `/api/teams` for up to 60s.
+On failure it prints the last 40 journal lines and exits non-zero.
 
 ## Day-to-day
 

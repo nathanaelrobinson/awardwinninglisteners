@@ -69,8 +69,11 @@ Operations: `docs/pi-runbook.md`.
 ```bash
 sudo ./scripts/pi-setup.sh                     # user, dirs, env template, systemd units
 sudoedit /etc/winspool/env                     # fill in SESSION_SECRET and REFRESH_TOKEN
-./scripts/pi-deploy.sh                         # pull, build, restart, health-check
+./scripts/pi-deploy.sh                         # pull, build, install/enable units, restart, health-check
 ```
+
+`pi-deploy.sh` installs and enables every timer under `deploy/pi/` on each run, so a
+newly added timer starts working on the next deploy — no re-run of `pi-setup.sh` needed.
 
 **Initialize / reset the league** (wipes picks; run before draft night):
 

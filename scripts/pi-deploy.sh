@@ -37,6 +37,25 @@ echo -n "==> warming the simulation model"
 curl -fsS --max-time 180 "http://127.0.0.1:$PORT/api/league/sim-model" >/dev/null 2>&1 \
   && echo " ok" || echo " skipped (will build after restart)"
 
+# Sync units on every deploy, not just first-time setup: a unit added on this
+# branch (or any future one) must not need a manual step to start firing.
+echo "==> installing systemd units"
+$SUDO install -m 644 deploy/pi/*.service deploy/pi/*.timer /etc/systemd/system/
+$SUDO systemctl daemon-reload
+for f in deploy/pi/*.service deploy/pi/*.timer; do echo "    $(basename "$f")"; done
+
+# Enable timers only, derived from the directory rather than a hardcoded list
+# — a hardcoded list is how a newly added timer went silently un-started
+# before. The oneshot .service units are triggered by their timers (or, for
+# winspool.service, restarted explicitly below); enabling them directly would
+# fire them at the wrong moment.
+echo "==> enabling timers"
+for timer in deploy/pi/*.timer; do
+  name=$(basename "$timer")
+  $SUDO systemctl enable --now "$name" >/dev/null
+  echo "    $name"
+done
+
 echo "==> restarting"
 $SUDO systemctl restart winspool
 
