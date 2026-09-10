@@ -2,11 +2,10 @@
 //
 // The season, rolled a hundred thousand times, drawn as a hundred thousand
 // lines. The server ships the ensemble; every roll happens here (see sim.ts).
-import { Fragment, useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { deltaColor } from '../colors';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getSimModel } from '../league';
 import type { Rolled, SimModel } from '../sim';
-import { rollAll, rollSeason, sourceLabel, winnerConditionals } from '../sim';
+import { rollAll, rollSeason, sourceLabel } from '../sim';
 import type { RollRequest, RollResponse } from '../sim.worker';
 
 type View = 'all' | 'margin';
@@ -336,79 +335,9 @@ export default function Simulations({ myName }: { myName: string }) {
         </div>
       </div>
 
-      {rolled && <WinnerGrid players={model.players} rolled={rolled} />}
-
       {picked != null && rolled && act
         ? <SeasonDetail model={model} sim={picked} seed={seed} />
         : <div className="panel sim-empty">Click any line to open that simulation.</div>}
-    </div>
-  );
-}
-
-const first = (name: string) => name.split(' ')[0];
-
-/**
- * Whose season has to go wrong for yours to go right.
- *
- * Reading a correlation matrix here would mostly measure arithmetic: the pool
- * is close to zero-sum, so every pair of players comes out negatively
- * correlated whether or not they are really rivals. Conditioning on the winner
- * keeps it in wins instead -- read across a row to see where everyone else
- * lands in the seasons that player takes the pool.
- */
-function WinnerGrid({ players, rolled }: { players: string[]; rolled: Rolled }) {
-  const n = players.length;
-  const c = useMemo(() => winnerConditionals(rolled), [rolled]);
-  const delta = useMemo(
-    () => c.cond.map((row) => Array.from({ length: n }, (_, j) => row[j] - c.mean[j])),
-    [c, n]);
-  // Red means below average and navy above, but each arm is stretched over the
-  // range actually present. Anchoring both at zero would spend half the ramp on
-  // values that never occur -- with every cell between -1 and -4, the whole grid
-  // collapses into the two darkest reds and stops telling them apart.
-  const norm = useMemo(() => {
-    let lo = 0, hi = 0;
-    for (let i = 0; i < n; i++)
-      for (let j = 0; j < n; j++) if (i !== j) {
-        lo = Math.min(lo, delta[i][j]);
-        hi = Math.max(hi, delta[i][j]);
-      }
-    return (v: number) => (v < 0 ? (lo ? v / lo : 0) : (hi ? v / hi : 0));
-  }, [delta, n]);
-
-  return (
-    <div className="panel sim-cond">
-      <h2>Wins vs Own Average, by Pool Winner</h2>
-      <p className="sim-meta">
-        {rolled.nSims.toLocaleString()} simulations · wins above or below each player's own average
-      </p>
-      <div className="sim-cond-grid"
-           style={{ gridTemplateColumns: `auto repeat(${n}, minmax(0, 1fr))` }}>
-        <span />
-        {players.map((p) => <span key={p} className="sim-cond-col">{first(p)}</span>)}
-        {players.map((w, i) => (
-          <Fragment key={w}>
-            <span className="sim-cond-row">
-              {first(w)} wins
-              <i>{((c.counts[i] / (rolled.nSims || 1)) * 100).toFixed(0)}%</i>
-            </span>
-            {players.map((p, j) => {
-              if (i === j) return <span key={p} className="sim-cond-cell self">—</span>;
-              const v = delta[i][j];
-              const { bg, fg } = deltaColor(v < 0 ? -norm(v) : norm(v));
-              return (
-                <span key={p} className="sim-cond-cell" style={{ background: bg, color: fg }}
-                      title={`In the ${c.counts[i].toLocaleString()} seasons ${w} wins, `
-                             + `${p} averages ${c.cond[i][j].toFixed(1)} wins — `
-                             + `${Math.abs(v).toFixed(1)} ${v < 0 ? 'below' : 'above'} `
-                             + `their ${c.mean[j].toFixed(1)} across every season.`}>
-                  {v > 0 ? '+' : ''}{v.toFixed(1)}
-                </span>
-              );
-            })}
-          </Fragment>
-        ))}
-      </div>
     </div>
   );
 }
