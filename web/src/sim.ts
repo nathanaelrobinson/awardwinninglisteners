@@ -27,8 +27,8 @@ export interface SimModel {
   banked: number[];
   weeks: number[];
   games: [number, string, string][];
-  /** finals already banked: [week, home, away, 1 home won / 0 away won / -1 tie] */
-  played: [number, string, string, number][];
+  /** finals already banked: [week, home, away, 1 home won / 0 away won / -1 tie, home score, away score] */
+  played: [number, string, string, number, number, number][];
 }
 
 export interface Rolled {

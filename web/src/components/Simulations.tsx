@@ -15,8 +15,8 @@ const DRAW_N = 5000;           // lines actually painted; every count uses them 
 const COUNTS = [20000, 50000, 100000, 250000];
 
 const WIN = '#1b48e0';         // this player wins
-const HOVER = '#d50a0a';       // the season under the cursor
-const CLOUD = '#9aa1ad';       // someone else wins
+const LOSE = '#d50a0a';        // ...and the seasons they don't
+const CLOUD = '#a6a6a6';       // someone else wins (neutral, so blue reads as blue)
 const RULE = '#d6d9de';
 const DIM = '#626c80';
 
@@ -144,17 +144,33 @@ export default function Simulations({ myName }: { myName: string }) {
       off.width = w * dpr; off.height = h * dpr;
       const oc = off.getContext('2d')!;
       oc.setTransform(dpr, 0, 0, dpr, 0, 0);
+      // Translucent lines composite, so whichever class is drawn last wins the
+      // overlap. Painted in two passes, a 24%-of-seasons colour covered 60% of
+      // the ink. So interleave: same alpha, and alternate the two classes in
+      // slices, which leaves neither systematically on top.
       const a = Math.max(0.03, Math.min(0.16, 420 / Math.max(sample.length, 1)));
-      // losers first so the winning seasons read on top
-      for (const [wins, col, mul] of [[false, CLOUD, 0.8], [true, WIN, 1.3]] as [boolean, string, number][]) {
-        oc.strokeStyle = col; oc.globalAlpha = Math.min(a * mul, 0.5); oc.lineWidth = 1;
-        oc.beginPath();
-        for (const s of sample) {
-          if ((act.winner[s] === pi + 1) !== wins) continue;
-          oc.moveTo(X(0), Y(arr[s * nW]));
-          for (let k = 1; k < nW; k++) oc.lineTo(X(k), Y(arr[s * nW + k]));
+      // Win totals are whole numbers, so at every week each line lands on the
+      // same handful of pixels and the cloud ribs vertically. Offset each line
+      // by a fixed fraction of a win to smear that lattice. It moves a line by
+      // under half a win, which is smaller than the thing being read.
+      const jitter = (s: number) => ((Math.imul(s, 0x9e3779b1) >>> 8) % 1024) / 1024 - 0.5;
+      const SLICES = 12, per = Math.ceil(sample.length / SLICES);
+      oc.lineWidth = 1;
+      oc.globalAlpha = a;
+      for (let slice = 0; slice < SLICES; slice++) {
+        const from = slice * per, to = Math.min(sample.length, from + per);
+        for (const [wins, col] of [[false, CLOUD], [true, WIN]] as [boolean, string][]) {
+          oc.strokeStyle = col;
+          oc.beginPath();
+          for (let i = from; i < to; i++) {
+            const s = sample[i];
+            if ((act.winner[s] === pi + 1) !== wins) continue;
+            const j = jitter(s);
+            oc.moveTo(X(0), Y(arr[s * nW] + j));
+            for (let k = 1; k < nW; k++) oc.lineTo(X(k), Y(arr[s * nW + k] + j));
+          }
+          oc.stroke();
         }
-        oc.stroke();
       }
       cloudCache.current.set(key, off);
     }
@@ -171,9 +187,11 @@ export default function Simulations({ myName }: { myName: string }) {
       c.save(); c.setLineDash([4, 4]); c.strokeStyle = DIM;
       c.beginPath(); c.moveTo(PAD.l, Y(0)); c.lineTo(w - PAD.r, Y(0)); c.stroke(); c.restore();
     }
-    for (const [sim, col] of [[picked, WIN], [hover, HOVER]] as [number | null, string][]) {
+    for (const sim of [picked, hover]) {
       if (sim == null) continue;
-      c.save(); c.strokeStyle = col; c.lineWidth = 2.25; c.lineJoin = 'round';
+      c.save();
+      c.strokeStyle = act.winner[sim] === pi + 1 ? WIN : LOSE;
+      c.lineWidth = 2.25; c.lineJoin = 'round';
       c.beginPath(); c.moveTo(X(0), Y(arr[sim * nW]));
       for (let k = 1; k < nW; k++) c.lineTo(X(k), Y(arr[sim * nW + k]));
       c.stroke(); c.restore();
@@ -334,7 +352,8 @@ function SeasonDetail({ model, sim, seed }: {
     const ti = new Map(model.teams.map((c, i) => [c, i]));
     const str = model.strength[model.sources.indexOf(src)];
 
-    type G = { w: string; l: string; upset: boolean; played?: boolean; tie?: boolean; h: string; a: string };
+    type G = { w: string; l: string; upset: boolean; played?: boolean; tie?: boolean;
+               h: string; a: string; score?: string };
     const byWeek = new Map<number, G[]>();
     const push = (wk: number, g: G) => {
       if (!byWeek.has(wk)) byWeek.set(wk, []);
@@ -343,9 +362,11 @@ function SeasonDetail({ model, sim, seed }: {
 
     // games with a real score are already in `banked`; show them as settled
     const tw = Float64Array.from(model.banked);
-    for (const [wk, home, away, hw] of model.played) {
-      push(wk, { w: hw === 0 ? away : home, l: hw === 0 ? home : away,
-                 upset: false, played: true, tie: hw === -1, h: home, a: away });
+    for (const [wk, home, away, hw, hs, as] of model.played) {
+      const winner = hw === 0 ? away : home, loser = hw === 0 ? home : away;
+      const ws = hw === 0 ? as : hs, ls = hw === 0 ? hs : as;
+      push(wk, { w: winner, l: loser, upset: false, played: true, tie: hw === -1,
+                 h: home, a: away, score: `Final · ${winner} ${ws}, ${loser} ${ls}` });
     }
 
     let upsets = 0;
@@ -364,8 +385,10 @@ function SeasonDetail({ model, sim, seed }: {
       return { p, codes, total: codes.reduce((t, x) => t + x.n, 0) };
     }).sort((a, b) => b.total - a.total);
 
+    const finalsPerWeek = new Map<number, number>();
+    for (const [wk] of model.played) finalsPerWeek.set(wk, (finalsPerWeek.get(wk) ?? 0) + 1);
     return { src, weeks: [...byWeek].sort((a, b) => a[0] - b[0]), owners,
-             upsets, played: model.played.length };
+             upsets, played: model.played.length, finalsPerWeek };
   }, [model, sim, seed]);
 
   const best = d.owners[0].total;
@@ -392,15 +415,19 @@ function SeasonDetail({ model, sim, seed }: {
         ))}
       </div>
       <p className="sim-key">
-        Winner on the left. <b>Dark</b> games have been played, light ones are simulated.{' '}
+        Winner on the left. <b>Shaded rows have been played</b> — hover one for the score.
+        The pale ones are simulated.{' '}
         <span className="mk">*</span> means the ratings had the other team ahead.
       </p>
       <div className={`sim-weeks${lit ? ' dim' : ''}`}>
         {d.weeks.map(([wk, games]) => (
           <div key={wk} className="sim-wk">
-            <div className="sim-wk-lab">Wk {wk}</div>
+            <div className="sim-wk-lab">
+              Wk {wk}
+              {d.finalsPerWeek.get(wk) ? <span> · {d.finalsPerWeek.get(wk)} final</span> : null}
+            </div>
             {games.map((g, i) => (
-              <div key={i}
+              <div key={i} title={g.score}
                    className={`sim-g${g.played ? ' played' : ''}${lit && (g.h === lit || g.a === lit) ? ' hit' : ''}`}>
                 <span className="mk">{g.upset ? '*' : ''}</span>
                 <span className="w">{g.tie ? 'tie' : g.w}</span>
