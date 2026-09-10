@@ -10,10 +10,10 @@ import numpy as np
 
 from .game import HFA
 from .gameodds import GameOdds, to_prob
-from .teams import resolve
+from .teams import N_TEAMS, resolve
 
 HALF_LIFE_WEEKS = 4.0   # a spread this old counts half as much as last week's
-RIDGE = 1e-3            # keeps September solvable, when games < teams
+RIDGE = 1e-3            # base penalty, at a fully connected comparison graph
 SOURCE_ORDER = ("book", "nflverse", "kalshi")
 
 
@@ -67,9 +67,24 @@ def closing_spreads(store, season: int, weeks) -> list:
     return out
 
 
+def sparsity_ridge(n_games: int, base: float = RIDGE) -> float:
+    """Ridge scaled by how under-determined the system is.
+
+    Week 1 gives 16 equations for 32 unknowns, and the comparison graph is 16
+    disjoint pairs: minimum-norm hands each team roughly half its single
+    game's spread with no opponent adjustment at all — yet this is one of five
+    equal voices from day one. Shrinking an unidentified estimate toward league
+    average is the principled response; a hard games-played gate would instead
+    throw away real market information in the weeks it does exist. The penalty
+    relaxes automatically as the graph connects: 32/16 = 2x base at week 1,
+    down to ~0.2x by week 10, negligible once every team has played everyone
+    it is going to."""
+    return float(base) * (N_TEAMS / max(1, int(n_games)))
+
+
 def strength_from_spreads(games, current_week: int,
                           half_life: float = HALF_LIFE_WEEKS,
-                          ridge: float = RIDGE) -> dict:
+                          ridge: float | None = None) -> dict:
     """Least squares over `spread = s_away - s_home - HFA`, weighted by recency.
 
     Strength drifts across a season, so a week-1 spread should not count as much
@@ -90,8 +105,9 @@ def strength_from_spreads(games, current_week: int,
         y[r] = float(spread) + HFA
         w[r] = 0.5 ** (max(0, current_week - week) / half_life)
 
+    lam = sparsity_ridge(len(games)) if ridge is None else float(ridge)
     W = np.diag(w)
-    A = X.T @ W @ X + ridge * np.eye(n)
+    A = X.T @ W @ X + lam * np.eye(n)
     beta = np.linalg.solve(A, X.T @ W @ y)
     beta -= beta.mean()                       # strengths are relative
     return {t: float(beta[idx[t]]) for t in teams}
