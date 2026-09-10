@@ -32,6 +32,11 @@ class Store(Protocol):
     def add_snapshot(self, snapshot: dict) -> str: ...
     def clear_messages(self) -> int: ...
     def list_snapshots(self) -> list[dict]: ...
+    def add_odds(self, snapshot: dict) -> str: ...
+    def put_odds(self, snapshot: dict) -> None: ...
+    def odds_for_week(self, season: int, week: int) -> list[dict]: ...
+    def latest_odds(self, season: int, week: int) -> list[dict]: ...
+    def all_odds(self) -> list[dict]: ...
 
 
 SNAPSHOT_CAP = 50
@@ -47,6 +52,7 @@ class InMemoryStore:
         self._live: dict | None = None
         self._weeks: dict[int, dict] = {}
         self._snapshots: list[dict] = []
+        self._odds: list[dict] = []
         self._lock = threading.Lock()
 
     def get(self) -> dict:
@@ -143,6 +149,32 @@ class InMemoryStore:
         with self._lock:
             self._snapshots = [x for x in self._snapshots if x["id"] != snap["id"]]
             self._snapshots.append(dict(snap))
+
+    # --- odds log (append only) ---
+
+    def add_odds(self, snapshot: dict) -> str:
+        row = {**snapshot, "id": snapshot.get("id") or uuid.uuid4().hex}
+        with self._lock:
+            self._odds.append(row)
+        return row["id"]
+
+    def put_odds(self, snapshot: dict) -> None:
+        with self._lock:
+            self._odds.append(dict(snapshot))
+
+    def odds_for_week(self, season: int, week: int) -> list[dict]:
+        rows = [r for r in self._odds
+                if r["season"] == season and r["week"] == week]
+        return sorted(rows, key=lambda r: r["fetched_at"])
+
+    def latest_odds(self, season: int, week: int) -> list[dict]:
+        best: dict[str, dict] = {}
+        for r in self.odds_for_week(season, week):
+            best[r["source"]] = r
+        return list(best.values())
+
+    def all_odds(self) -> list[dict]:
+        return sorted(self._odds, key=lambda r: r["fetched_at"])
 
 
 class FirestoreStore:
@@ -254,6 +286,33 @@ class FirestoreStore:
         q = self._ref.collection("snapshots").order_by("taken_at")
         return [{"id": d.id, **d.to_dict()} for d in q.stream()]
 
+    # --- odds log (append only) ---
+
+    def _odds_col(self):
+        return self._ref.collection("odds")
+
+    def add_odds(self, snapshot: dict) -> str:
+        row = {**snapshot, "id": snapshot.get("id") or uuid.uuid4().hex}
+        self.put_odds(row)
+        return row["id"]
+
+    def put_odds(self, snapshot: dict) -> None:
+        self._odds_col().document(snapshot["id"]).set(snapshot)
+
+    def odds_for_week(self, season: int, week: int) -> list[dict]:
+        q = (self._odds_col().where("season", "==", int(season))
+             .where("week", "==", int(week)).order_by("fetched_at"))
+        return [d.to_dict() for d in q.stream()]
+
+    def latest_odds(self, season: int, week: int) -> list[dict]:
+        best: dict[str, dict] = {}
+        for r in self.odds_for_week(season, week):
+            best[r["source"]] = r
+        return list(best.values())
+
+    def all_odds(self) -> list[dict]:
+        return [d.to_dict() for d in self._odds_col().order_by("fetched_at").stream()]
+
 
 class SqliteStore:
     """Single-file SQLite store. Same semantics as FirestoreStore, no cloud.
@@ -272,6 +331,10 @@ class SqliteStore:
     CREATE INDEX IF NOT EXISTS snapshots_taken_at ON snapshots(taken_at);
     CREATE TABLE IF NOT EXISTS kv        (k TEXT PRIMARY KEY, v TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS weeks     (week INTEGER PRIMARY KEY, doc TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS odds (id TEXT PRIMARY KEY, season INTEGER NOT NULL,
+                                     week INTEGER NOT NULL, source TEXT NOT NULL,
+                                     fetched_at REAL NOT NULL, doc TEXT NOT NULL);
+    CREATE INDEX IF NOT EXISTS odds_week ON odds(season, week, fetched_at);
     """
 
     def __init__(self, path: str | os.PathLike):
@@ -440,6 +503,39 @@ class SqliteStore:
                 "VALUES (?, ?, ?, ?, ?, ?)",
                 (snap["id"], snap.get("taken_at"), snap.get("reason"),
                  snap.get("n_picks"), snap.get("status"), json.dumps(doc)))
+
+    # --- odds log (append only) ---
+
+    def add_odds(self, snapshot: dict) -> str:
+        row = {**snapshot, "id": snapshot.get("id") or uuid.uuid4().hex}
+        self.put_odds(row)
+        return row["id"]
+
+    def put_odds(self, snapshot: dict) -> None:
+        with self._lock:
+            self._db.execute(
+                "INSERT OR REPLACE INTO odds (id, season, week, source, fetched_at, doc) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (snapshot["id"], int(snapshot["season"]), int(snapshot["week"]),
+                 snapshot["source"], float(snapshot["fetched_at"]),
+                 json.dumps(snapshot)))
+
+    def odds_for_week(self, season: int, week: int) -> list[dict]:
+        rows = self._db.execute(
+            "SELECT doc FROM odds WHERE season=? AND week=? ORDER BY fetched_at, rowid",
+            (int(season), int(week))).fetchall()
+        return [json.loads(r[0]) for r in rows]
+
+    def latest_odds(self, season: int, week: int) -> list[dict]:
+        best: dict[str, dict] = {}
+        for r in self.odds_for_week(season, week):
+            best[r["source"]] = r
+        return list(best.values())
+
+    def all_odds(self) -> list[dict]:
+        rows = self._db.execute(
+            "SELECT doc FROM odds ORDER BY fetched_at, rowid").fetchall()
+        return [json.loads(r[0]) for r in rows]
 
     def close(self) -> None:
         self._db.close()

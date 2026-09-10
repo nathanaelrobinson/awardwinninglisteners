@@ -69,7 +69,7 @@ def test_export_writes_expected_keys(tmp_path):
     run(["export", "--out", str(out)], populated())
     payload = json.loads(out.read_text())
     assert set(payload) == {"league", "messages", "snapshots", "standings",
-                            "preseason", "live", "weeks", "exported_at"}
+                            "preseason", "live", "weeks", "odds", "exported_at"}
     assert len(payload["messages"]) == 2
     assert len(payload["snapshots"]) == 2
     assert payload["league"]["players"] == PLAYERS
@@ -132,3 +132,30 @@ def test_import_rejects_a_file_that_is_not_an_export(tmp_path):
         run(["import", "--from", str(bad)], dst)
     assert "not a winspool export" in str(e.value)
     dst.close()
+
+
+def test_export_and_import_carry_the_odds_log(tmp_path):
+    from winspool.store import SqliteStore
+
+    src = SqliteStore(tmp_path / "src.db")
+    src.put({"players": [], "picks": [], "status": "done"})
+    rid = src.add_odds({"season": 2026, "week": 1, "source": "book",
+                        "fetched_at": 100.0,
+                        "games": [{"home": "KC", "away": "DEN", "spread": -2.5,
+                                   "total": 43.5, "ml_home": -148, "ml_away": 124,
+                                   "yes_home": None, "yes_away": None,
+                                   "p_home": None}]})
+
+    payload = {"league": src.get(), "messages": src.all_messages(),
+               "snapshots": src.all_snapshots(), "standings": src.get_standings(),
+               "odds": src.all_odds()}
+
+    dst = SqliteStore(tmp_path / "dst.db")
+    dst.put(payload["league"])
+    for row in payload["odds"]:
+        dst.put_odds(row)
+
+    got = dst.odds_for_week(2026, 1)
+    assert len(got) == 1
+    assert got[0]["id"] == rid
+    assert got[0]["games"][0]["ml_away"] == 124
