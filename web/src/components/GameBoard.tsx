@@ -52,7 +52,43 @@ function Matchup({ g, owner }: { g: WeekGame; owner: Record<string, string> }) {
   );
 }
 
-function ProbCell({ g }: { g: WeekGame }) {
+// How the market has moved this week. Scaled to the series' own min and max —
+// a zero-based axis would flatten every line on the board into the same
+// horizontal bar, and the whole interest is a move from, say, 55% to 57%.
+function Spark({ history }: { history: [number, number][] }) {
+  if (history.length < 3) return null;
+  const ys = history.map(([, p]) => p);
+  const min = Math.min(...ys);
+  const max = Math.max(...ys);
+  const pad = Math.max(0.005, (max - min) * 0.15);
+  const lo = min - pad;
+  const hi = max + pad;
+  const t0 = history[0]![0];
+  const span = history[history.length - 1]![0] - t0;
+  const d = history
+    .map(([t, p], i) => {
+      const x = span > 0 ? ((t - t0) / span) * 100 : (i / (history.length - 1)) * 100;
+      const y = (1 - (p - lo) / (hi - lo)) * 100;
+      return `${i ? 'L' : 'M'}${x.toFixed(2)} ${y.toFixed(2)}`;
+    })
+    .join(' ');
+  const open = ys[0]!;
+  const now = ys[ys.length - 1]!;
+  const move = (now - open) * 100;
+  return (
+    <svg
+      className="pbspark"
+      viewBox="0 0 100 100"
+      preserveAspectRatio="none"
+      role="img"
+    >
+      <title>{`${(open * 100).toFixed(1)}% → ${(now * 100).toFixed(1)}% (${move >= 0 ? '+' : '−'}${Math.abs(move).toFixed(1)} pts)`}</title>
+      <path d={d} fill="none" vectorEffect="non-scaling-stroke" />
+    </svg>
+  );
+}
+
+function ProbCell({ g, owner }: { g: WeekGame; owner: Record<string, string> }) {
   if (g.state === 'final') {
     const p = g.p_used ?? g.p_model;
     if (p == null || g.home_score == null || g.away_score == null) return <div />;
@@ -77,16 +113,26 @@ function ProbCell({ g }: { g: WeekGame }) {
   const hi = Math.max(...v);
   const mean = v.reduce((a, b) => a + b, 0) / v.length;
   const used = g.p_used ?? mean;
-  const split = hi - lo > 0.08;
+  // 50% is the origin: the bar starts at the midpoint and grows toward whoever
+  // is favoured, so a coin flip is a stub and a lopsided game is a long bar.
+  const homeFav = used >= 0.5;
+  const fav = homeFav ? g.home : g.away;
+  const favOwner = owner[fav];
+  const half = Math.abs(used - 0.5) * 100;
   return (
-    <div>
-      <div className="pb">
-        <span className="pbtrack" title={`model ${pct(g.p_model)} · book ${pct(g.p_book)} · kalshi ${pct(g.p_kalshi)}`}>
-          <i className={`pbrange${split ? ' split' : ''}`} style={{ left: `${lo * 100}%`, width: `${Math.max(1.2, (hi - lo) * 100)}%` }} />
-          <i className="pbmean" style={{ left: `calc(${used * 100}% - 1px)` }} />
-        </span>
-        <span className="pbval">{pct(used)}</span>
-      </div>
+    <div className="pbx">
+      <TeamLogo code={g.away} size={15} />
+      <span className="pbtrack tall" title={`model ${pct(g.p_model)} · book ${pct(g.p_book)} · kalshi ${pct(g.p_kalshi)}`}>
+        <i className="pbmid" />
+        <i
+          className="pbdiv"
+          style={{ left: `${homeFav ? 50 : 50 - half}%`, width: `${half}%`, background: favOwner ? playerColor(favOwner).bg : '#8a93a3' }}
+        />
+        <i className="pbspread" style={{ left: `${lo * 100}%`, width: `${Math.max(2, (hi - lo) * 100)}%` }} />
+      </span>
+      <TeamLogo code={g.home} size={15} />
+      <span className="pbval">{pct(used)}</span>
+      <Spark history={g.history} />
     </div>
   );
 }
@@ -157,7 +203,7 @@ export default function GameBoard({ week, games, players }: { week: number; game
             <When g={g} />
             <Matchup g={g} owner={owner} />
             <div className="line">{line}</div>
-            <ProbCell g={g} />
+            <ProbCell g={g} owner={owner} />
             <Swing g={g} scale={scale} pwin={pwin} />
           </div>
         );
