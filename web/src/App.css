@@ -766,3 +766,32 @@
   background: var(--border); overflow: hidden;
 }
 .sim-bar i { display: block; height: 100%; background: var(--accent); transition: width 0.15s; }
+
+/* Wins vs own average, by pool winner */
+.sim-cond { margin-top: var(--s3); }
+.sim-cond h2 { font-size: 16px; margin: 0 0 2px; }
+.sim-cond-grid {
+  display: grid; gap: 2px; align-items: stretch;
+  font-variant-numeric: tabular-nums;
+  max-width: 660px;   /* a 5x5 matrix, not a full-bleed heat bar */
+}
+.sim-cond-col {
+  font-size: 11px; color: var(--text-dim); text-transform: uppercase;
+  letter-spacing: 0.04em; text-align: center; padding-bottom: var(--s1);
+}
+.sim-cond-row {
+  display: flex; align-items: baseline; gap: 6px; justify-content: flex-end;
+  font-size: 12px; padding-right: var(--s2); white-space: nowrap;
+}
+.sim-cond-row i { font-style: normal; font-size: 11px; color: var(--text-dim); }
+.sim-cond-cell {
+  display: flex; align-items: center; justify-content: center;
+  padding: 7px 4px; border-radius: 4px; font-size: 13px; font-weight: 600;
+}
+.sim-cond-cell.self { background: transparent; color: var(--border-2); font-weight: 400; }
+
+@media (max-width: 620px) {
+  .sim-cond-row { font-size: 11px; padding-right: var(--s1); }
+  .sim-cond-row i { display: none; }
+  .sim-cond-cell { font-size: 11px; padding: 6px 2px; }
+}
