@@ -186,8 +186,15 @@ def test_view_and_doc_never_expose_raw_pins():
                            "Mitch Fischer": "5555"})
     v = league.view(d)
     assert "pins" not in v
+
+    # The stored record keeps only a salt and a hash. Searching the whole doc
+    # for the raw string instead would fail whenever a random salt happens to
+    # contain those four digits, which is about 3% of runs.
+    for player, rec in d["pins"].items():
+        assert set(rec) == {"salt", "hash"}, player
+        assert not any(raw in rec.values()
+                       for raw in ("1111", "2222", "3333", "4444", "5555")), player
     for raw in ("1111", "2222", "3333", "4444", "5555"):
-        assert raw not in str(d)
         assert raw not in str(v)
 
 
