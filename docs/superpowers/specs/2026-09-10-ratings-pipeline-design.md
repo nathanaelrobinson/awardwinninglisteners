@@ -46,21 +46,81 @@ after calibration has something to say), and any rating of our own.
 
 ## What gets fetched, and how often
 
+**The rule, from the project owner: now that the season has started, anything
+static is thrown out. Only sources that can be kept current predict outcomes.**
+
+Applying that rule required auditing what each source actually is, and most of
+them are not what their names suggest:
+
+| Source | What it actually is | Live? |
+| --- | --- | --- |
+| ESPN FPI | `site.web.api.espn.com/apis/fitt/v3/…`, a live API | **yes**, weekly |
+| Kalshi `KXNFLWINS` | a live prediction market | **yes**, continuously |
+| covers | `covers.com/nfl/nfl-odds-win-totals`, a live odds page | **yes** — season-wins futures keep trading |
+| PFF | `pff.com/news/bet-nfl-betting-2026-…`, a preseason news article | no — frozen forever |
+| Clay | `g.espncdn.com/…/ffldraftkit/26/….pdf`, a preseason PDF | no |
+| betmgm | a blog article, and already failing with HTTP 520 | no |
+| nfelo | a live page, but needs a headless browser | dropped |
+| EPA | `EPA_SEASONS = (2025, 2024)` — LAST season's play-by-play | no, as configured |
+
+So the surviving ensemble is:
+
 | Source | Cadence | Why | Mechanism |
 | --- | --- | --- | --- |
 | Kalshi `KXNFLWINS` | daily | live market, absorbs every result; also the sigma calibration target | plain HTTP, existing client |
-| EPA | weekly, Tue | our own computation over nflverse play-by-play | `nfl_data_py.import_pbp_data`, memory-heavy |
-| ESPN FPI | weekly, Tue | publishes weekly | plain HTTP |
-| PFF | weekly, Tue | publishes weekly | plain HTTP |
+| ESPN FPI | weekly, Tue | live API, publishes weekly | plain HTTP |
+| covers win totals | daily | live futures market | plain HTTP |
+| EPA (in-season) | weekly, Tue | see below — the only independent non-market voice | `nfl_data_py.import_pbp_data` |
 
 Tuesday morning is after Monday night football and matches when the rating
 services publish.
 
-**Not fetched:** Clay (a preseason PDF that will never change again), covers and
-betmgm (preseason win totals), and **nfelo** — dropped by the project owner
-because it is the only source needing a headless browser, and putting playwright
-and chromium on the Pi is not worth one weekly rating. No browser dependency
-ships to the Pi at all.
+**Removed from the ensemble entirely:** PFF, Clay and betmgm. All three are
+preseason artifacts that cannot change, and under the owner's rule a source that
+cannot be kept current does not get to predict. **nfelo** is also dropped — it is
+the only source needing a headless browser, and playwright plus chromium on the
+Pi is not worth one weekly rating. No browser dependency ships to the Pi at all.
+
+This is a deletion, not a fade. The previous revision of this design proposed
+generalising `vegas_share` to decay stale sources toward zero; the owner's rule
+supersedes that. A source that is removed cannot drift back in, and there is no
+decay curve to argue about. `vegas_share` itself stays exactly as it is for the
+covers win totals, which are a live market but a season-long one.
+
+### Making EPA live, with shrinkage
+
+The three surviving external sources are one model (FPI) and two markets (Kalshi,
+covers) — and the two markets are highly correlated, so it is closer to two
+independent signals than three. That is thin.
+
+EPA fixes it. It is the only independent, non-market signal we can compute
+ourselves, it is free, and the code already exists — it is simply pointed at the
+wrong season. `EPA_SEASONS = (2025, 2024)` returns the first season that yields
+data, so it reports last year's efficiency and will do so forever.
+
+Pointing it at 2026 makes it live, and reintroduces the problem that presumably
+caused the original choice: as of week 1 the season holds **166 plays across one
+game**, and net EPA/play over that is close to noise.
+
+So it is shrunk toward the prior season by how much of this season exists:
+
+```
+w = plays_2026 / (plays_2026 + K)
+epa = w * epa_2026 + (1 - w) * epa_2025
+```
+
+`K` is the half-weight point in plays — the volume at which this season and last
+count equally. Set `K = 8000`, roughly a third of a season's plays for a team's
+opponents-adjusted sample: week 1 is ~2% this season, by week 8 it is ~55%, by
+season's end ~75%. That is a deliberate choice to move slowly, on the grounds
+that an unstable voice is worse than a lagging one when four voices are all we
+have. `K` is a module constant with this reasoning attached, and is exactly the
+kind of parameter phase 3's calibration should be asked to justify or change.
+
+Note this makes EPA a hybrid rather than a purely live source, and that is
+intended: the prior-season term is not a stale *forecast* being kept past its
+usefulness, it is regularisation on a small sample. The distinction matters —
+what the owner's rule throws out is stale opinion, not statistical shrinkage.
 
 ### The consequence: half the ensemble is frozen
 
@@ -190,11 +250,17 @@ a standing test-reduction order; the suite is 353 and should not balloon.
 
 ## Known limitations
 
-**Three voices are now permanently frozen** and fade rather than update. By week
-9 the ensemble is effectively FPI, PFF, EPA and Kalshi. That is a smaller
-ensemble than it looks on paper, and phase 3's calibration should be asked
-whether four voices with real information beat seven where three are stale — it
-is not obvious that adding a frozen prior helps at all.
+**The ensemble drops from seven voices to four**, and two of the four are
+correlated markets. That is a real reduction in diversity, taken deliberately:
+three of the removed voices could not change, and a forecast that cannot change
+is not evidence about a season in progress. Whether four live voices beat seven
+mostly-frozen ones is exactly the question phase 3's calibration is built to
+answer — and the stored history this phase produces is what will answer it.
+
+**`K = 8000` in the EPA shrinkage is an unvalidated judgement call.** It was
+chosen to move slowly rather than fitted to anything. If it is wrong, EPA is
+either too jumpy in September or too anchored in December. Calibration should
+revisit it once there is enough history to score.
 
 **EPA is memory-heavy.** `import_pbp_data` over a season is the largest thing the
 Pi will do. 4GB free is enough today; if it becomes a problem the fix is to
