@@ -211,8 +211,12 @@ def market_probs(odds_rows: list[dict]) -> dict:
     out = {}
     for key, odds in by_game.items():
         p = market_prob(odds)
-        if p is not None:
-            out[key] = float(p)
+        if p is None:
+            continue
+        p = float(p)
+        if not 0.0 <= p <= 1.0:   # a parse regression, not a probability
+            continue
+        out[key] = p
     return out
 
 
@@ -407,8 +411,12 @@ def refresh_live(store, cache_dir, *, n_seasons=5000) -> dict:
     df = _load_schedule_cached()
     try:
         market = market_probs(store.latest_odds(SEASON, week_of(df)))
-    except Exception:
-        market = {}               # a stale model beats failing the refresh
+    except Exception as e:        # noqa: BLE001 - logged, not raised
+        # Non-fatal: model-only still projects. But silently reverting to the
+        # model for the rest of the season is invisible in the UI, so say so.
+        market = {}
+        print(f"  WARNING: market odds unavailable, using model only: {e}",
+              file=sys.stderr)
     doc = compute_live(
         rosters, df,
         totals_path=os.path.join(cache_dir, "win_totals.csv"),

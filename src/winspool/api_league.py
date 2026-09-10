@@ -357,4 +357,12 @@ def internal_refresh_odds(x_refresh_token: str | None = Header(default=None)):
         out = _oddslog.refresh_odds(get_store(), df, SEASON)
     except Exception as e:
         return JSONResponse(status_code=503, content={"ok": False, "error": str(e)[:200]})
+    # The nflverse baseline is read off a frame we already have, so it writes
+    # even when every live source is dead. Reporting ok on that would let both
+    # books stay down for a season with the timer green and nobody looking:
+    # the pre-kickoff reads are gone the moment they are missed. Go red instead.
+    # The snapshots that did land stay written — partial success, loudly.
+    live_written = [n for n in out["written"] if n != "nflverse"]
+    if out["errors"] or not live_written:
+        return JSONResponse(status_code=503, content={"ok": False, **out})
     return {"ok": True, **out}

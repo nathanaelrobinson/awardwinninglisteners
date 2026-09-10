@@ -797,3 +797,38 @@ def test_week_serves_the_current_week_from_the_live_doc(api, store):
     # No recorded document for week 3, and it isn't the current live week
     # either: 404, not a silent fall-through to the live doc.
     assert c.get("/api/week?week=3").status_code == 404
+
+
+def test_refresh_odds_goes_red_unless_a_live_source_wrote(api, store, monkeypatch):
+    """The nflverse baseline writes off a frame we already hold, so it lands
+    even with both books dead. `curl -fsS` in the systemd unit only fails on a
+    non-2xx, so anything short of 503 here means the irreplaceable pre-kickoff
+    reads can go missing all season with every signal green."""
+    monkeypatch.setenv("REFRESH_TOKEN", "tok")
+    monkeypatch.setattr(api_league._live, "_load_schedule_cached", lambda: None)
+    hdr = {"X-Refresh-Token": "tok"}
+
+    def _returns(out):
+        monkeypatch.setattr(api_league._oddslog, "refresh_odds",
+                            lambda *a, **k: out)
+
+    _returns({"season": 2026, "week": 1, "errors": {},
+              "written": {"nflverse": 2, "book": 2, "kalshi": 2}})
+    r = api.post("/internal/refresh-odds", headers=hdr)
+    assert r.status_code == 200 and r.json()["ok"] is True
+
+    _returns({"season": 2026, "week": 1, "errors": {"book": "espn is down"},
+              "written": {"nflverse": 2, "kalshi": 2}})
+    r = api.post("/internal/refresh-odds", headers=hdr)
+    assert r.status_code == 503
+    # what did land is still reported, and is still written
+    assert r.json()["written"] == {"nflverse": 2, "kalshi": 2}
+
+    _returns({"season": 2026, "week": 1,
+              "errors": {"book": "down", "kalshi": "down"},
+              "written": {"nflverse": 2}})
+    assert api.post("/internal/refresh-odds", headers=hdr).status_code == 503
+
+    # even with no error recorded, a baseline-only write is not a success
+    _returns({"season": 2026, "week": 1, "errors": {}, "written": {"nflverse": 2}})
+    assert api.post("/internal/refresh-odds", headers=hdr).status_code == 503
