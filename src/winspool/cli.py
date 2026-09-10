@@ -22,7 +22,7 @@ def main(argv=None):
     rec.add_argument("--slot", type=int, required=True)
     rec.add_argument("--taken", default="")
     rec.add_argument("--schedule", default="data/cache/schedule_2026.csv")
-    rec.add_argument("--totals", default="data/cache/win_totals.csv")
+    rec.add_argument("--totals", default="data/preseason/win_totals.csv")
     rec.add_argument("--n", type=int, default=20000)
     rec.add_argument("--seed", type=int, default=0)
     rec.add_argument("--rollouts", type=int, default=0)
@@ -30,14 +30,14 @@ def main(argv=None):
 
     ana = sub.add_parser("analyze")
     ana.add_argument("--schedule", default="data/cache/schedule_2026.csv")
-    ana.add_argument("--totals", default="data/cache/win_totals.csv")
+    ana.add_argument("--totals", default="data/preseason/win_totals.csv")
     ana.add_argument("--power", default=None)
     ana.add_argument("--n", type=int, default=20000)
     ana.add_argument("--seed", type=int, default=0)
 
     pos = sub.add_parser("positional")
     pos.add_argument("--schedule", default="data/cache/schedule_2026.csv")
-    pos.add_argument("--totals", default="data/cache/win_totals.csv")
+    pos.add_argument("--totals", default="data/preseason/win_totals.csv")
     pos.add_argument("--power", default=None)
     pos.add_argument("--n", type=int, default=20000)
     pos.add_argument("--seed", type=int, default=0)
@@ -49,7 +49,7 @@ def main(argv=None):
     fet.add_argument("--cache", default="data/cache")
 
     mkt = sub.add_parser("market")
-    mkt.add_argument("--dist", default="data/cache/kalshi_distributions.csv")
+    mkt.add_argument("--dist", default="data/preseason/kalshi_distributions.csv")
 
     li = sub.add_parser("league-init")
     li.add_argument("--players", required=True, help="comma-separated, 5 names")

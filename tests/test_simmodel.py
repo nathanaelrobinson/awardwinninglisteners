@@ -15,10 +15,10 @@ from winspool.teams import N_TEAMS, TEAM_INDEX, TEAMS
 
 COLS = ["week", "game_type", "home_team", "away_team", "home_score", "away_score"]
 
-CACHE = "data/cache"
-TOTALS = f"{CACHE}/win_totals.csv"
-POWER = f"{CACHE}/power_ratings.csv"
-KALSHI = f"{CACHE}/kalshi_distributions.csv"
+PRE = "data/preseason"
+TOTALS = f"{PRE}/win_totals.csv"
+POWER = f"{PRE}/power_ratings.csv"
+KALSHI = f"{PRE}/kalshi_distributions.csv"
 
 
 def full_schedule(played_weeks=0):
@@ -148,12 +148,21 @@ def test_a_tie_is_reported_and_split(rosters):
 
 
 class _StubStore:
-    """Just the two methods refresh_model touches."""
+    """Just the three methods refresh_model touches."""
     def __init__(self):
+        from conftest import seed_fixture_ratings
         self.saved = None
+        self._ratings = {}
+        seed_fixture_ratings(self)
 
     def get(self):
         return {}
+
+    def add_rating(self, row):
+        self._ratings[row["source"]] = row
+
+    def latest_ratings(self):
+        return self._ratings
 
     def put_sim_model(self, doc):
         self.saved = doc
@@ -165,7 +174,7 @@ def test_refresh_model_stores_it(rosters, monkeypatch):
     monkeypatch.setattr(lg, "view", lambda _doc: {"rosters": rosters})
     store = _StubStore()
 
-    doc = simmodel.refresh_model(store, CACHE, sched_df=full_schedule(played_weeks=1))
+    doc = simmodel.refresh_model(store, sched_df=full_schedule(played_weeks=1))
     assert store.saved is doc
     assert doc["week"] == 2
     assert len(doc["games"]) == 3 * (N_TEAMS // 2)
@@ -180,10 +189,10 @@ def test_a_supplied_schedule_is_not_refetched(rosters, monkeypatch):
     monkeypatch.setattr(simmodel.live, "_load_schedule_cached",
                         lambda: calls.append(1) or full_schedule())
 
-    simmodel.refresh_model(_StubStore(), CACHE, sched_df=full_schedule())
+    simmodel.refresh_model(_StubStore(), sched_df=full_schedule())
     assert calls == []
 
-    simmodel.refresh_model(_StubStore(), CACHE)
+    simmodel.refresh_model(_StubStore())
     assert calls == [1], "without one it must fall back to loading the schedule"
 
 

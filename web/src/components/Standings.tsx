@@ -15,6 +15,7 @@ const ROWS = 6;
 const LENS_LABEL: Record<string, string> = {
   actual: 'Actual', blend: 'Blend', espn_fpi: 'FPI', nfelo: 'nfelo', clay: 'Clay',
   pff: 'PFF', epa: 'EPA', kalshi: 'Kalshi', vegas: 'Vegas',
+  covers: 'Covers', epa_adj: 'EPA', market_strength: 'Market',
 };
 const LENS_KEY = 'wp:lens';
 const loadLens = () => { try { return localStorage.getItem(LENS_KEY) ?? 'actual'; } catch { return 'actual'; } };

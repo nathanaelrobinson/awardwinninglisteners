@@ -4,7 +4,6 @@ import os
 import random
 import sqlite3
 import time
-from pathlib import Path
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Response
 from fastapi.responses import JSONResponse
@@ -29,9 +28,7 @@ TOUCH_EVERY = 20.0  # seconds; Lobby considers a player online if seen within 30
 
 _LOGIN_THROTTLE = Throttle()
 
-# In-season live projection. Same cache dir the sim reads; overridable for tests.
-LIVE_CACHE_DIR = os.environ.get("WINSPOOL_DATA_DIR") or str(
-    Path(__file__).resolve().parents[2] / "data" / "cache")
+# In-season live projection.
 LIVE_N_SEASONS = 5000
 SEASON = int(os.environ.get("WINSPOOL_SEASON", "2026"))
 
@@ -270,7 +267,7 @@ def get_sim_model(_: str | None = Depends(viewer)):
     """
     doc = _store_read(get_store().get_sim_model)
     if doc is None:
-        doc = _run_read(lambda: _simmodel.refresh_model(get_store(), LIVE_CACHE_DIR))
+        doc = _run_read(lambda: _simmodel.refresh_model(get_store()))
     return doc
 
 
@@ -333,7 +330,7 @@ def internal_refresh_live(x_refresh_token: str | None = Header(default=None)):
     if doc["status"] != "done":
         raise HTTPException(409, "draft not finished")
     try:
-        out = _live.refresh_live(get_store(), LIVE_CACHE_DIR, n_seasons=LIVE_N_SEASONS)
+        out = _live.refresh_live(get_store(), n_seasons=LIVE_N_SEASONS)
     except Exception as e:
         return JSONResponse(status_code=503, content={"ok": False, "error": str(e)[:200]})
     return {"ok": True, "week": out["week"], "computed_at": out["computed_at"]}

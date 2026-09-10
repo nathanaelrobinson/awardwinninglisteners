@@ -1,12 +1,13 @@
 """In-season live projection: banked wins plus a remaining-season Monte Carlo.
 
 Pure functions over the nfl_data_py schedule frame (columns week, game_type,
-home_team, away_team, home_score, away_score) and the data/cache ratings files.
-No store or network access except in refresh_live()."""
-import json
+home_team, away_team, home_score, away_score) and the ratings, which come from
+the store in production and from CSV paths on a laptop with no store.
+No network access except in refresh_live()."""
 import os
 import sys
 import time
+from datetime import datetime, timezone
 
 import numpy as np
 import pandas as pd
@@ -75,17 +76,9 @@ def remaining_games_per_team(remaining: pd.DataFrame) -> np.ndarray:
     return per
 
 
-VEGAS_FADE_WEEK = 9
 BASE_SIGMA = 4.5
 SPREAD_K = 2.0
 TIE_BASE = 0.003
-
-
-def vegas_share(week: int) -> float:
-    """Multiplier on Vegas's equal share of the ensemble. Pre-season win totals
-    stop updating once the season starts, so their voice fades linearly from
-    full weight at week 1 to nothing from week 9 on."""
-    return max(0.0, 1.0 - (week - 1) / (VEGAS_FADE_WEEK - 1))
 
 
 _ENSEMBLE_CACHE: dict = {}
@@ -95,18 +88,30 @@ def _mtime(path):
     return os.path.getmtime(path) if path and os.path.exists(path) else None
 
 
-def _ensemble(totals_path, power_path, kalshi_dist_path, full_home, full_away, seed=0):
+def ratings_stamp(store) -> float | None:
+    """Newest fetched_at across the store's current rating sources, or None.
+
+    A ratings refresh is the only thing that changes what the model reads, so
+    this is both the cache key below and the doc's ratings_fetched_at."""
+    stamps = [float(r["fetched_at"]) for r in store.latest_ratings().values()]
+    return max(stamps) if stamps else None
+
+
+def _ensemble(totals_path, power_path, kalshi_dist_path, full_home, full_away, seed=0,
+              store=None):
     """(sources, sigma_full): the same voices and the same Kalshi-calibrated
     per-team season sigma that Draft Review's pre-season build uses
     (recommend.build_wins), so the live model agrees with it before kickoff.
-    Memoised on the input files' mtimes — the backouts and the calibration
-    each take seconds and the inputs only change on a ratings refresh."""
-    key = (_mtime(totals_path), _mtime(power_path), _mtime(kalshi_dist_path), len(full_home))
+    Memoised on the ratings' freshness — the backouts and the calibration each
+    take seconds, and only a refresh should invalidate them."""
+    key = ((ratings_stamp(store),) if store is not None
+           else (_mtime(totals_path), _mtime(power_path), _mtime(kalshi_dist_path)))
+    key = (*key, len(full_home))
     if key not in _ENSEMBLE_CACHE:
         from .recommend import _assemble_sources
         power = power_path if power_path and os.path.exists(power_path) else None
         sources, target_sd = _assemble_sources(totals_path, power, full_home, full_away,
-                                               kalshi_dist_path)
+                                               kalshi_dist_path, store=store)
         strengths, _ = ensemble(sources, base_sigma=BASE_SIGMA, spread_k=SPREAD_K)
         sigma = np.full(N_TEAMS, BASE_SIGMA)
         if len(sources) > 1 and np.any(~np.isnan(target_sd)):
@@ -117,19 +122,20 @@ def _ensemble(totals_path, power_path, kalshi_dist_path, full_home, full_away, s
     return _ENSEMBLE_CACHE[key]
 
 
-def source_matrix_for_week(totals_path, power_path, kalshi_dist_path, full_home, full_away, week):
+def source_matrix(totals_path, power_path, kalshi_dist_path, full_home, full_away,
+                  store=None):
     """(matrix, weights, names, sigma_full). Every source is an equal voice, as in
-    the pre-season build; Vegas's share is scaled by vegas_share(week) and the
-    weights renormalised."""
+    the pre-season build.
+
+    The win-totals voice used to fade to nothing by week 9, on the grounds that
+    pre-season totals stop updating once the season starts. They are now fetched
+    daily from a live futures market, so there is no staleness left to discount
+    and no source outranks another until calibration says otherwise."""
     sources, sigma_full = _ensemble(totals_path, power_path, kalshi_dist_path,
-                                    full_home, full_away)
+                                    full_home, full_away, store=store)
     names = list(sources)
     matrix = to_common_scale(sources)
     w = np.ones(len(names))
-    if "vegas" in sources:
-        w[names.index("vegas")] = vegas_share(week)
-    if w.sum() == 0:
-        w = np.ones(len(names))
     return matrix, w / w.sum(), names, sigma_full
 
 
@@ -169,14 +175,30 @@ def _dist(col, lo, n_bins):
     return (counts / max(counts.sum(), 1)).round(5).tolist()
 
 
-def market_pwin(rosters: dict, kalshi_dist_path, n_sims: int, rng):
-    """Kalshi-implied P(win pool): draw each team's season total from its market
-    PMF independently (as `winspool market` does) and apply the >= rule.
-    None when the distributions file is missing or any roster team has no
-    market distribution."""
+def _market_distributions(kalshi_dist_path, store=None):
+    """(codes, pmf matrix) from the store's newest distribution row, or from the
+    CSV when there is no store. None when neither has one."""
+    if store is not None:
+        rows = [r for r in store.latest_ratings().values() if r["kind"] == "distribution"]
+        if not rows:
+            return None
+        doc = max(rows, key=lambda r: float(r["fetched_at"]))["doc"]
+        codes = sorted(doc)
+        return codes, np.asarray([doc[c] for c in codes], dtype=float)
     if not kalshi_dist_path or not os.path.exists(kalshi_dist_path):
         return None
-    codes, mat = load_distributions(kalshi_dist_path)
+    return load_distributions(kalshi_dist_path)
+
+
+def market_pwin(rosters: dict, kalshi_dist_path, n_sims: int, rng, store=None):
+    """Kalshi-implied P(win pool): draw each team's season total from its market
+    PMF independently (as `winspool market` does) and apply the >= rule.
+    None when there are no distributions or any roster team has no
+    market distribution."""
+    dists = _market_distributions(kalshi_dist_path, store)
+    if dists is None:
+        return None
+    codes, mat = dists
     col = {c: i for i, c in enumerate(codes)}
     if any(t not in col for teams in rosters.values() for t in teams):
         return None
@@ -267,9 +289,9 @@ def _week_wins(outcomes, wh, wa, n_seasons):
     return w
 
 
-def compute_live(rosters: dict, sched_df: pd.DataFrame, *, totals_path, power_path,
-                 kalshi_dist_path, ratings_fetched_at, market: dict | None = None,
-                 n_seasons=5000, seed=0, now=None) -> dict:
+def compute_live(rosters: dict, sched_df: pd.DataFrame, *, totals_path=None, power_path=None,
+                 kalshi_dist_path=None, ratings_fetched_at=None, market: dict | None = None,
+                 n_seasons=5000, seed=0, now=None, store=None) -> dict:
     """The live projection document. See the spec for the field list."""
     rng = np.random.default_rng(seed)
     played, remaining = split_schedule(sched_df)
@@ -278,15 +300,15 @@ def compute_live(rosters: dict, sched_df: pd.DataFrame, *, totals_path, power_pa
     reg = _reg(sched_df)
     full_home = reg["home_team"].map(TEAM_INDEX).to_numpy(dtype=int)
     full_away = reg["away_team"].map(TEAM_INDEX).to_numpy(dtype=int)
-    matrix, weights, _names, sigma_full = source_matrix_for_week(
-        totals_path, power_path, kalshi_dist_path, full_home, full_away, week)
+    matrix, weights, _names, sigma_full = source_matrix(
+        totals_path, power_path, kalshi_dist_path, full_home, full_away, store=store)
     this_week = games_in_week(remaining, week)
     rest = remaining[remaining["week"] != week].reset_index(drop=True)
     sigma = season_sigma(remaining_games_per_team(rest), base_sigma=sigma_full)
     wh, wa = remaining_matchups(this_week)
 
-    # Current-week games are simulated from the market where we have one. This
-    # finishes the thought vegas_share starts: fresher information wins.
+    # Current-week games are simulated from the market where we have one:
+    # fresher information wins.
     override = np.full(len(wh), np.nan)
     game_source = ["model"] * len(wh)
     if market:
@@ -315,7 +337,7 @@ def compute_live(rosters: dict, sched_df: pd.DataFrame, *, totals_path, power_pa
     stack = np.stack(list(totals.values()), axis=1)
     lo, hi = int(np.floor(stack.min())), int(np.ceil(stack.max()))
     xs = list(range(lo, hi + 1))
-    mkt = market_pwin(rosters, kalshi_dist_path, n_seasons, rng)
+    mkt = market_pwin(rosters, kalshi_dist_path, n_seasons, rng, store=store)
     rows = [{**r, "market_pwin": None if mkt is None else mkt.get(r["player"]),
              "dist": _dist(totals[r["player"]], lo, len(xs))} for r in blend]
 
@@ -403,20 +425,16 @@ def _load_schedule_cached() -> pd.DataFrame:
         return _LAST_SCHEDULE
 
 
-def ratings_fetched_at(cache_dir) -> str | None:
-    """Newest fetched_at among ok power-rating sources in sources_meta.json, or
-    None."""
-    path = os.path.join(cache_dir, "sources_meta.json")
-    if not os.path.exists(path):
+def ratings_fetched_at(store) -> str | None:
+    """When the ensemble the doc was built from was last refreshed, as the
+    ISO-8601 string the front end's staleness check parses."""
+    stamp = ratings_stamp(store)
+    if stamp is None:
         return None
-    with open(path) as f:
-        meta = json.load(f)
-    stamps = [m["fetched_at"] for m in meta
-              if m.get("ok") and m.get("fetched_at") and m.get("kind") == "power"]
-    return max(stamps) if stamps else None
+    return datetime.fromtimestamp(stamp, tz=timezone.utc).isoformat()
 
 
-def refresh_live(store, cache_dir, *, n_seasons=5000) -> dict:
+def refresh_live(store, *, n_seasons=5000) -> dict:
     """Recompute the live doc from the league's final rosters and the current
     schedule + ratings cache; store it; snapshot the week if not yet snapshotted."""
     from . import league as _league
@@ -430,14 +448,9 @@ def refresh_live(store, cache_dir, *, n_seasons=5000) -> dict:
         market = {}
         print(f"  WARNING: market odds unavailable, using model only: {e}",
               file=sys.stderr)
-    doc = compute_live(
-        rosters, df,
-        totals_path=os.path.join(cache_dir, "win_totals.csv"),
-        power_path=os.path.join(cache_dir, "power_ratings.csv"),
-        kalshi_dist_path=os.path.join(cache_dir, "kalshi_distributions.csv"),
-        ratings_fetched_at=ratings_fetched_at(cache_dir),
-        market=market,
-        n_seasons=n_seasons)
+    doc = compute_live(rosters, df, store=store,
+                       ratings_fetched_at=ratings_fetched_at(store),
+                       market=market, n_seasons=n_seasons)
     store.put_live(doc)
     # The model's own voice, logged alongside the market's, so a completed week
     # can score the two against each other. Imported here: oddslog imports us.
@@ -458,7 +471,7 @@ def refresh_live(store, cache_dir, *, n_seasons=5000) -> dict:
     # the season from nfl_data_py, which costs ~2s a request.
     from . import simmodel as _simmodel
     try:
-        _simmodel.refresh_model(store, cache_dir, sched_df=df)
+        _simmodel.refresh_model(store, sched_df=df)
     except Exception:
         pass                      # a stale model beats failing the live refresh
     if not any(w["week"] == doc["week"] for w in store.list_weeks()):

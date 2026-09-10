@@ -583,11 +583,13 @@ def _inseason_df():
 
 
 @pytest.fixture
-def live_env(monkeypatch, tmp_path):
+def live_env(monkeypatch, store):
+    from conftest import seed_fixture_ratings
     from winspool import live, standings
     monkeypatch.setattr(standings, "_load_schedule", _inseason_df)
     monkeypatch.setattr(live, "_LAST_SCHEDULE", None)
-    monkeypatch.setattr(api_league, "LIVE_CACHE_DIR", "tests/fixtures")
+    live._ENSEMBLE_CACHE.clear()
+    seed_fixture_ratings(store)
     monkeypatch.setattr(api_league, "LIVE_N_SEASONS", 300)
     monkeypatch.setenv("REFRESH_TOKEN", "tok")
     return live
@@ -636,7 +638,7 @@ def test_weekly_snapshot_written_once_per_week(api, store, live_env):
     assert weeks[0]["week"] == 2
     assert set(weeks[0]["rows"][0]) == {"player", "pwin", "exp_wins"}
     # per-source views ride along so the card can show a delta under any lens
-    assert list(weeks[0]["views"]) == ["blend", "vegas", "fpi", "sagarin", "massey"]
+    assert list(weeks[0]["views"]) == ["blend", "covers", "fpi", "sagarin", "massey"]
     assert set(weeks[0]["views"]["fpi"][0]) == {"player", "pwin", "exp_wins"}
     assert weeks[0]["views"]["blend"] == weeks[0]["rows"]
 

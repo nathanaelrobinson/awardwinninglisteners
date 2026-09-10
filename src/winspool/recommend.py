@@ -53,7 +53,7 @@ def _assemble_sources(totals_path, power_path, home, away, kalshi_dist_path,
 
 def build_wins(schedule_path, totals_path, n_seasons=20000, seed=0,
                power_path=None, tie_base=0.003, base_sigma=4.5, spread_k=2.0,
-               kalshi_dist_path="data/cache/kalshi_distributions.csv"):
+               kalshi_dist_path="data/preseason/kalshi_distributions.csv"):
     """Ensemble every available source into the season sim WITHOUT anchoring on
     any one. Vegas (covers, backed out of the O/U), Kalshi (its own voice), and
     each power column vote equally. The mixture samples which world is real; the

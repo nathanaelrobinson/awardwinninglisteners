@@ -163,5 +163,6 @@ export function rollAll(m: SimModel, nSims: number, seed: number,
 export const SOURCE_LABEL: Record<string, string> = {
   vegas: 'Vegas', kalshi: 'Kalshi', espn_fpi: 'ESPN FPI',
   nfelo: 'nfelo', clay: 'Clay', pff: 'PFF', epa: 'EPA',
+  covers: 'Covers', epa_adj: 'EPA', market_strength: 'Market',
 };
 export const sourceLabel = (s: string) => SOURCE_LABEL[s] ?? s;

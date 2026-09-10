@@ -34,9 +34,14 @@ from .teams import DIVISION, N_PLAYERS, N_TEAMS, TEAM_INDEX, TEAM_NAMES, TEAMS
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CACHE = Path(os.environ.get("WINSPOOL_DATA_DIR") or REPO_ROOT / "data" / "cache")
 SCHEDULE = CACHE / "schedule_2026.csv"
-TOTALS = CACHE / "win_totals.csv"
-POWER = CACHE / "power_ratings.csv"
-KALSHI = CACHE / "kalshi_distributions.csv"
+
+# Draft Review replays a finished draft, so it reads the ratings as they stood
+# on draft night, not today's. Live ratings live in the store now; these three
+# are a frozen snapshot and are never refreshed.
+PRESEASON = Path(os.environ.get("WINSPOOL_PRESEASON_DIR") or REPO_ROOT / "data" / "preseason")
+TOTALS = PRESEASON / "win_totals.csv"
+POWER = PRESEASON / "power_ratings.csv"
+KALSHI = PRESEASON / "kalshi_distributions.csv"
 
 N_SEASONS = 8000     # served matrix depth
 FAST_ROWS = 5000     # subsample used for the per-request rollouts (speed)
