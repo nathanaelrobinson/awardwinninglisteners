@@ -28,11 +28,14 @@ In scope:
 2. An append-only snapshot log of what each source said, hourly.
 3. A This Week tab: player strip, game board, week picker, completed-week view.
 
+The current week's games are also projected from market odds rather than from
+team strengths — see *Using the market*.
+
 Out of scope, deliberately: skill-based source weighting (needs logged history
 first) and an in-season rating of our own (wants the calibration work first).
-Both are unblocked by the snapshot log this design builds. The `live` ensemble's
-weights do not change here — game odds are shown alongside the model, not
-blended into it.
+Both are unblocked by the snapshot log this design builds. The season ensemble's
+source weights are untouched by this design; the only model change is which
+probability the current week's games are simulated from.
 
 ## Sources
 
@@ -53,10 +56,13 @@ signature, registered in `fetch/registry.py` alongside the existing entries:
 def fetch(season: int, week: int) -> list[GameOdds]
 ```
 
-`GameOdds` is a frozen dataclass: `home`, `away`, `spread` (home-favoured
-negative, matching ESPN), `total`, `p_home`, `source`, `fetched_at`. Team codes
-are normalised through `teams.resolve` at the adapter boundary, so nothing
-downstream ever sees `LAR`, `WSH` or `JAC`.
+`GameOdds` is a frozen dataclass carrying **raw** source values, never derived
+ones: `home`, `away`, `spread` (home-favoured negative, matching ESPN), `total`,
+`ml_home` and `ml_away` (American odds as quoted), `yes_home` and `yes_away`
+(Kalshi bid/ask mids as quoted), `source`, `fetched_at`. Team codes are
+normalised through `teams.resolve` at the adapter boundary, so nothing
+downstream ever sees `LAR`, `WSH` or `JAC`; that is the only transformation an
+adapter is allowed to perform.
 
 The registry is the reason The Odds API is not in this design. If ESPN's
 undocumented shape breaks, adding a paid adapter is a new module and a key, not
@@ -64,14 +70,25 @@ a rewrite. We are not paying for that until ESPN actually fails.
 
 ### Converting to a probability
 
+Conversion happens **on read**, never on write. The log holds what the source
+said; probabilities are derived from it every time they are needed. This is what
+makes the choices below reversible: a better method applied in a later season
+can be run back over every week already recorded, instead of being stuck with
+whatever we baked in at write time.
+
 - **Spread.** `norm.cdf(spread / SCALE)` with the existing `game.SCALE`, so a
   spread-derived probability is on the same footing as the model's own.
 - **Moneyline.** American odds to implied probability per side, then normalise
-  the pair to sum to 1. This removes the vig by the proportional method — crude,
-  and it biases favourites slightly, but the alternatives need a shape parameter
-  we have no data to fit yet. Revisit once the log has a season in it.
-- **Kalshi.** Mid of yes-bid and yes-ask per side, then normalise the pair, the
-  same treatment `fetch/kalshi.py` already gives the season ladder.
+  the pair to sum to 1 — the proportional method.
+- **Kalshi.** Bid/ask mid per side, normalised the same way, as
+  `fetch/kalshi.py` already treats the season ladder.
+
+Proportional de-vigging is known to under-adjust longshots, so the alternatives
+are worth naming. Measured across all fifteen Week 1 games, proportional,
+additive and Shin differ by **at most 1.2 points and typically under 0.5** —
+`CLE @ JAX` is the widest at 0.787 / 0.799 / 0.787 against a 4.2% vig. At this
+margin the choice does not matter, and because the log stores raw odds it stops
+being a decision we are committed to.
 
 ## The snapshot log
 
@@ -95,8 +112,14 @@ A snapshot document is one source's full read of one week:
 ```json
 {"season": 2026, "week": 1, "source": "book", "fetched_at": 1789...,
  "games": [{"home": "KC", "away": "DEN", "spread": -2.5, "total": 43.5,
-            "p_home": 0.5721}]}
+            "ml_home": -192, "ml_away": 160}]}
 ```
+
+No `p_home`. Everything in a snapshot is a quoted number; a probability appears
+only when something reads the log and converts. The one exception is the model's
+own per-game probability, which has no rawer form — it is logged as a
+probability under source `model`, so that the completed-week view can score the
+model against the market from Week 1 without recomputing anything.
 
 Whole-week rather than per-game documents: it keeps writes to three per hour
 instead of ~48, makes "what did the book think at 9am Sunday" one read, and
@@ -150,6 +173,49 @@ the other two, which is most of the argument for three of them.
 On Cloud Run the equivalent is a fifth Cloud Scheduler job created by
 `scripts/cr-schedule.sh`. Cloud Run is a paused rollback host and this is a
 cheap consistency, not a live path.
+
+## Using the market
+
+For the current week's games, the live projection simulates from the market
+probability instead of the ratings-derived one. Everything from next week
+onward is unchanged, and the season ensemble's weights are untouched.
+
+The justification is the one already encoded in `vegas_share`, which fades
+preseason win totals to nothing by week 9 on the grounds that stale information
+should lose to fresh information. A closing line for a game kicking off on
+Sunday is the freshest information available about that game; preferring it over
+a number derived from preseason team strength finishes the thought rather than
+starting a new one.
+
+The disagreement is not academic. Across Week 1, book and Kalshi agree with each
+other to within **0.9 points on average**, while both differ from the model by
+**3.0 points on average and 7.8 at the widest** (`WAS @ PHI`: model 73.5%, book
+65.7%, Kalshi 68.2%). Two independent markets lining up against the model is
+the model being the outlier.
+
+**Which probability.** The mean of the available market sources — book and
+Kalshi — falling back in order to the book alone, the nflverse spread, and
+finally the ratings-derived probability if every source is missing. Book and
+Kalshi are close enough that averaging them is mostly a robustness measure
+against one of them being stale or misparsed.
+
+**Where it applies.** `live._project` samples this week's games from `p_home`
+and simulates the remainder from team strengths. The change is confined to how
+that one `p_home` vector is built for the current week; the rest-of-season path,
+the per-team sigma and the Kalshi season calibration are all untouched. The
+per-source lens views inherit the same current-week probabilities, since the
+override is about which games are imminent, not about which season-level voice
+is speaking.
+
+**Both are always kept.** The ratings-derived probability is still computed and
+still logged every hour alongside the market's. The completed-week view scores
+them against each other from Week 1 onward, so the calibration project arrives
+with a season of head-to-head evidence instead of starting from nothing.
+
+The honest caveat: this is a change we are making on established evidence rather
+than our own measurement, and measuring it is what the calibration project is
+for. Adopting closing lines is about as well supported as anything in sports
+forecasting, and the cost of waiting a season to confirm it locally is a season.
 
 ## API
 
@@ -249,6 +315,10 @@ cut.
   approximately zero, that a head-to-head game moves its two owners in opposite
   directions, and that the two branches recombine to the unconditional
   probability at the game's own win probability.
+- **Market override.** That the current week's simulated probabilities equal the
+  market consensus where sources exist, that the fallback chain degrades in
+  order to book, spread and model, and that a week with no odds at all
+  reproduces the pre-change projection exactly.
 - **Store round-trip.** `add_odds` then `odds_for_week` across all three store
   implementations, plus export/import carrying odds, plus that appending never
   mutates an existing row.
@@ -265,8 +335,15 @@ about strength, and we discard it. Every swing number this tab shows is
 therefore an understatement of true early-season leverage, and most so in weeks
 1–4. This is the in-season rating project, and it is the next one.
 
-**Vig removal is proportional**, which biases favourites. Correcting it needs a
-fitted shape parameter and therefore needs the log.
+**Vig removal is proportional**, which under-adjusts longshots. Measured on
+Week 1 the alternatives move a probability by under half a point, and because
+the log stores raw odds the method can be changed retroactively over every week
+recorded. This is a live decision, not a locked one.
+
+**The market override is unmeasured locally.** We adopt closing lines for the
+current week on general evidence, not on evidence from this pool. Both
+probabilities are logged from Week 1 so the claim can be checked, and reversed,
+once there is enough history to check it against.
 
 **Sources are still equal voices** in the season ensemble. Nothing here measures
 which of them is any good. That is the calibration project, and the log this
