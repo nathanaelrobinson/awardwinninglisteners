@@ -12,8 +12,9 @@ import OrderTicker from './components/OrderTicker';
 import Practice from './components/Practice';
 import Review from './components/Review';
 import Simulations from './components/Simulations';
+import Week from './components/Week';
 
-type Tab = 'draft' | 'review' | 'standings' | 'simulations' | 'practice';
+type Tab = 'draft' | 'review' | 'week' | 'standings' | 'simulations' | 'practice';
 
 export default function App() {
   const [me, setMe] = useState<Me | null | undefined>(undefined); // undefined = checking, null = anonymous
@@ -80,10 +81,11 @@ export default function App() {
 
   const tabs: Tab[] = me ? ['draft'] : [];
   if (view.status === 'done') tabs.push('review');
+  tabs.push('week');
   tabs.push('standings');
   if (view.status === 'done') tabs.push('simulations');
   if (me?.is_commissioner) tabs.push('practice');
-  const LABEL: Record<Tab, string> = { draft: 'Draft', review: 'Draft Review', standings: 'Standings', simulations: 'Simulations', practice: 'Practice' };
+  const LABEL: Record<Tab, string> = { draft: 'Draft', review: 'Draft Review', week: 'Week', standings: 'Standings', simulations: 'Simulations', practice: 'Practice' };
 
   return (
     <div className="app">
@@ -105,6 +107,7 @@ export default function App() {
         <main className="wrap">
           {tab === 'draft' && me && (view.status === 'lobby' ? <Lobby view={view} me={me} /> : <LiveDraft view={view} me={me} onChange={setView} selected={selected} onSelect={setSelected} />)}
           {tab === 'review' && <Review me={me} />}
+          {tab === 'week' && <Week myName={me?.name ?? ''} />}
           {tab === 'standings' && <Standings me={me} view={view} />}
           {tab === 'simulations' && <Simulations myName={me?.name ?? ''} />}
         </main>
