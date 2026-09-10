@@ -300,9 +300,12 @@ class FirestoreStore:
         self._odds_col().document(snapshot["id"]).set(snapshot)
 
     def odds_for_week(self, season: int, week: int) -> list[dict]:
-        q = (self._odds_col().where("season", "==", int(season))
-             .where("week", "==", int(week)).order_by("fetched_at"))
-        return [d.to_dict() for d in q.stream()]
+        from google.cloud.firestore_v1.base_query import FieldFilter
+        q = (self._odds_col()
+             .where(filter=FieldFilter("season", "==", int(season)))
+             .where(filter=FieldFilter("week", "==", int(week))))
+        docs = [d.to_dict() for d in q.stream()]
+        return sorted(docs, key=lambda r: r["fetched_at"])
 
     def latest_odds(self, season: int, week: int) -> list[dict]:
         best: dict[str, dict] = {}
