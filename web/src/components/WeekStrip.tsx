@@ -1,6 +1,6 @@
 // web/src/components/WeekStrip.tsx — one row per player: their games this
-// week, the chalk number, and the distribution over week wins. Ported from
-// docs/mockups/this-week-v2.html (stripRow).
+// week, their expected wins (the "chalk" projection), and the distribution
+// over week wins. Ported from docs/mockups/this-week-v2.html (stripRow).
 import { playerColor } from '../colors';
 import type { WeekGame, WeekPlayer } from '../league';
 import TeamLogo from './TeamLogo';
@@ -63,7 +63,7 @@ export default function WeekStrip({ players, games, myName }: { players: WeekPla
 
   return (
     <>
-      <div className="ph"><span /><span /><span>Chalk</span><span>Week wins</span></div>
+      <div className="ph"><span /><span /><span>Expected Wins</span><span /></div>
       {rows.map((p) => {
         const bg = playerColor(p.name).bg;
         const off = p.locks + p.banked;
