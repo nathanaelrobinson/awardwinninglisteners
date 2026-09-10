@@ -8,6 +8,7 @@ it in registry.default_sources().
 """
 import re
 
+import numpy as np
 import requests
 from bs4 import BeautifulSoup
 
@@ -90,43 +91,79 @@ def espn_fpi():
 
 # --- EPA efficiency rating (our own, from nflverse play-by-play) ----------
 
-EPA_SEASONS = (2025, 2024)     # try most recent complete season first
+EPA_SEASONS = (2026, 2025)     # (current, prior) — current is shrunk toward prior
 EPA_POINTS_SCALE = 50.0        # net EPA/play -> rough points scale
+EPA_SHRINK_K = 8000             # plays at which this season and last count equally
+EPA_RIDGE = 1.0                 # regularises the near-singular early-season system
 
 
-def epa_from_pbp(pbp):
-    """Team net EPA/play (offense EPA − defense EPA allowed) from a play-by-play
-    frame, as a mean-centered points strength. A DVOA-family efficiency signal:
-    backward-looking, so it diverges from the forward projections."""
+def shrink_weight(n_plays: int, k: int = EPA_SHRINK_K) -> float:
+    """How much this season counts against last. Week 1 is a few hundred plays,
+    so this season barely registers; by midseason it dominates. An unstable
+    voice is worse than a lagging one when only four voices exist."""
+    return float(n_plays) / (float(n_plays) + float(k))
+
+
+def epa_adjusted(pbp, ridge: float = EPA_RIDGE) -> dict:
+    """Opponent-adjusted net EPA per team, as a mean-centered points strength.
+
+    A plain mean of offensive EPA minus defensive EPA allowed flatters a team
+    that has faced weak opponents. Regressing play-level EPA on offence-team and
+    defence-team indicators separates the two: the fitted coefficients are what
+    a team did *given who it played*. This is what DVOA provides and we cannot
+    buy."""
     if "pass" in pbp.columns and "rush" in pbp.columns:
-        p = pbp[(pbp["pass"] == 1) | (pbp["rush"] == 1)]
-    else:
-        p = pbp
-    p = p.dropna(subset=["epa", "posteam", "defteam"])
-    off = p.groupby("posteam")["epa"].mean()
-    deff = p.groupby("defteam")["epa"].mean()          # lower = better defense
-    net = off.sub(deff, fill_value=0.0)
-    out = {}
-    for team, val in net.items():
-        code = resolve(str(team))
-        if code is not None:
-            out[code] = float(val)
-    if not out:
+        pbp = pbp[(pbp["pass"] == 1) | (pbp["rush"] == 1)]
+    p = pbp.dropna(subset=["epa", "posteam", "defteam"])
+    if not len(p):
         return {}
-    mean = sum(out.values()) / len(out)
-    return {c: (v - mean) * EPA_POINTS_SCALE for c, v in out.items()}
+
+    off_codes = [resolve(str(t)) for t in p["posteam"]]
+    def_codes = [resolve(str(t)) for t in p["defteam"]]
+    keep = [i for i, (o, d) in enumerate(zip(off_codes, def_codes))
+            if o is not None and d is not None]
+    if not keep:
+        return {}
+    y = p["epa"].to_numpy(dtype=float)[keep]
+    teams = sorted({off_codes[i] for i in keep} | {def_codes[i] for i in keep})
+    idx = {t: i for i, t in enumerate(teams)}
+    n = len(teams)
+
+    # One column per team's offence, one per its defence.
+    X = np.zeros((len(keep), 2 * n))
+    for r, i in enumerate(keep):
+        X[r, idx[off_codes[i]]] = 1.0
+        X[r, n + idx[def_codes[i]]] = 1.0
+
+    # Ridge: (X'X + λI)β = X'y. λ keeps the system solvable in September, when a
+    # team has faced one or two opponents and the columns are near-collinear.
+    A = X.T @ X + ridge * np.eye(2 * n)
+    beta = np.linalg.solve(A, X.T @ y)
+    net = {t: float(beta[idx[t]] - beta[n + idx[t]]) for t in teams}
+    mean = sum(net.values()) / len(net)
+    return {t: (v - mean) * EPA_POINTS_SCALE for t, v in net.items()}
 
 
 def epa_ratings():
-    """Compute our own efficiency rating from nflverse play-by-play (free)."""
+    """Opponent-adjusted efficiency from nflverse play-by-play (free), this
+    season shrunk toward last so September is not driven by one game."""
     import nfl_data_py as nfl
-    for yr in EPA_SEASONS:
+    cur, prior = EPA_SEASONS
+
+    def _load(year):
         try:
-            pbp = nfl.import_pbp_data([yr], downcast=True)
+            df = nfl.import_pbp_data([year], downcast=True)
+            return df if len(df) else None
         except Exception:
-            continue
-        if len(pbp):
-            out = epa_from_pbp(pbp)
-            if out:
-                return out
-    return {}
+            return None
+
+    cur_pbp, prior_pbp = _load(cur), _load(prior)
+    cur_out = epa_adjusted(cur_pbp) if cur_pbp is not None else {}
+    prior_out = epa_adjusted(prior_pbp) if prior_pbp is not None else {}
+    if not cur_out:
+        return prior_out
+    if not prior_out:
+        return cur_out
+    w = shrink_weight(len(cur_pbp))
+    return {t: w * cur_out.get(t, 0.0) + (1 - w) * prior_out.get(t, 0.0)
+            for t in set(cur_out) | set(prior_out)}
