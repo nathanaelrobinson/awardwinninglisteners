@@ -668,3 +668,23 @@ def test_refresh_live_503_with_no_schedule_at_all(api, store, live_env, monkeypa
     r = api.post("/internal/refresh-live", headers={"X-Refresh-Token": "tok"})
     assert r.status_code == 503
     assert api.get("/api/league/live").status_code == 404
+
+
+def test_asset_and_html_cache_headers(api):
+    """A deploy has to take effect on the next page load. index.html names the
+    bundle, so it must revalidate; the bundle's name carries its content hash,
+    so it can be kept forever. Getting this backwards serves the old app."""
+    client = api
+    r = client.get("/api/league")
+    assert r.headers["cache-control"] == "no-store"
+
+    from winspool import server as _server
+    dist = _server._DIST
+    if not dist.exists():
+        pytest.skip("no built frontend to serve")
+    assert client.get("/").headers["cache-control"] == "no-cache"
+    asset = next(iter((dist / "assets").glob("*.js")), None)
+    if asset is None:
+        pytest.skip("no built assets")
+    r = client.get(f"/assets/{asset.name}")
+    assert r.headers["cache-control"] == "public, max-age=31536000, immutable"

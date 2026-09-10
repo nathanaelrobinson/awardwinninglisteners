@@ -540,6 +540,28 @@ def league_sample_season(seed: int = 0, _: str | None = Depends(viewer)):
     return {"standings": out, "winners": [r["player"] for r in out if r["total_wins"] == top]}
 
 
+@app.middleware("http")
+async def cache_headers(request, call_next):
+    """Vite writes a content hash into every asset filename, so an asset can be
+    cached forever — its name changes when its contents do. index.html names
+    which bundle to load and must never be cached, or a deploy keeps serving the
+    old app until some heuristic freshness window expires. Starlette's
+    StaticFiles gives everything the same max-age, which gets this backwards.
+
+    API responses carry no cache headers of their own, which leaves browsers
+    free to heuristically cache a GET; say no.
+    """
+    resp = await call_next(request)
+    path = request.url.path
+    if path.startswith("/assets/"):
+        resp.headers["cache-control"] = "public, max-age=31536000, immutable"
+    elif path.startswith("/api/") or path.startswith("/internal/"):
+        resp.headers["cache-control"] = "no-store"
+    elif path == "/" or path.endswith(".html"):
+        resp.headers["cache-control"] = "no-cache"
+    return resp
+
+
 _DIST = Path(os.environ.get("WINSPOOL_WEB_DIST") or REPO_ROOT / "web" / "dist")
 if _DIST.exists():
     app.mount("/", StaticFiles(directory=str(_DIST), html=True), name="static")

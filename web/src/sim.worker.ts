@@ -11,7 +11,6 @@ export interface RollRequest {
   model: SimModel;
   nSims: number;
   seed: number;
-  preseason: boolean;
 }
 export type RollResponse =
   | { id: number; type: 'progress'; done: number }
@@ -22,14 +21,14 @@ const post = (msg: RollResponse, transfer?: Transferable[]) =>
   (self as unknown as Worker).postMessage(msg, transfer ?? []);
 
 self.onmessage = (e: MessageEvent<RollRequest>) => {
-  const { id, model, nSims, seed, preseason } = e.data;
+  const { id, model, nSims, seed } = e.data;
   try {
-    const rolled = rollAll(model, nSims, seed, preseason, (done) =>
+    const rolled = rollAll(model, nSims, seed, (done) =>
       post({ id, type: 'progress', done }));
     // hand the buffers over rather than cloning ~20 MB of them
     const transfer: Transferable[] = [
       ...rolled.paths.map((p) => p.buffer),
-      rolled.winner.buffer, rolled.source.buffer, rolled.dead.buffer,
+      rolled.winner.buffer, rolled.source.buffer,
     ];
     post({ id, type: 'done', rolled }, transfer);
   } catch (err) {
