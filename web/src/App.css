@@ -749,3 +749,8 @@
 @media (max-width: 900px) {
   .sim-panels, .sim-owners { grid-template-columns: repeat(2, 1fr); }
 }
+.sim-bar {
+  display: inline-block; width: 140px; height: 4px; border-radius: 2px;
+  background: var(--border); overflow: hidden;
+}
+.sim-bar i { display: block; height: 100%; background: var(--accent); transition: width 0.15s; }
