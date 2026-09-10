@@ -145,7 +145,7 @@ timers:  ## When the next standings refresh and backup fire
 
 .PHONY: deploy
 deploy:  ## Pull main, rebuild, restart, health-check
-	sudo $(APP_DIR)/scripts/pi-deploy.sh
+	$(APP_DIR)/scripts/pi-deploy.sh
 
 .PHONY: ship
 ship:  ## Build and serve the CURRENT checkout (no git pull), then health-check
