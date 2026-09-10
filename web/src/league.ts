@@ -27,10 +27,24 @@ export interface StandingsResponse {
   fetched_at: number;
 }
 
+export class HttpError extends Error {
+  status: number;
+  retryAfter?: number;
+  constructor(status: number, retryAfter?: number) {
+    super(String(status));
+    this.status = status;
+    this.retryAfter = retryAfter;
+  }
+}
+
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, { credentials: 'same-origin', ...init });
-  if (res.status === 401) throw new Error('401');
-  if (!res.ok) throw new Error(String(res.status));
+  if (res.status === 401) throw new HttpError(401);
+  if (!res.ok) {
+    // 429 carries the seconds left on a login backoff; the form counts it down.
+    const after = Number(res.headers.get('retry-after'));
+    throw new HttpError(res.status, Number.isFinite(after) && after > 0 ? after : undefined);
+  }
   return res.json();
 }
 const json = (body: unknown): RequestInit => ({
