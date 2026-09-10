@@ -18,6 +18,7 @@ from .teams import N_TEAMS, TEAM_INDEX, TEAMS
 
 REG_COLS = ["week", "game_type", "home_team", "away_team", "home_score", "away_score"]
 FINAL_WEEK = 18
+SEASON = int(os.environ.get("WINSPOOL_SEASON", "2026"))
 
 
 def _reg(df: pd.DataFrame) -> pd.DataFrame:
@@ -186,7 +187,36 @@ def market_pwin(rosters: dict, kalshi_dist_path, n_sims: int, rng):
     return {p: round(v, 3) for p, v in pool_pwin(totals).items()}
 
 
-def _project(rosters, banked, matrix, weights, sigma, rest, wh, wa, n_seasons, rng):
+def market_probs(odds_rows: list[dict]) -> dict:
+    """(home, away) -> consensus market probability, from a week's snapshots.
+
+    Takes the latest row per source as `store.latest_odds` returns them and
+    collapses them per game. The model's own voice is excluded: it is the thing
+    the market is replacing, not part of the consensus."""
+    from .gameodds import GameOdds, market_prob
+    by_game: dict[tuple, list] = {}
+    for row in odds_rows:
+        source = row["source"]
+        if source == "model":
+            continue
+        for g in row.get("games") or []:
+            key = (g["home"], g["away"])
+            by_game.setdefault(key, []).append(GameOdds(
+                source=source, home=g["home"], away=g["away"],
+                fetched_at=float(row.get("fetched_at") or 0.0),
+                spread=g.get("spread"), total=g.get("total"),
+                ml_home=g.get("ml_home"), ml_away=g.get("ml_away"),
+                yes_home=g.get("yes_home"), yes_away=g.get("yes_away")))
+    out = {}
+    for key, odds in by_game.items():
+        p = market_prob(odds)
+        if p is not None:
+            out[key] = float(p)
+    return out
+
+
+def _project(rosters, banked, matrix, weights, sigma, rest, wh, wa, n_seasons, rng,
+             p_override=None):
     """One season projection under one set of source weights.
 
     Returns (rows, team_totals, totals, future_rest, p_home, week_outcomes).
@@ -200,6 +230,8 @@ def _project(rosters, banked, matrix, weights, sigma, rest, wh, wa, n_seasons, r
     else:
         future_rest = np.zeros((n_seasons, N_TEAMS))
     p_home = win_prob(strength[wh], strength[wa]) if len(wh) else np.zeros(0)
+    if p_override is not None and len(wh):
+        p_home = np.where(np.isnan(p_override), p_home, p_override)
     week_outcomes = rng.random((n_seasons, len(wh))) < p_home[None, :]   # True = home wins
     team_totals = banked[None, :] + future_rest + _week_wins(week_outcomes, wh, wa, n_seasons)
     totals = _player_totals(rosters, team_totals)
@@ -231,8 +263,8 @@ def _week_wins(outcomes, wh, wa, n_seasons):
 
 
 def compute_live(rosters: dict, sched_df: pd.DataFrame, *, totals_path, power_path,
-                 kalshi_dist_path, ratings_fetched_at, n_seasons=5000, seed=0,
-                 now=None) -> dict:
+                 kalshi_dist_path, ratings_fetched_at, market: dict | None = None,
+                 n_seasons=5000, seed=0, now=None) -> dict:
     """The live projection document. See the spec for the field list."""
     rng = np.random.default_rng(seed)
     played, remaining = split_schedule(sched_df)
@@ -248,8 +280,20 @@ def compute_live(rosters: dict, sched_df: pd.DataFrame, *, totals_path, power_pa
     sigma = season_sigma(remaining_games_per_team(rest), base_sigma=sigma_full)
     wh, wa = remaining_matchups(this_week)
 
+    # Current-week games are simulated from the market where we have one. This
+    # finishes the thought vegas_share starts: fresher information wins.
+    override = np.full(len(wh), np.nan)
+    game_source = ["model"] * len(wh)
+    if market:
+        for g in range(len(wh)):
+            p = market.get((TEAMS[wh[g]], TEAMS[wa[g]]))
+            if p is not None:
+                override[g] = p
+                game_source[g] = "market"
+
     blend, _team_totals, totals, future_rest, p_home, week_outcomes = _project(
-        rosters, banked, matrix, weights, sigma, rest, wh, wa, n_seasons, rng)
+        rosters, banked, matrix, weights, sigma, rest, wh, wa, n_seasons, rng,
+        p_override=override)
 
     # One extra view per source, that voice at 100%: the "score lens" on the
     # Standings card. Same method as the blend so the numbers are comparable.
@@ -258,7 +302,7 @@ def compute_live(rosters: dict, sched_df: pd.DataFrame, *, totals_path, power_pa
         one_hot = np.zeros(len(_names))
         one_hot[i] = 1.0
         views[name] = _project(rosters, banked, matrix, one_hot, sigma, rest, wh, wa,
-                               n_seasons, rng)[0]
+                               n_seasons, rng, p_override=override)[0]
 
     def totals_for(outcomes):
         return banked[None, :] + future_rest + _week_wins(outcomes, wh, wa, n_seasons)
@@ -270,6 +314,25 @@ def compute_live(rosters: dict, sched_df: pd.DataFrame, *, totals_path, power_pa
     rows = [{**r, "market_pwin": None if mkt is None else mkt.get(r["player"]),
              "dist": _dist(totals[r["player"]], lo, len(xs))} for r in blend]
 
+    # Each game, forced both ways once: every player's swing comes off the same
+    # pair of runs, so a game costs two projections however many owners it has.
+    strength_blend = consensus(matrix, weights)
+    p_model_only = win_prob(strength_blend[wh], strength_blend[wa]) if len(wh) else np.zeros(0)
+    games_out = []
+    for g in range(len(wh)):
+        forced = week_outcomes.copy()
+        forced[:, g] = True
+        win_pw = pool_pwin(_player_totals(rosters, totals_for(forced)))
+        forced[:, g] = False
+        los_pw = pool_pwin(_player_totals(rosters, totals_for(forced)))
+        games_out.append({
+            "home": TEAMS[wh[g]], "away": TEAMS[wa[g]],
+            "p_model": round(float(p_model_only[g]), 4),
+            "p_used": round(float(p_home[g]), 4),
+            "source": game_source[g],
+            "swing": {p: round(win_pw[p] - los_pw[p], 4) for p in rosters},
+        })
+
     # Leverage: for each of my games this week, |pwin if we win - pwin if we lose|.
     tw_rows = []
     for p, codes in rosters.items():
@@ -277,6 +340,9 @@ def compute_live(rosters: dict, sched_df: pd.DataFrame, *, totals_path, power_pa
         games, lev, exp_week, locks = [], 0.0, 0.0, 0
         for g in range(len(wh)):
             hcode, acode = TEAMS[wh[g]], TEAMS[wa[g]]
+            if hcode not in mine and acode not in mine:
+                continue
+            lev += abs(games_out[g]["swing"][p])
             if hcode in mine and acode in mine:
                 # Both sides are mine: exactly one win, nothing to sweat.
                 games.append({"team": hcode, "opp": acode, "home": True, "p": 1.0, "lock": True})
@@ -290,12 +356,6 @@ def compute_live(rosters: dict, sched_df: pd.DataFrame, *, totals_path, power_pa
                 games.append({"team": team, "opp": opp, "home": home,
                               "p": round(p_win, 3), "lock": False})
                 exp_week += p_win
-                forced = week_outcomes.copy()
-                forced[:, g] = home            # my team wins
-                win_tot = _player_totals(rosters, totals_for(forced))
-                forced[:, g] = not home        # my team loses
-                loss_tot = _player_totals(rosters, totals_for(forced))
-                lev += abs(pool_pwin(win_tot)[p] - pool_pwin(loss_tot)[p])
         tw_rows.append({"player": p, "leverage": round(lev, 3), "games": games,
                         "exp_wins": round(exp_week, 1), "min_wins": locks,
                         "max_wins": len(games)})
@@ -304,7 +364,7 @@ def compute_live(rosters: dict, sched_df: pd.DataFrame, *, totals_path, power_pa
     return {"week": week, "computed_at": float(now if now is not None else time.time()),
             "ratings_fetched_at": ratings_fetched_at,
             "rows": rows, "x": xs, "n_sims": int(n_seasons), "this_week": tw_rows,
-            "views": views}
+            "games": games_out, "views": views}
 
 
 _LAST_SCHEDULE: pd.DataFrame | None = None
@@ -344,14 +404,31 @@ def refresh_live(store, cache_dir, *, n_seasons=5000) -> dict:
     from . import league as _league
     rosters = _league.view(store.get())["rosters"]
     df = _load_schedule_cached()
+    try:
+        market = market_probs(store.latest_odds(SEASON, week_of(df)))
+    except Exception:
+        market = {}               # a stale model beats failing the refresh
     doc = compute_live(
         rosters, df,
         totals_path=os.path.join(cache_dir, "win_totals.csv"),
         power_path=os.path.join(cache_dir, "power_ratings.csv"),
         kalshi_dist_path=os.path.join(cache_dir, "kalshi_distributions.csv"),
         ratings_fetched_at=ratings_fetched_at(cache_dir),
+        market=market,
         n_seasons=n_seasons)
     store.put_live(doc)
+    # The model's own voice, logged alongside the market's, so a completed week
+    # can score the two against each other. Imported here: oddslog imports us.
+    try:
+        from .gameodds import GameOdds
+        from .oddslog import snapshot
+        model_odds = [GameOdds(source="model", home=g["home"], away=g["away"],
+                               fetched_at=doc["computed_at"], p_home=g["p_model"])
+                      for g in doc["games"]]
+        store.add_odds(snapshot("model", SEASON, doc["week"], model_odds,
+                                now=doc["computed_at"]))
+    except Exception:
+        pass                      # the log is a record, not a dependency
     # The Simulations tab needs the ensemble itself, not this summary of it.
     # Build it here off the schedule we already have: on its own it would refetch
     # the season from nfl_data_py, which costs ~2s a request.
