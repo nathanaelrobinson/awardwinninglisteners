@@ -688,3 +688,68 @@ def test_asset_and_html_cache_headers(api):
         pytest.skip("no built assets")
     r = client.get(f"/assets/{asset.name}")
     assert r.headers["cache-control"] == "public, max-age=31536000, immutable"
+
+
+# ---- login throttling ----
+
+@pytest.fixture
+def fast_throttle(monkeypatch):
+    """A throttle tuned so the backoff is observable without slow tests:
+    two free attempts, then a penalty capped at 50ms."""
+    from winspool.throttle import Throttle
+    t = Throttle(free=2, cap=0.05)
+    monkeypatch.setattr(api_league, "_LOGIN_THROTTLE", t)
+    return t
+
+
+def test_repeated_wrong_pins_are_throttled(api, fast_throttle):
+    for _ in range(3):
+        assert login(api, "Mitch Fischer", "nope")[1].status_code == 401
+    r = login(api, "Mitch Fischer", "nope")[1]
+    assert r.status_code == 429
+    assert float(r.headers["retry-after"]) > 0
+
+
+def test_throttle_rejects_the_correct_pin_too(api, fast_throttle):
+    """The penalty is applied before the PIN is checked, so a guesser learns
+    nothing from the response while locked out."""
+    for _ in range(3):
+        login(api, "Mitch Fischer", "nope")
+    assert login(api, "Mitch Fischer", PIN)[1].status_code == 429
+
+
+def test_login_succeeds_again_once_the_penalty_lapses(api, fast_throttle):
+    for _ in range(3):
+        login(api, "Mitch Fischer", "nope")
+    assert login(api, "Mitch Fischer", PIN)[1].status_code == 429
+    time.sleep(0.06)
+    assert login(api, "Mitch Fischer", PIN)[1].status_code == 200
+
+
+def test_a_good_login_clears_the_failure_count(api, fast_throttle):
+    login(api, "Mitch Fischer", "nope")
+    login(api, "Mitch Fischer", "nope")
+    assert login(api, "Mitch Fischer", PIN)[1].status_code == 200
+    # Counter reset, so the free attempts are available again.
+    assert login(api, "Mitch Fischer", "nope")[1].status_code == 401
+
+
+def test_throttling_one_player_does_not_lock_out_another(api, fast_throttle):
+    for _ in range(4):
+        login(api, "Mitch Fischer", "nope")
+    assert login(api, "Mitch Fischer", PIN)[1].status_code == 429
+    assert login(api, "Eric Whitley", PIN)[1].status_code == 200
+
+
+def test_unknown_names_are_throttled_without_burning_a_real_players_budget(api, fast_throttle):
+    for _ in range(4):
+        login(api, "Nobody", "nope")
+    assert login(api, "Nobody", "nope")[1].status_code == 429
+    assert login(api, "Mitch Fischer", PIN)[1].status_code == 200
+
+
+def test_oversized_login_fields_are_rejected_before_they_reach_the_throttle(api, fast_throttle):
+    """The name becomes a throttle-table key, so it must be bounded."""
+    r = login(api, "x" * 10_000, "y" * 10_000)[1]
+    assert r.status_code == 422
+    assert len(fast_throttle) == 0
