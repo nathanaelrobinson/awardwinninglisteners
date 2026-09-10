@@ -12,6 +12,7 @@ from pydantic import BaseModel
 
 from . import league
 from . import live as _live
+from . import simmodel as _simmodel
 from . import standings as _standings
 from .auth import current_user, require_commissioner, set_cookie, viewer
 from .league import LeagueError
@@ -230,6 +231,23 @@ def set_override(req: OverrideReq, _: str = Depends(require_commissioner)):
         return d
     _run(fn)
     return {"overrides": _doc()["overrides"]}
+
+
+_MODEL_CACHE: dict = {}
+
+
+@router.get("/api/league/sim-model")
+def get_sim_model(_: str | None = Depends(viewer)):
+    """The ensemble itself, so the browser can roll its own seasons.
+
+    Memoised for a minute: the inputs only move on a ratings refresh or a final
+    score, and assembling the mixture takes a couple of seconds cold."""
+    hit = _MODEL_CACHE.get("doc")
+    if hit and time.time() - hit["computed_at"] < 60:
+        return hit
+    doc = _store_read(lambda: _simmodel.refresh_model(get_store(), LIVE_CACHE_DIR))
+    _MODEL_CACHE["doc"] = doc
+    return doc
 
 
 @router.get("/api/league/live")
