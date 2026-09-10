@@ -4,7 +4,6 @@ import os
 import random
 import sqlite3
 import time
-from pathlib import Path
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Response
 from fastapi.responses import JSONResponse
@@ -13,6 +12,7 @@ from pydantic import BaseModel, Field
 from . import league
 from . import live as _live
 from . import oddslog as _oddslog
+from . import ratingsjob as _ratingsjob
 from . import simmodel as _simmodel
 from . import standings as _standings
 from . import week as _week
@@ -28,9 +28,7 @@ TOUCH_EVERY = 20.0  # seconds; Lobby considers a player online if seen within 30
 
 _LOGIN_THROTTLE = Throttle()
 
-# In-season live projection. Same cache dir the sim reads; overridable for tests.
-LIVE_CACHE_DIR = os.environ.get("WINSPOOL_DATA_DIR") or str(
-    Path(__file__).resolve().parents[2] / "data" / "cache")
+# In-season live projection.
 LIVE_N_SEASONS = 5000
 SEASON = int(os.environ.get("WINSPOOL_SEASON", "2026"))
 
@@ -269,7 +267,7 @@ def get_sim_model(_: str | None = Depends(viewer)):
     """
     doc = _store_read(get_store().get_sim_model)
     if doc is None:
-        doc = _run_read(lambda: _simmodel.refresh_model(get_store(), LIVE_CACHE_DIR))
+        doc = _run_read(lambda: _simmodel.refresh_model(get_store()))
     return doc
 
 
@@ -332,7 +330,7 @@ def internal_refresh_live(x_refresh_token: str | None = Header(default=None)):
     if doc["status"] != "done":
         raise HTTPException(409, "draft not finished")
     try:
-        out = _live.refresh_live(get_store(), LIVE_CACHE_DIR, n_seasons=LIVE_N_SEASONS)
+        out = _live.refresh_live(get_store(), n_seasons=LIVE_N_SEASONS)
     except Exception as e:
         return JSONResponse(status_code=503, content={"ok": False, "error": str(e)[:200]})
     return {"ok": True, "week": out["week"], "computed_at": out["computed_at"]}
@@ -366,3 +364,56 @@ def internal_refresh_odds(x_refresh_token: str | None = Header(default=None)):
     if out["errors"] or not live_written:
         return JSONResponse(status_code=503, content={"ok": False, **out})
     return {"ok": True, **out}
+
+
+@router.post("/internal/refresh-ratings", include_in_schema=False)
+def internal_refresh_ratings(x_refresh_token: str | None = Header(default=None)):
+    _check_refresh_token(x_refresh_token)
+    store = get_store()
+    try:
+        df = _live._load_schedule_cached()
+        out = _ratingsjob.refresh_ratings(store, season=SEASON,
+                                          week=_live.week_of(df))
+    except Exception as e:
+        return JSONResponse(status_code=503, content={"ok": False, "error": str(e)[:200]})
+    aged = _ratingsjob.stale(store)
+    # A stale source means the ensemble is drifting on old information. Fail
+    # loudly so the systemd unit goes red, but keep what DID land.
+    if out["errors"] or aged:
+        return JSONResponse(status_code=503, content={
+            "ok": False, **out, "stale": {k: round(v) for k, v in aged.items()}})
+    return {"ok": True, **out}
+
+
+@router.get("/api/admin/health")
+def admin_health(_: str = Depends(require_commissioner)):
+    store = get_store()
+    latest = store.latest_ratings()
+    now = time.time()
+    sources = []
+    for name, limit in _ratingsjob.MAX_AGE_S.items():
+        row = latest.get(name)
+        hist = store.ratings_history(name)
+        # Newest-first scan for the latest failure; a source can be currently
+        # healthy and still carry a stale error worth surfacing.
+        # ...and WHEN it happened: a months-old error and a five-minute-old one
+        # render identically without it, in the one view whose job is saying
+        # what is broken now.
+        err_row = next((r for r in reversed(hist) if not r["ok"]), None)
+        last_err = None if err_row is None else err_row["doc"].get("error")
+        age = None if row is None else now - float(row["fetched_at"])
+        # No row at all is the worst state, not a neutral one: it must read
+        # as stale, never as absent or healthy.
+        sources.append({"name": name,
+                        "last_ok": None if row is None else row["fetched_at"],
+                        "age_s": None if age is None else round(age),
+                        "max_age_s": limit,
+                        "stale": age is None or age > limit,
+                        "last_error": last_err,
+                        "last_error_at": (None if err_row is None
+                                          else float(err_row["fetched_at"]))})
+    live_doc = store.get_live() or {}
+    standings = store.get_standings() or {}
+    jobs = [{"name": "live", "at": live_doc.get("computed_at")},
+            {"name": "standings", "at": standings.get("fetched_at")}]
+    return {"sources": sources, "jobs": jobs}

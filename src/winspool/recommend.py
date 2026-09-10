@@ -5,14 +5,28 @@ from .ratings import strength_from_totals
 from .sim import simulate, simulate_mixture
 from .draft import player_totals, pwin, PICK_ORDER, greedy_pick
 
-def _assemble_sources(totals_path, power_path, home, away, kalshi_dist_path):
+def _assemble_sources(totals_path, power_path, home, away, kalshi_dist_path,
+                      store=None):
     """Build the {name: strength} source dict for the mixture, plus a per-team
     Kalshi target-SD array (NaN where the market has no data). Adds a distinct
-    'kalshi' voice (backed out of the implied line) when the dist file exists."""
+    'kalshi' voice (backed out of the implied line) when the dist file exists.
+    When `store` is given the ratings come from it and the paths are ignored."""
     from .data import load_power_ratings
     from .ratings import backout_market
     from .game import HFA, SCALE
     from .teams import TEAM_INDEX, N_TEAMS
+    if store is not None:
+        from .data import sources_from_store
+        raw, target_sd = sources_from_store(store)
+        sources = {}
+        for name, val in raw.items():
+            # the loader defers backout_market to here, the only place that
+            # knows the schedule; the marker goes no further than this loop
+            if isinstance(val, tuple) and val[0] == "__totals__":
+                sources[name] = backout_market(val[1], home, away, hfa=HFA, scale=SCALE)
+            else:
+                sources[name] = val
+        return sources, target_sd
     totals = load_win_totals(totals_path)
     sources = {"vegas": backout_market(totals, home, away, hfa=HFA, scale=SCALE)}
     if power_path:
@@ -39,7 +53,7 @@ def _assemble_sources(totals_path, power_path, home, away, kalshi_dist_path):
 
 def build_wins(schedule_path, totals_path, n_seasons=20000, seed=0,
                power_path=None, tie_base=0.003, base_sigma=4.5, spread_k=2.0,
-               kalshi_dist_path="data/cache/kalshi_distributions.csv"):
+               kalshi_dist_path="data/preseason/kalshi_distributions.csv"):
     """Ensemble every available source into the season sim WITHOUT anchoring on
     any one. Vegas (covers, backed out of the O/U), Kalshi (its own voice), and
     each power column vote equally. The mixture samples which world is real; the

@@ -6,8 +6,10 @@ fetchers (requests; not unit-tested). Each fetcher returns {team_code: value}.
 Add a source by writing a parse_* function + a fetch wrapper, then registering
 it in registry.default_sources().
 """
+import os
 import re
 
+import numpy as np
 import requests
 from bs4 import BeautifulSoup
 
@@ -19,10 +21,18 @@ HEADERS = {"User-Agent": _UA, "Accept-Language": "en-US,en;q=0.9"}
 TIMEOUT = 25
 
 COVERS_URL = "https://www.covers.com/nfl/nfl-odds-win-totals"
-BETMGM_URL = ("https://sports.betmgm.com/en/blog/nfl/"
-              "nfl-odds-predictions-season-win-totals-bm16/")
-ESPN_FPI_URL = ("https://site.web.api.espn.com/apis/fitt/v3/sports/football/nfl/"
-                "powerindex?region=us&lang=en&season=2026&limit=1000")
+
+
+def season() -> int:
+    """The season every source is asked about. Read at call time, not import
+    time, so a test (or next September) can move it with WINSPOOL_SEASON and
+    have the whole pipeline follow — a hardcoded year freezes silently."""
+    return int(os.environ.get("WINSPOOL_SEASON", "2026"))
+
+
+def espn_fpi_url(year: int | None = None) -> str:
+    return ("https://site.web.api.espn.com/apis/fitt/v3/sports/football/nfl/"
+            f"powerindex?region=us&lang=en&season={year or season()}&limit=1000")
 
 
 def _num(text):
@@ -86,187 +96,149 @@ def covers_totals():
     return parse_win_total_table(_get(COVERS_URL).text)
 
 
-def betmgm_totals():
-    return parse_win_total_table(_get(BETMGM_URL).text)
-
-
 def espn_fpi():
-    return parse_espn_fpi(_get(ESPN_FPI_URL).json())
-
-
-# --- nfelo (JS-rendered; needs a headless browser) ------------------------
-
-NFELO_URL = "https://www.nfeloapp.com/nfl-power-ratings/"
-ELO_PER_POINT = 25.0  # ~25 Elo points per point of point-spread (538 convention)
-
-
-def _render(url, wait_ms=2500):
-    """Return fully-rendered HTML via headless Chromium (playwright)."""
-    from playwright.sync_api import sync_playwright
-    with sync_playwright() as p:
-        browser = p.chromium.launch()
-        page = browser.new_page()
-        page.goto(url, wait_until="networkidle")
-        page.wait_for_timeout(wait_ms)
-        html = page.content()
-        browser.close()
-    return html
-
-
-def parse_nfelo(html):
-    """Rendered nfelo table -> {code: raw Elo rating}. The team cell looks like
-    'SeahawksSEA17-3' (nickname + abbrev + record); we resolve the nickname."""
-    soup = BeautifulSoup(html, "lxml")
-    out = {}
-    for tr in soup.find_all("tr"):
-        cells = [c.get_text(strip=True) for c in tr.find_all(["th", "td"])]
-        if len(cells) < 3:
-            continue
-        m = re.match(r"^(.*?)[A-Z]{2,3}\d+-\d+(?:-\d+)?$", cells[1])
-        if not m:
-            continue
-        code = resolve(m.group(1))
-        rating = _num(cells[2])
-        if code and rating is not None:
-            out[code] = rating
-    return out
-
-
-def nfelo_power():
-    """nfelo Elo ratings, converted to a mean-centered points strength."""
-    elos = parse_nfelo(_render(NFELO_URL))
-    if not elos:
-        return {}
-    mean = sum(elos.values()) / len(elos)
-    return {code: (elo - mean) / ELO_PER_POINT for code, elo in elos.items()}
-
-
-# --- Mike Clay projections (ESPN PDF) -------------------------------------
-
-CLAY_URL = ("https://g.espncdn.com/s/ffldraftkit/26/"
-            "NFLDK2026_CS_ClayProjections2026.pdf")
-
-
-def parse_clay_page(text):
-    """One team page of Clay's PDF -> (code, projected_wins) or None.
-    Title looks like '2026 Arizona Cardinals Projections'; the box reads
-    'PROJECTED WINS: 3.6 (NFL RANK: 31)'."""
-    if not text:
-        return None
-    m_team = re.search(r"20\d\d\s+(.+?)\s+Projections", text)
-    m_win = re.search(r"PROJECTED WINS:\s*([\d.]+)", text)
-    if not (m_team and m_win):
-        return None
-    code = resolve(m_team.group(1))
-    if code is None:
-        return None
-    return code, float(m_win.group(1))
+    return parse_espn_fpi(_get(espn_fpi_url()).json())
 
 
 # --- EPA efficiency rating (our own, from nflverse play-by-play) ----------
 
-EPA_SEASONS = (2025, 2024)     # try most recent complete season first
 EPA_POINTS_SCALE = 50.0        # net EPA/play -> rough points scale
+EPA_SHRINK_K = 8000             # plays at which this season and last count equally
+EPA_RIDGE = 1.0                 # regularises the near-singular early-season system
+
+# Only the columns the regression actually reads. import_pbp_data otherwise
+# pulls ~380 columns per season and this job holds two seasons live at once on
+# a Raspberry Pi; participation is a second download of a file nflverse stopped
+# publishing after 2023.
+EPA_PBP_COLUMNS = ["pass", "rush", "epa", "posteam", "defteam", "season"]
+
+# Past this week, an empty current-season frame is a FAILURE, not a cold start.
+# Falling back to last season is correct in week 1 — that is what the shrinkage
+# is for — but in week 6 it means handing back a full 32-team dict of LAST
+# year's ratings, which would be stored ok=True with today's timestamp and
+# would never look wrong anywhere.
+EPA_FALLBACK_MAX_WEEK = 2
 
 
-def epa_from_pbp(pbp):
-    """Team net EPA/play (offense EPA − defense EPA allowed) from a play-by-play
-    frame, as a mean-centered points strength. A DVOA-family efficiency signal:
-    backward-looking, so it diverges from the forward projections."""
+def epa_seasons() -> tuple[int, int]:
+    """(current, prior) — current is shrunk toward prior."""
+    cur = season()
+    return cur, cur - 1
+
+
+def shrink_weight(n_plays: int, k: int = EPA_SHRINK_K) -> float:
+    """How much this season counts against last. Week 1 is a few hundred plays,
+    so this season barely registers; by midseason it dominates. An unstable
+    voice is worse than a lagging one when only four voices exist."""
+    return float(n_plays) / (float(n_plays) + float(k))
+
+
+def _prepare(pbp):
+    """Filter to real scrimmage plays with a resolvable offence, defence, and
+    EPA value — the rows that actually enter the regression. The single
+    definition of "a play" that both `epa_adjusted` and `_usable_plays` use, so
+    they can never disagree about what they're counting."""
     if "pass" in pbp.columns and "rush" in pbp.columns:
-        p = pbp[(pbp["pass"] == 1) | (pbp["rush"] == 1)]
-    else:
-        p = pbp
-    p = p.dropna(subset=["epa", "posteam", "defteam"])
-    off = p.groupby("posteam")["epa"].mean()
-    deff = p.groupby("defteam")["epa"].mean()          # lower = better defense
-    net = off.sub(deff, fill_value=0.0)
-    out = {}
-    for team, val in net.items():
-        code = resolve(str(team))
-        if code is not None:
-            out[code] = float(val)
-    if not out:
+        pbp = pbp[(pbp["pass"] == 1) | (pbp["rush"] == 1)]
+    p = pbp.dropna(subset=["epa", "posteam", "defteam"])
+    if not len(p):
+        return p, [], [], []
+    off_codes = [resolve(str(t)) for t in p["posteam"]]
+    def_codes = [resolve(str(t)) for t in p["defteam"]]
+    keep = [i for i, (o, d) in enumerate(zip(off_codes, def_codes))
+            if o is not None and d is not None]
+    return p, off_codes, def_codes, keep
+
+
+def _usable_plays(pbp) -> int:
+    """Count of plays that survive `_prepare` — what `shrink_weight` must be
+    fed. `EPA_SHRINK_K` is calibrated in these plays, not raw pbp rows."""
+    return len(_prepare(pbp)[3])
+
+
+def epa_adjusted(pbp, ridge: float = EPA_RIDGE) -> dict:
+    """Opponent-adjusted net EPA per team, as a mean-centered points strength.
+
+    A plain mean of offensive EPA minus defensive EPA allowed flatters a team
+    that has faced weak opponents. Regressing play-level EPA on offence-team and
+    defence-team indicators separates the two: the fitted coefficients are what
+    a team did *given who it played*. This is what DVOA provides and we cannot
+    buy."""
+    p, off_codes, def_codes, keep = _prepare(pbp)
+    if not keep:
         return {}
-    mean = sum(out.values()) / len(out)
-    return {c: (v - mean) * EPA_POINTS_SCALE for c, v in out.items()}
+    y = p["epa"].to_numpy(dtype=float)[keep]
+    teams = sorted({off_codes[i] for i in keep} | {def_codes[i] for i in keep})
+    idx = {t: i for i, t in enumerate(teams)}
+    n = len(teams)
+
+    # One column per team's offence, one per its defence.
+    X = np.zeros((len(keep), 2 * n))
+    for r, i in enumerate(keep):
+        X[r, idx[off_codes[i]]] = 1.0
+        X[r, n + idx[def_codes[i]]] = 1.0
+
+    # Ridge: (X'X + λI)β = X'y. λ keeps the system solvable in September, when a
+    # team has faced one or two opponents and the columns are near-collinear.
+    A = X.T @ X + ridge * np.eye(2 * n)
+    beta = np.linalg.solve(A, X.T @ y)
+    net = {t: float(beta[idx[t]] - beta[n + idx[t]]) for t in teams}
+    mean = sum(net.values()) / len(net)
+    return {t: (v - mean) * EPA_POINTS_SCALE for t, v in net.items()}
 
 
-def epa_ratings():
-    """Compute our own efficiency rating from nflverse play-by-play (free)."""
+def epa_ratings(week: int):
+    """Opponent-adjusted efficiency from nflverse play-by-play (free), this
+    season shrunk toward last so September is not driven by one game.
+
+    `week` is not cosmetic. `nfl_data_py.import_pbp_data` swallows a per-year
+    failure internally and returns an EMPTY frame, so "nflverse is down" and
+    "the season has not started" arrive looking identical. Before
+    `EPA_FALLBACK_MAX_WEEK` we treat that as the cold start it probably is and
+    lean on last season; after it we raise, so `refresh_ratings` records
+    ok=False with a reason and the health endpoint 503s. The alternative is a
+    year-old rating stored with today's timestamp — a failure nobody would ever
+    see.
+
+    The returned dict carries a `__meta__` entry (n_plays, w) alongside the 32
+    team ratings so the Admin panel can tell a rating that is 2% this season
+    from one that is 90% this season. Consumers key by team code, so the extra
+    entry is inert to them."""
     import nfl_data_py as nfl
-    for yr in EPA_SEASONS:
+    cur, prior = epa_seasons()
+
+    def _load(year):
+        """(frame or None, reason). Never raises: the caller decides whether an
+        absent season is fatal, and that depends on the week."""
         try:
-            pbp = nfl.import_pbp_data([yr], downcast=True)
-        except Exception:
-            continue
-        if len(pbp):
-            out = epa_from_pbp(pbp)
-            if out:
-                return out
-    return {}
+            df = nfl.import_pbp_data([year], columns=EPA_PBP_COLUMNS,
+                                     downcast=True, include_participation=False)
+        except Exception as e:                # noqa: BLE001 - reported upward
+            return None, f"{type(e).__name__}: {e}"
+        return (df, "") if len(df) else (None, "empty frame")
 
+    cur_pbp, cur_why = _load(cur)
+    cur_out = epa_adjusted(cur_pbp) if cur_pbp is not None else {}
+    n_plays = _usable_plays(cur_pbp) if cur_pbp is not None else 0
+    cur_pbp = None                            # two seasons of pbp will not both fit
+    if not cur_out and int(week) > EPA_FALLBACK_MAX_WEEK:
+        raise RuntimeError(
+            f"no usable {cur} play-by-play at week {week} "
+            f"({cur_why or 'no plays survived filtering'}); refusing to store "
+            f"{prior} ratings as current")
 
-# --- PFF projected win totals -------------------------------------------
+    prior_pbp, prior_why = _load(prior)
+    prior_out = epa_adjusted(prior_pbp) if prior_pbp is not None else {}
+    if not cur_out and not prior_out:
+        why_c = cur_why or "no usable plays"
+        why_p = prior_why or "no usable plays"
+        raise RuntimeError(f"no play-by-play for {cur} ({why_c}) or {prior} ({why_p})")
 
-PFF_URL = ("https://www.pff.com/news/"
-           "bet-nfl-betting-2026-pff-projected-win-totals-for-all-32-teams")
-# PFF uses non-standard team abbreviations for a handful of teams.
-_PFF_FIX = {"ARZ": "ARI", "BLT": "BAL", "CLV": "CLE", "HST": "HOU",
-            "LAR": "LA", "WSH": "WAS", "JAC": "JAX"}
-
-
-def parse_pff(html):
-    """PFF win-totals table -> {code: PFF avg-wins projection}. The projection
-    column header contains 'Projection'; team codes are PFF's own abbreviations."""
-    soup = BeautifulSoup(html, "lxml")
-    for table in soup.find_all("table"):
-        rows = table.find_all("tr")
-        if not rows:
-            continue
-        header = [c.get_text(strip=True).lower() for c in rows[0].find_all(["th", "td"])]
-        proj_idx = next((i for i, h in enumerate(header) if "projection" in h), None)
-        if proj_idx is None:
-            continue
-        out = {}
-        for tr in rows[1:]:
-            cells = [c.get_text(strip=True) for c in tr.find_all(["th", "td"])]
-            if len(cells) <= proj_idx or not cells:
-                continue
-            abbr = cells[0].upper()
-            code = _PFF_FIX.get(abbr) or resolve(abbr)
-            val = _num(cells[proj_idx])
-            if code and val is not None:
-                out[code] = val
-        if len(out) >= 20:
-            return out
-    return {}
-
-
-def pff_projections():
-    """PFF projected wins per team -> mean-centered points strength."""
-    from ..ratings import WINS_PER_POINT
-    wins = parse_pff(_get(PFF_URL).text)
-    if not wins:
-        return {}
-    mean = sum(wins.values()) / len(wins)
-    return {code: (w - mean) / WINS_PER_POINT for code, w in wins.items()}
-
-
-def clay_projections():
-    """Clay's projected wins per team, converted to a mean-centered points
-    strength. Downloads the PDF and reads the per-team pages."""
-    import io
-    import pdfplumber
-    from ..ratings import WINS_PER_POINT
-    raw = _get(CLAY_URL).content
-    wins = {}
-    with pdfplumber.open(io.BytesIO(raw)) as pdf:
-        for page in pdf.pages[1:33]:            # team pages (2–33)
-            parsed = parse_clay_page(page.extract_text() or "")
-            if parsed:
-                wins[parsed[0]] = parsed[1]
-    if not wins:
-        return {}
-    mean = sum(wins.values()) / len(wins)
-    return {code: (w - mean) / WINS_PER_POINT for code, w in wins.items()}
+    w = shrink_weight(n_plays) if cur_out else 0.0
+    if not prior_out:
+        w = 1.0
+    out = {t: w * cur_out.get(t, 0.0) + (1 - w) * prior_out.get(t, 0.0)
+           for t in set(cur_out) | set(prior_out)}
+    out["__meta__"] = {"n_plays": int(n_plays), "w": round(float(w), 4),
+                       "season": int(cur), "prior_season": int(prior)}
+    return out

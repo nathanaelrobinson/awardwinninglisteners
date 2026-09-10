@@ -22,7 +22,7 @@ def main(argv=None):
     rec.add_argument("--slot", type=int, required=True)
     rec.add_argument("--taken", default="")
     rec.add_argument("--schedule", default="data/cache/schedule_2026.csv")
-    rec.add_argument("--totals", default="data/cache/win_totals.csv")
+    rec.add_argument("--totals", default="data/preseason/win_totals.csv")
     rec.add_argument("--n", type=int, default=20000)
     rec.add_argument("--seed", type=int, default=0)
     rec.add_argument("--rollouts", type=int, default=0)
@@ -30,14 +30,14 @@ def main(argv=None):
 
     ana = sub.add_parser("analyze")
     ana.add_argument("--schedule", default="data/cache/schedule_2026.csv")
-    ana.add_argument("--totals", default="data/cache/win_totals.csv")
+    ana.add_argument("--totals", default="data/preseason/win_totals.csv")
     ana.add_argument("--power", default=None)
     ana.add_argument("--n", type=int, default=20000)
     ana.add_argument("--seed", type=int, default=0)
 
     pos = sub.add_parser("positional")
     pos.add_argument("--schedule", default="data/cache/schedule_2026.csv")
-    pos.add_argument("--totals", default="data/cache/win_totals.csv")
+    pos.add_argument("--totals", default="data/preseason/win_totals.csv")
     pos.add_argument("--power", default=None)
     pos.add_argument("--n", type=int, default=20000)
     pos.add_argument("--seed", type=int, default=0)
@@ -49,7 +49,7 @@ def main(argv=None):
     fet.add_argument("--cache", default="data/cache")
 
     mkt = sub.add_parser("market")
-    mkt.add_argument("--dist", default="data/cache/kalshi_distributions.csv")
+    mkt.add_argument("--dist", default="data/preseason/kalshi_distributions.csv")
 
     li = sub.add_parser("league-init")
     li.add_argument("--players", required=True, help="comma-separated, 5 names")
@@ -85,7 +85,7 @@ def main(argv=None):
         if not sources:
             print("No sources configured. See src/winspool/fetch/registry.py.")
             return 1
-        print(f"fetching {len(sources)} sources (nfelo renders headless, ~slow)…")
+        print(f"fetching {len(sources)} sources…")
         now = datetime.datetime.now().isoformat(timespec="seconds")
         meta = refresh(sources, args.cache, now=now)
         for m in meta:
@@ -204,6 +204,7 @@ def main(argv=None):
             "live": store.get_live(),
             "weeks": store.list_weeks(),
             "odds": store.all_odds(),
+            "ratings": store.all_ratings(),
             "exported_at": _time.time(),
         }
         with open(args.out, "w") as f:
@@ -212,6 +213,7 @@ def main(argv=None):
               f"{len(payload['messages'])} messages, "
               f"{len(payload['snapshots'])} snapshots, "
               f"{len(payload['odds'])} odds snapshots, "
+              f"{len(payload['ratings'])} ratings, "
               f"standings={'yes' if payload['standings'] else 'no'} "
               f"live={'yes' if payload['live'] else 'no'} weeks={len(payload['weeks'])} -> {args.out}")
         return 0
@@ -251,10 +253,13 @@ def main(argv=None):
             store.put_week(w["week"], w)
         for row in payload.get("odds") or []:
             store.put_odds(row)
+        for row in payload.get("ratings") or []:
+            store.put_rating(row)
         print(f"imported {len(payload['league'].get('picks', []))} picks, "
               f"{len(payload.get('messages') or [])} messages, "
               f"{len(payload.get('snapshots') or [])} snapshots, "
               f"{len(payload.get('odds') or [])} odds snapshots, "
+              f"{len(payload.get('ratings') or [])} ratings, "
               f"standings={'yes' if payload.get('standings') else 'no'}")
         return 0
 

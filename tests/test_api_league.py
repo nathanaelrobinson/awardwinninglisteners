@@ -141,6 +141,7 @@ def test_optimizer_routes_commissioner_only(api):
     assert c.post("/api/recommend", json={"slot": 1, "taken": []}).status_code == 403
     assert c.post("/api/results", json={"slot": 1, "taken": []}).status_code == 403
     assert c.post("/api/advance", json={"slot": 1, "taken": []}).status_code == 403
+    assert c.get("/api/admin/health").status_code == 403
     assert api.get("/api/teams").status_code == 200  # open
 
 
@@ -583,11 +584,13 @@ def _inseason_df():
 
 
 @pytest.fixture
-def live_env(monkeypatch, tmp_path):
+def live_env(monkeypatch, store):
+    from conftest import seed_fixture_ratings
     from winspool import live, standings
     monkeypatch.setattr(standings, "_load_schedule", _inseason_df)
     monkeypatch.setattr(live, "_LAST_SCHEDULE", None)
-    monkeypatch.setattr(api_league, "LIVE_CACHE_DIR", "tests/fixtures")
+    live._ENSEMBLE_CACHE.clear()
+    seed_fixture_ratings(store)
     monkeypatch.setattr(api_league, "LIVE_N_SEASONS", 300)
     monkeypatch.setenv("REFRESH_TOKEN", "tok")
     return live
@@ -636,7 +639,7 @@ def test_weekly_snapshot_written_once_per_week(api, store, live_env):
     assert weeks[0]["week"] == 2
     assert set(weeks[0]["rows"][0]) == {"player", "pwin", "exp_wins"}
     # per-source views ride along so the card can show a delta under any lens
-    assert list(weeks[0]["views"]) == ["blend", "vegas", "fpi", "sagarin", "massey"]
+    assert list(weeks[0]["views"]) == ["blend", "covers", "fpi", "sagarin", "massey"]
     assert set(weeks[0]["views"]["fpi"][0]) == {"player", "pwin", "exp_wins"}
     assert weeks[0]["views"]["blend"] == weeks[0]["rows"]
 
@@ -773,6 +776,11 @@ def test_week_is_503_before_a_projection_exists(api, store):
     assert c.get("/api/week").status_code == 503
 
 
+# /api/week reaches nflverse through _load_schedule_cached(), so this one is
+# not hermetic: it failed with ConnectionResetError during review. Marked so
+# the default expression deselects it, rather than leaving one known-leaky test
+# exempt from a discipline enforced everywhere else.
+@pytest.mark.network
 def test_week_serves_the_current_week_from_the_live_doc(api, store):
     c, _ = login(api, PLAYERS[0])
     store.put_live({"week": 1, "computed_at": 0.0,

@@ -1,0 +1,10 @@
+[Unit]
+Description=winspool ratings refresh (daily 05:40)
+
+[Timer]
+OnCalendar=*-*-* 05:40:00
+Persistent=true
+Unit=winspool-ratings.service
+
+[Install]
+WantedBy=timers.target

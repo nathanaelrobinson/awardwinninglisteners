@@ -14,7 +14,7 @@ deploy, and the cutover checklist.
 | Database | `/var/lib/winspool/league.db` (SQLite, WAL) |
 | Backups | `/var/backups/winspool/league-YYYY-MM-DD.db` (nightly, 30 kept) |
 | Secrets | `/etc/winspool/env` (mode 600, owned by root) |
-| Units | `/etc/systemd/system/winspool*.{service,timer}` (source in `deploy/pi/`) — `scripts/pi-deploy.sh` installs and enables every `*.timer` there on every deploy, so adding a unit needs no re-run of setup |
+| Units | `/etc/systemd/system/winspool*.{service,timer}` (source in `deploy/pi/`), including `winspool-scores`, `winspool-odds`, `winspool-ratings` and `winspool-backup` — `scripts/pi-deploy.sh` installs and enables every `*.timer` there on every deploy, so adding a unit needs no re-run of setup |
 
 The service runs as the `winspool` user but reads code from nate's home
 checkout. That needs `winspool` in the `nate` group, `/home/nate` at mode 750,
@@ -29,11 +29,19 @@ Cloudflare tunnel is the sole ingress.
 STORE=sqlite
 WINSPOOL_DB=/var/lib/winspool/league.db
 WINSPOOL_DATA_DIR=/home/nate/awardwinninglisteners/data/cache
+WINSPOOL_PRESEASON_DIR=/home/nate/awardwinninglisteners/data/preseason
 WINSPOOL_WEB_DIST=/home/nate/awardwinninglisteners/web/dist
 WINSPOOL_BEHIND_PROXY=1     # marks the session cookie Secure behind the tunnel
 SESSION_SECRET=...          # changing it invalidates every session cookie
-REFRESH_TOKEN=...           # only the scores timer uses it
+REFRESH_TOKEN=...           # required by the scores, odds and ratings timers
 ```
+
+`WINSPOOL_PRESEASON_DIR` points at the frozen draft-night snapshot (the three
+CSVs Draft Review's `build_wins` still reads); `WINSPOOL_DATA_DIR` points at
+the small set of cache files that are still real caches
+(`schedule_2026.csv`, `sim_matrix.npz`). `pi-setup.sh` sets both, derived the
+same way, so the preseason path doesn't quietly depend on the checkout layout
+the way it used to.
 
 `SESSION_SECRET` is not optional: with `STORE` set, the app refuses to boot
 without it rather than falling back to the public dev value.
@@ -81,11 +89,25 @@ systemctl status winspool
 journalctl -u winspool -f                  # live logs
 journalctl -u winspool-scores -n 50        # standings refreshes
 journalctl -u winspool-odds -n 50          # odds snapshots
+journalctl -u winspool-ratings -n 50       # daily rating-source refresh (05:40)
 systemctl list-timers 'winspool*'          # when the next refresh/backup fires
 sqlite3 /var/lib/winspool/league.db 'select count(*) from messages;'
 ```
 
 Force a standings refresh: `sudo systemctl start winspool-scores.service`.
+Force a ratings refresh: `sudo systemctl start winspool-ratings.service`.
+
+**`winspool-ratings` going red is expected behavior, not a bug to silence.**
+`/internal/refresh-ratings` returns 503 whenever any of the five live sources
+failed to fetch, or any source's last-good reading is older than its
+staleness limit (ESPN FPI / EPA / market-strength: 10 days; Kalshi / covers: 2
+days) — systemd then marks the unit failed and it shows up in
+`systemctl list-timers` / `journalctl -u winspool-ratings`. That is the point:
+the old file-based pipeline let a dead scraper rot for weeks with nothing
+telling anyone. Do not "fix" this endpoint to return 200 on partial failure.
+The commissioner-only **Admin** tab in the UI shows exactly which source is
+stale or erroring and the last recorded error message, so the read on a red
+unit is "open Admin," not "guess."
 
 ## Backup and restore
 
@@ -105,7 +127,7 @@ sudo systemctl start winspool
 ```
 
 A JSON export is the portable form, and works against any store. It now
-carries the odds log alongside everything else:
+carries the odds log and the full ratings history alongside everything else:
 
 ```bash
 sudo -u winspool env $(sudo cat /etc/winspool/env | grep -v '^#' | xargs) \
@@ -147,19 +169,21 @@ the config above, then `sudo cloudflared service install`.
 | API returns 503 "busy" | SQLite write lock held >5s | transient; check for a stuck backup |
 | Service won't start, log says `SESSION_SECRET must be set` | env file incomplete | fill `/etc/winspool/env` |
 | Standings stale | Pi was offline when the timer fired | `systemctl start winspool-scores.service` |
+| `winspool-ratings.service` failed / red in `systemctl list-timers` | a live source errored, or one hasn't fetched successfully inside its staleness window | expected — check the Admin tab (commissioner login) for which source and its last error; `journalctl -u winspool-ratings -n 50` for the raw output; `sudo systemctl start winspool-ratings.service` to retry now |
 | `import` refuses | target already has a league | intended; pass `--force` |
 
-## Weekly ratings refresh (manual)
+## Ratings refresh (automatic)
 
-Tuesday morning, from a laptop with Chromium available for nfelo:
+There is no manual weekly step any more. `winspool-ratings.timer` fires
+`POST /internal/refresh-ratings` daily at 05:40, which fetches all five live
+sources (ESPN FPI, Kalshi, covers, opponent-adjusted EPA, market-strength from
+the closing-spread log) and appends what each said to the SQLite `ratings`
+table — the model always reads the newest successful row per source. The
+scores timer calls `/internal/refresh-live` after every standings refresh, so
+the projection picks up whatever the ratings job wrote on its next run.
 
-    git checkout -b ratings/$(date +%F) origin/main
-    make refresh-ratings
-
-Open the PR, merge, then on the Pi `make deploy`. The scores timer calls
-`/internal/refresh-live` after every standings refresh, so the live projection
-picks up the new ratings on its next run. If a week is skipped the Standings
-footer shows the stale chip once ratings are more than 8 days old.
-
-The target restores `win_totals.csv` after the fetch; pre-season totals stay
-frozen on purpose.
+`data/preseason/*.csv` (the old win-totals/power-ratings/Kalshi files) is a
+frozen draft-night snapshot only Draft Review reads — it is never touched by
+this job and should not be. `winspool fetch` (and `make refresh-ratings`,
+now removed) belonged to the old file-based pipeline; `winspool fetch` still
+runs but writes to `data/cache/`, which nothing reads any more.

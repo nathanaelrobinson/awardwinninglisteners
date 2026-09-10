@@ -45,12 +45,12 @@ def test_assemble_sources_adds_kalshi_voice_when_file_present(tmp_path):
     df = load_schedule("data/cache/schedule_2026.csv")
     home, away = schedule_matchups(df)
     kp = _kalshi_csv(tmp_path)
-    src_with, target = _assemble_sources("data/cache/win_totals.csv",
-                                         "data/cache/power_ratings.csv", home, away, kp)
+    src_with, target = _assemble_sources("data/preseason/win_totals.csv",
+                                         "data/preseason/power_ratings.csv", home, away, kp)
     assert "kalshi" in src_with
     assert np.isfinite(target).all()          # every team had a Kalshi SD
-    src_without, target2 = _assemble_sources("data/cache/win_totals.csv",
-                                             "data/cache/power_ratings.csv", home, away, None)
+    src_without, target2 = _assemble_sources("data/preseason/win_totals.csv",
+                                             "data/preseason/power_ratings.csv", home, away, None)
     assert "kalshi" not in src_without
     assert np.isnan(target2).all()
 
@@ -59,8 +59,8 @@ def test_build_wins_variance_tracks_kalshi_sd(tmp_path):
     from winspool.fetch.kalshi import pmf_sd
     from winspool.market import load_distributions
     kp = _kalshi_csv(tmp_path)
-    wins, _ = build_wins("data/cache/schedule_2026.csv", "data/cache/win_totals.csv",
-                         n_seasons=6000, seed=0, power_path="data/cache/power_ratings.csv",
+    wins, _ = build_wins("data/cache/schedule_2026.csv", "data/preseason/win_totals.csv",
+                         n_seasons=6000, seed=0, power_path="data/preseason/power_ratings.csv",
                          kalshi_dist_path=kp)
     sim_sd = wins.std(axis=0)
     codes, mat = load_distributions(kp)
@@ -89,11 +89,11 @@ def test_build_wins_kalshi_none_degrades_to_phase1_variance(tmp_path):
     for code, row in zip(codes, mat):
         k_sd[TEAM_INDEX[code]] = pmf_sd(row)
 
-    wins_with, _ = build_wins("data/cache/schedule_2026.csv", "data/cache/win_totals.csv",
-                              n_seasons=6000, seed=0, power_path="data/cache/power_ratings.csv",
+    wins_with, _ = build_wins("data/cache/schedule_2026.csv", "data/preseason/win_totals.csv",
+                              n_seasons=6000, seed=0, power_path="data/preseason/power_ratings.csv",
                               kalshi_dist_path=kp)
-    wins_without, _ = build_wins("data/cache/schedule_2026.csv", "data/cache/win_totals.csv",
-                                 n_seasons=6000, seed=0, power_path="data/cache/power_ratings.csv",
+    wins_without, _ = build_wins("data/cache/schedule_2026.csv", "data/preseason/win_totals.csv",
+                                 n_seasons=6000, seed=0, power_path="data/preseason/power_ratings.csv",
                                  kalshi_dist_path=None)
 
     sd_with = wins_with.std(axis=0)

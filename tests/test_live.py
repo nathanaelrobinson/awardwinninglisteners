@@ -64,36 +64,12 @@ def test_remaining_matchups_and_games_in_week(inseason):
 FIX = "tests/fixtures"
 
 
-def test_vegas_share_full_at_week_1_and_gone_by_week_9():
-    assert live.vegas_share(1) == 1.0
-    assert live.vegas_share(5) == pytest.approx(0.5)
-    assert live.vegas_share(9) == 0.0
-    assert live.vegas_share(14) == 0.0
-
-
 def _fixture_matchups():
     from winspool.data import load_schedule, schedule_matchups
     return schedule_matchups(load_schedule(f"{FIX}/schedule_2026.csv"))
 
 
-def test_source_matrix_equal_voices_with_vegas_fading():
-    home, away = _fixture_matchups()
-    m, w, names, sigma = live.source_matrix_for_week(
-        f"{FIX}/win_totals.csv", f"{FIX}/power_ratings.csv", None, home, away, week=1)
-    assert names == ["vegas", "fpi", "sagarin", "massey"]
-    assert m.shape == (4, 32) and sigma.shape == (32,)
-    assert np.allclose(w, 0.25)                      # pre-season: seven-equal-voices rule
-    assert np.allclose(sigma, 4.5)                   # no Kalshi file -> flat base sigma
-    _, w5, _, _ = live.source_matrix_for_week(
-        f"{FIX}/win_totals.csv", f"{FIX}/power_ratings.csv", None, home, away, week=5)
-    assert w5[0] == pytest.approx(0.5 / 3.5) and np.allclose(w5[1:], 1 / 3.5)
-    _, w9, _, _ = live.source_matrix_for_week(
-        f"{FIX}/win_totals.csv", f"{FIX}/power_ratings.csv", None, home, away, week=9)
-    assert w9[0] == 0.0 and np.allclose(w9[1:], 1 / 3)
-    assert w.sum() == pytest.approx(1) and w5.sum() == pytest.approx(1) and w9.sum() == pytest.approx(1)
-
-
-def test_ensemble_is_memoised_across_weeks(monkeypatch):
+def test_ensemble_is_memoised(monkeypatch):
     from winspool import recommend
     home, away = _fixture_matchups()
     calls = []
@@ -101,9 +77,9 @@ def test_ensemble_is_memoised_across_weeks(monkeypatch):
     monkeypatch.setattr(recommend, "_assemble_sources",
                         lambda *a, **k: (calls.append(1), real(*a, **k))[1])
     live._ENSEMBLE_CACHE.clear()
-    for wk in (1, 2, 9):
-        live.source_matrix_for_week(f"{FIX}/win_totals.csv", f"{FIX}/power_ratings.csv",
-                                    None, home, away, week=wk)
+    for _ in range(3):
+        live.source_matrix(f"{FIX}/win_totals.csv", f"{FIX}/power_ratings.csv",
+                           None, home, away)
     assert len(calls) == 1
 
 
@@ -269,21 +245,6 @@ def test_dist_keeps_half_integer_totals_distinct():
     assert d == [pytest.approx(2 / 3, abs=1e-4), 0.0, pytest.approx(1 / 3, abs=1e-4)]
 
 
-def test_ratings_fetched_at_only_considers_power_sources(tmp_path):
-    import json as _json
-    meta = [
-        {"kind": "kalshi", "ok": True, "fetched_at": "2026-09-25T09:00:00"},
-        {"kind": "power", "ok": True, "fetched_at": "2026-09-20T09:00:00"},
-    ]
-    path = tmp_path / "sources_meta.json"
-    path.write_text(_json.dumps(meta))
-    assert live.ratings_fetched_at(str(tmp_path)) == "2026-09-20T09:00:00"
-
-    meta2 = [{"kind": "kalshi", "ok": True, "fetched_at": "2026-09-25T09:00:00"}]
-    path.write_text(_json.dumps(meta2))
-    assert live.ratings_fetched_at(str(tmp_path)) is None
-
-
 # --- Per-source views (score lens) -------------------------------------------
 
 def test_compute_live_has_a_view_per_source(inseason):
@@ -348,3 +309,61 @@ def test_schedule_cache_expired_ttl_refetches(monkeypatch, inseason, reset_sched
     monkeypatch.setattr(live, "_LAST_SCHEDULE_AT", live._LAST_SCHEDULE_AT - live._SCHEDULE_TTL_S - 1)
     live._load_schedule_cached()
     assert calls == [1, 1]
+
+
+def test_market_distributions_hands_back_stored_pmfs_verbatim():
+    """The store path is the only consumer of stored `distribution` rows outside
+    the ensemble, and it does NO validation: whatever the Kalshi fetcher wrote
+    is what reaches `rng.choice(p=...)`. A truncated or mid-write ladder sums to
+    less than 1 there, and numpy raises inside the unattended refresh rather
+    than degrading. That is the current contract; pin it so it cannot change
+    silently in either direction."""
+    from winspool.store import InMemoryStore
+    store = InMemoryStore({})
+    assert live._market_distributions(None, store) is None    # no rows yet
+
+    good = {"BUF": [0.0] * 9 + [1.0] + [0.0] * 8,             # BUF always 9
+            "KC": [0.0] * 10 + [1.0] + [0.0] * 7}             # KC always 10
+    store.add_rating({"source": "kalshi", "kind": "distribution", "ok": True,
+                      "fetched_at": 100.0, "doc": good})
+    codes, mat = live._market_distributions(None, store)
+    assert codes == ["BUF", "KC"] and mat.shape == (2, 18)
+    rng = np.random.default_rng(0)
+    assert live.market_pwin({"A": ["KC"], "B": ["BUF"]}, None, 200, rng,
+                            store=store) == {"A": 1.0, "B": 0.0}
+
+    # A newer, truncated ladder wins on fetched_at and is passed through as-is:
+    # not normalised, not rejected, sums still short of 1.
+    truncated = {t: [v * 0.8 for v in pmf] for t, pmf in good.items()}
+    store.add_rating({"source": "kalshi", "kind": "distribution", "ok": True,
+                      "fetched_at": 200.0, "doc": truncated})
+    _codes, mat = live._market_distributions(None, store)
+    assert mat.sum(axis=1) == pytest.approx([0.8, 0.8])
+    with pytest.raises(ValueError):
+        live.market_pwin({"A": ["KC"], "B": ["BUF"]}, None, 10,
+                         np.random.default_rng(0), store=store)
+
+
+def test_ensemble_cache_key_tracks_the_stores_newest_rating(monkeypatch):
+    """The file branch keys on mtimes; the store branch keys on the newest
+    fetched_at, and nothing asserted that. If that key were constant a ratings
+    refresh would land and the projection would keep serving the strengths it
+    built at boot -- indefinitely, with every health check green."""
+    from conftest import seed_fixture_ratings
+    from winspool import recommend
+    from winspool.store import InMemoryStore
+    home, away = _fixture_matchups()
+    store = InMemoryStore({})
+    seed_fixture_ratings(store, fetched_at=1000.0)
+    calls = []
+    real = recommend._assemble_sources
+    monkeypatch.setattr(recommend, "_assemble_sources",
+                        lambda *a, **k: (calls.append(1), real(*a, **k))[1])
+    live._ENSEMBLE_CACHE.clear()
+    for _ in range(2):
+        live.source_matrix(None, None, None, home, away, store=store)
+    assert len(calls) == 1, "unchanged ratings must not rebuild the ensemble"
+
+    seed_fixture_ratings(store, fetched_at=2000.0)      # a refresh lands
+    live.source_matrix(None, None, None, home, away, store=store)
+    assert len(calls) == 2, "a newer rating row must invalidate the cache"

@@ -1,0 +1,12 @@
+[Unit]
+Description=Refresh the live rating sources
+After=winspool.service
+Requires=winspool.service
+
+[Service]
+Type=oneshot
+TimeoutStartSec=1800
+EnvironmentFile=/etc/winspool/env
+ExecStart=/usr/bin/curl -fsS --max-time 1500 \
+    -X POST -H "X-Refresh-Token: ${REFRESH_TOKEN}" \
+    http://127.0.0.1:8080/internal/refresh-ratings

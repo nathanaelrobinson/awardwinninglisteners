@@ -11,7 +11,6 @@ Rolling dice against it is arithmetic. So this ships the strengths and the
 schedule (a few KB) instead of pre-rolled outcomes (a megabyte per 20k seasons,
 and incompressible, since coin flips carry no redundancy).
 """
-import os
 import time
 
 import numpy as np
@@ -22,8 +21,8 @@ from .game import HFA, SCALE  # re-exported for tests
 from .teams import TEAM_INDEX, TEAMS
 
 
-def build_model(rosters: dict, sched_df: pd.DataFrame, *, totals_path, power_path,
-                kalshi_dist_path, ratings_fetched_at=None, now=None) -> dict:
+def build_model(rosters: dict, sched_df: pd.DataFrame, *, totals_path=None, power_path=None,
+                kalshi_dist_path=None, ratings_fetched_at=None, now=None, store=None) -> dict:
     """Everything a client needs to reproduce the live projection's mixture.
 
     `strength` is one row per rating source, all on a common scale; a season
@@ -45,8 +44,8 @@ def build_model(rosters: dict, sched_df: pd.DataFrame, *, totals_path, power_pat
     full_home = reg["home_team"].map(TEAM_INDEX).to_numpy(dtype=int)
     full_away = reg["away_team"].map(TEAM_INDEX).to_numpy(dtype=int)
 
-    matrix, weights, names, sigma_full = live.source_matrix_for_week(
-        totals_path, power_path, kalshi_dist_path, full_home, full_away, week)
+    matrix, weights, names, sigma_full = live.source_matrix(
+        totals_path, power_path, kalshi_dist_path, full_home, full_away, store=store)
     sigma = live.season_sigma(live.remaining_games_per_team(remaining),
                               base_sigma=sigma_full)
 
@@ -84,7 +83,7 @@ def build_model(rosters: dict, sched_df: pd.DataFrame, *, totals_path, power_pat
     }
 
 
-def refresh_model(store, cache_dir, sched_df: pd.DataFrame | None = None) -> dict:
+def refresh_model(store, sched_df: pd.DataFrame | None = None) -> dict:
     """Rebuild from the league's rosters and the current schedule + ratings, and
     store it. Pass `sched_df` when the caller already has the schedule in hand:
     loading it means pulling the season from nfl_data_py, which is the whole
@@ -93,9 +92,6 @@ def refresh_model(store, cache_dir, sched_df: pd.DataFrame | None = None) -> dic
     rosters = _league.view(store.get())["rosters"]
     doc = build_model(
         rosters, live._load_schedule_cached() if sched_df is None else sched_df,
-        totals_path=os.path.join(cache_dir, "win_totals.csv"),
-        power_path=os.path.join(cache_dir, "power_ratings.csv"),
-        kalshi_dist_path=os.path.join(cache_dir, "kalshi_distributions.csv"),
-        ratings_fetched_at=live.ratings_fetched_at(cache_dir))
+        store=store, ratings_fetched_at=live.ratings_fetched_at(store))
     store.put_sim_model(doc)
     return doc

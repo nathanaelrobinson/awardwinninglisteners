@@ -1,4 +1,4 @@
-from winspool.fetch.scrapers import parse_win_total_table, parse_espn_fpi, parse_clay_page
+from winspool.fetch.scrapers import parse_win_total_table, parse_espn_fpi
 
 ESPN_JSON = {
     "teams": [
@@ -59,45 +59,3 @@ def test_parse_espn_fpi():
     assert out["LA"] == 5.574     # first fpi value; displayName resolves
     assert out["ARI"] == -4.2
     assert len(out) == 2
-
-
-def test_parse_clay_page():
-    text = ("2026 Arizona Cardinals Projections\n"
-            "... lots of stats ...\n"
-            "PROJECTED WINS: 3.6 (NFL RANK: 31)\n")
-    assert parse_clay_page(text) == ("ARI", 3.6)
-    # a non-team page (e.g. the standings page) yields nothing
-    assert parse_clay_page("2026 Projected Standings\nBuffalo Bills 10 7") is None
-
-
-def test_parse_pff_handles_abbrevs():
-    from winspool.fetch.scrapers import parse_pff
-    rows = [("LAR", "11.13"), ("SEA", "10.96"), ("BLT", "10.80"), ("HST", "9.85"),
-            ("ARZ", "4.33"), ("CLV", "6.07")]
-    filler = [(a, "8.0") for a in ["ATL","BUF","CAR","CHI","CIN","DAL","DEN","DET",
-              "GB","IND","JAX","KC","LV","LAC","MIA","MIN"]]
-    body = "".join(f"<tr><td>{a}</td><td>3</td><td>{w}</td><td>9.5</td></tr>"
-                   for a, w in rows + filler)
-    html = (f"<table><tr><th>Team</th><th>SoS</th><th>PFF Avg Wins Projection</th>"
-            f"<th>Win Total</th></tr>{body}</table>")
-    out = parse_pff(html)
-    assert out["LA"] == 11.13     # LAR -> LA
-    assert out["BAL"] == 10.80    # BLT -> BAL
-    assert out["HOU"] == 9.85     # HST -> HOU
-    assert out["ARI"] == 4.33     # ARZ -> ARI
-    assert out["CLE"] == 6.07     # CLV -> CLE
-    assert out["SEA"] == 10.96
-
-
-def test_epa_from_pbp():
-    import pandas as pd
-    from winspool.fetch.scrapers import epa_from_pbp
-    df = pd.DataFrame({
-        "posteam": ["KC", "KC", "NYJ", "NYJ"],
-        "defteam": ["NYJ", "NYJ", "KC", "KC"],
-        "epa": [0.5, 0.5, -0.5, -0.5],
-        "pass": [1, 1, 1, 0], "rush": [0, 0, 0, 1],
-    })
-    out = epa_from_pbp(df)
-    assert out["KC"] > out["NYJ"]                 # KC efficient, NYJ not
-    assert abs(out["KC"] + out["NYJ"]) < 1e-6     # mean-centered

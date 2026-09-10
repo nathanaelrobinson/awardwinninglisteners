@@ -37,6 +37,11 @@ class Store(Protocol):
     def latest_odds(self, season: int, week: int) -> list[dict]: ...
     def all_odds(self) -> list[dict]: ...
     def delete_odds(self, ids: list[str]) -> int: ...
+    def add_rating(self, row: dict) -> str: ...
+    def put_rating(self, row: dict) -> None: ...
+    def latest_ratings(self) -> dict[str, dict]: ...
+    def ratings_history(self, source: str) -> list[dict]: ...
+    def all_ratings(self) -> list[dict]: ...
 
 
 SNAPSHOT_CAP = 50
@@ -53,6 +58,7 @@ class InMemoryStore:
         self._weeks: dict[int, dict] = {}
         self._snapshots: list[dict] = []
         self._odds: list[dict] = []
+        self._ratings: list[dict] = []
         self._lock = threading.Lock()
 
     def get(self) -> dict:
@@ -186,6 +192,31 @@ class InMemoryStore:
         self._odds = [r for r in self._odds if r["id"] not in drop]
         return before - len(self._odds)
 
+    # --- ratings (append only) ---
+
+    def add_rating(self, row: dict) -> str:
+        r = {**row, "id": row.get("id") or uuid.uuid4().hex}
+        self._ratings.append(r)
+        return r["id"]
+
+    def put_rating(self, row: dict) -> None:
+        self._ratings = [r for r in self._ratings if r["id"] != row["id"]]
+        self._ratings.append(dict(row))
+
+    def latest_ratings(self) -> dict[str, dict]:
+        best: dict[str, dict] = {}
+        for r in sorted(self._ratings, key=lambda r: r["fetched_at"]):
+            if r["ok"]:
+                best[r["source"]] = r
+        return best
+
+    def ratings_history(self, source: str) -> list[dict]:
+        rows = [r for r in self._ratings if r["source"] == source]
+        return sorted(rows, key=lambda r: r["fetched_at"])
+
+    def all_ratings(self) -> list[dict]:
+        return sorted(self._ratings, key=lambda r: r["fetched_at"])
+
 
 class SqliteStore:
     """Single-file SQLite store.
@@ -208,6 +239,10 @@ class SqliteStore:
                                      week INTEGER NOT NULL, source TEXT NOT NULL,
                                      fetched_at REAL NOT NULL, doc TEXT NOT NULL);
     CREATE INDEX IF NOT EXISTS odds_week ON odds(season, week, fetched_at);
+    CREATE TABLE IF NOT EXISTS ratings (id TEXT PRIMARY KEY, source TEXT NOT NULL,
+                                        kind TEXT NOT NULL, fetched_at REAL NOT NULL,
+                                        ok INTEGER NOT NULL, doc TEXT NOT NULL);
+    CREATE INDEX IF NOT EXISTS ratings_source_time ON ratings(source, fetched_at);
     """
 
     def __init__(self, path: str | os.PathLike):
@@ -417,6 +452,54 @@ class SqliteStore:
             marks = ",".join("?" * len(ids))
             cur = self._db.execute(f"DELETE FROM odds WHERE id IN ({marks})", tuple(ids))
             return cur.rowcount
+
+    # --- ratings (append only) ---
+
+    def add_rating(self, row: dict) -> str:
+        r = {**row, "id": row.get("id") or uuid.uuid4().hex}
+        self.put_rating(r)
+        return r["id"]
+
+    def put_rating(self, row: dict) -> None:
+        with self._lock:
+            self._db.execute(
+                "INSERT OR REPLACE INTO ratings (id, source, kind, fetched_at, ok, doc) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (row["id"], row["source"], row["kind"], float(row["fetched_at"]),
+                 1 if row["ok"] else 0, json.dumps(row["doc"])))
+
+    def _rating_rows(self, sql: str, args=()) -> list[dict]:
+        rows = self._db.execute(sql, args).fetchall()
+        return [{"id": r[0], "source": r[1], "kind": r[2], "fetched_at": r[3],
+                 "ok": bool(r[4]), "doc": json.loads(r[5])} for r in rows]
+
+    def latest_ratings(self) -> dict[str, dict]:
+        """The newest successful row per source.
+
+        Only those rows are decoded. Reading the whole ok=1 history and keeping
+        the last of each meant JSON-parsing every 32-team document ever stored
+        — several hundred by week 18 — on every `ratings_stamp`, every market
+        lookup and every 60-second Admin poll. The row picked is identical to
+        what that scan picked, ties included: newest fetched_at, then the row
+        written last."""
+        return {r["source"]: r for r in self._rating_rows(
+            "SELECT id, source, kind, fetched_at, ok, doc FROM ratings "
+            "WHERE rowid IN ("
+            "  SELECT max(rowid) FROM ratings WHERE ok=1"
+            "   AND (source, fetched_at) IN ("
+            "     SELECT source, max(fetched_at) FROM ratings WHERE ok=1"
+            "      GROUP BY source)"
+            "  GROUP BY source)")}
+
+    def ratings_history(self, source: str) -> list[dict]:
+        return self._rating_rows(
+            "SELECT id, source, kind, fetched_at, ok, doc FROM ratings "
+            "WHERE source=? ORDER BY fetched_at, rowid", (source,))
+
+    def all_ratings(self) -> list[dict]:
+        return self._rating_rows(
+            "SELECT id, source, kind, fetched_at, ok, doc FROM ratings "
+            "ORDER BY fetched_at, rowid")
 
     def close(self) -> None:
         self._db.close()
