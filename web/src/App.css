@@ -741,7 +741,6 @@
 .sim-g.played .w { font-weight: 700; color: var(--text); }
 .sim-g.played .l { color: var(--text-dim); }
 .sim-g.played .mk { opacity: 0.9; }
-.sim-g.conflict .w { color: var(--red); }
 .sim-key {
   font-size: 11px; color: var(--text-dim); margin: var(--s4) 0 var(--s1);
 }

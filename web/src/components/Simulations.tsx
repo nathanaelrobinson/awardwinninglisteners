@@ -5,20 +5,18 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getSimModel } from '../league';
 import type { Rolled, SimModel } from '../sim';
-import { rollAll, rollSeason, scheduleOf, sourceLabel } from '../sim';
+import { rollAll, rollSeason, sourceLabel } from '../sim';
 import type { RollRequest, RollResponse } from '../sim.worker';
 
 type View = 'all' | 'margin';
-type Mode = 'possible' | 'resim';
 
 const PAD = { l: 40, r: 12, t: 12, b: 24 };
 const DRAW_N = 5000;           // lines actually painted; every count uses them all
 const COUNTS = [20000, 50000, 100000, 250000];
 
 const WIN = '#1b48e0';         // this player wins
-const DEAD = '#d50a0a';        // ruled out
+const HOVER = '#d50a0a';       // the season under the cursor
 const CLOUD = '#9aa1ad';       // someone else wins
-const INK = '#151515';
 const RULE = '#d6d9de';
 const DIM = '#626c80';
 
@@ -30,7 +28,6 @@ export default function Simulations({ myName }: { myName: string }) {
   const [done, setDone] = useState(0);
 
   const [view, setView] = useState<View>('all');
-  const [mode, setMode] = useState<Mode>('resim');
   const [nSims, setNSims] = useState(100000);
   const [seed, setSeed] = useState(12345);
   const [meIdx, setMeIdx] = useState(0);
@@ -49,10 +46,8 @@ export default function Simulations({ myName }: { myName: string }) {
     return () => { alive = false; };
   }, [myName]);
 
-  // Two cohorts, rolled lazily and kept. "Simulate forward" starts every season from
-  // today's banked wins; "Still possible" replays the whole season from zero so
-  // results have something to rule out. Rolling blocks for a moment, so paint
-  // the busy state before starting.
+  // Rolling blocks for a moment even in a worker, so paint the busy state first
+  // and keep each cohort by size and seed rather than re-rolling on every toggle.
   const cohorts = useRef(new Map<string, Rolled>());
   const worker = useRef<Worker | null>(null);
   const reqId = useRef(0);
@@ -68,7 +63,7 @@ export default function Simulations({ myName }: { myName: string }) {
 
   useEffect(() => {
     if (!model) return;
-    const key = `${mode}|${nSims}|${seed}`;
+    const key = `${nSims}|${seed}`;
     const hit = cohorts.current.get(key);
     if (hit) { setRolled(hit); return; }
 
@@ -83,8 +78,7 @@ export default function Simulations({ myName }: { myName: string }) {
 
     const w = worker.current;
     if (!w) {
-      const t = window.setTimeout(() =>
-        accept(rollAll(model, nSims, seed, mode === 'possible')), 16);
+      const t = window.setTimeout(() => accept(rollAll(model, nSims, seed)), 16);
       return () => window.clearTimeout(t);
     }
     const onMsg = (e: MessageEvent<RollResponse>) => {
@@ -94,20 +88,14 @@ export default function Simulations({ myName }: { myName: string }) {
       else { setBusy(false); setError('The simulation could not run: ' + e.data.message); }
     };
     w.addEventListener('message', onMsg);
-    const req: RollRequest = { id, model, nSims, seed, preseason: mode === 'possible' };
+    const req: RollRequest = { id, model, nSims, seed };
     w.postMessage(req);
     return () => w.removeEventListener('message', onMsg);
-  }, [model, nSims, seed, mode]);
+  }, [model, nSims, seed]);
 
   useEffect(() => { cohorts.current.clear(); }, [model]);
 
-  const locked = rolled?.playedWeeks ?? 0;
-
-  // Simulate forward already starts from banked wins; no re-anchoring needed.
-  const act = useMemo(() => {
-    if (!rolled) return null;
-    return { paths: rolled.paths, winner: rolled.winner };
-  }, [rolled]);
+  const act = useMemo(() => (rolled ? { paths: rolled.paths, winner: rolled.winner } : null), [rolled]);
 
   const margins = useMemo(() => {
     if (!rolled || !act || view !== 'margin') return null;
@@ -123,27 +111,15 @@ export default function Simulations({ myName }: { myName: string }) {
     return out;
   }, [rolled, act, view, meIdx]);
 
-  const aliveAt = useCallback((s: number) => !rolled || !rolled.dead[s], [rolled]);
-  // a ruled-out season stops at the boundary between results and everything after
-  const liveEnd = useCallback((s: number) => {
-    if (!rolled) return 0;
-    return rolled.dead[s] ? Math.max(2, Math.min(rolled.nWeeks, locked)) : rolled.nWeeks;
-  }, [rolled, locked]);
-
-  // 100k lines need an alpha so low each is invisible, so paint a sample of
-  // whatever is still possible and count with the whole set.
+  // 100k lines need an alpha so low each one is invisible. Paint an evenly
+  // spaced sample and let every count use the whole set.
   const sample = useMemo(() => {
-    if (!rolled) return { alive: [] as number[], dead: [] as number[] };
-    const alive: number[] = [], dead: number[] = [];
-    for (let s = 0; s < rolled.nSims; s++) (aliveAt(s) ? alive : dead).push(s);
-    const pick = (arr: number[], n: number) => {
-      if (arr.length <= n) return arr;
-      const out = new Array<number>(n), stride = arr.length / n;
-      for (let i = 0; i < n; i++) out[i] = arr[(i * stride) | 0];
-      return out;
-    };
-    return { alive: pick(alive, DRAW_N), dead: pick(dead, DRAW_N >> 1) };
-  }, [rolled, aliveAt]);
+    if (!rolled) return [] as number[];
+    const n = Math.min(DRAW_N, rolled.nSims), stride = rolled.nSims / n;
+    const out = new Array<number>(n);
+    for (let i = 0; i < n; i++) out[i] = (i * stride) | 0;
+    return out;
+  }, [rolled]);
 
   const seriesFor = useCallback((pi: number) =>
     (view === 'margin' ? margins! : act!.paths[pi]), [view, margins, act]);
@@ -152,16 +128,14 @@ export default function Simulations({ myName }: { myName: string }) {
     if (!rolled || !act) return null;
     const nW = rolled.nWeeks, arr = seriesFor(pi);
     let lo = Infinity, hi = -Infinity;
-    for (const s of [...sample.alive, ...sample.dead]) {
-      const end = liveEnd(s);
-      for (let k = 0; k < end; k++) { const v = arr[s * nW + k]; if (v < lo) lo = v; if (v > hi) hi = v; }
-    }
+    for (const s of sample)
+      for (let k = 0; k < nW; k++) { const v = arr[s * nW + k]; if (v < lo) lo = v; if (v > hi) hi = v; }
     if (!isFinite(lo)) { lo = 0; hi = 1; }
     const pad = Math.max(1, (hi - lo) * 0.04); lo -= pad; hi += pad;
     const X = (i: number) => PAD.l + (w - PAD.l - PAD.r) * (nW === 1 ? 0.5 : i / (nW - 1));
     const Y = (v: number) => PAD.t + (h - PAD.t - PAD.b) * (1 - (v - lo) / (hi - lo || 1));
 
-    const key = `${pi}|${view}|${mode}|${w}|${h}|${locked}|${seed}|${nSims}`;
+    const key = `${pi}|${view}|${w}|${h}|${seed}|${nSims}`;
     let off = cloudCache.current.get(key);
     if (!off) {
       cloudCache.current.clear();
@@ -170,20 +144,15 @@ export default function Simulations({ myName }: { myName: string }) {
       off.width = w * dpr; off.height = h * dpr;
       const oc = off.getContext('2d')!;
       oc.setTransform(dpr, 0, 0, dpr, 0, 0);
-      const a = Math.max(0.03, Math.min(0.16, 420 / Math.max(sample.alive.length, 1)));
-      const passes: { list: number[]; keep: (s: number) => boolean; col: string; al: number; cut?: boolean }[] = [
-        { list: sample.dead, keep: () => true, col: DEAD, al: a * 0.55, cut: true },
-        { list: sample.alive, keep: (s) => act.winner[s] !== pi + 1, col: CLOUD, al: a * 0.8 },
-        { list: sample.alive, keep: (s) => act.winner[s] === pi + 1, col: WIN, al: a * 1.3 },
-      ];
-      for (const p of passes) {
-        oc.strokeStyle = p.col; oc.globalAlpha = Math.min(p.al, 0.5); oc.lineWidth = 1;
+      const a = Math.max(0.03, Math.min(0.16, 420 / Math.max(sample.length, 1)));
+      // losers first so the winning seasons read on top
+      for (const [wins, col, mul] of [[false, CLOUD, 0.8], [true, WIN, 1.3]] as [boolean, string, number][]) {
+        oc.strokeStyle = col; oc.globalAlpha = Math.min(a * mul, 0.5); oc.lineWidth = 1;
         oc.beginPath();
-        for (const s of p.list) {
-          if (!p.keep(s)) continue;
-          const end = p.cut ? liveEnd(s) : nW;
+        for (const s of sample) {
+          if ((act.winner[s] === pi + 1) !== wins) continue;
           oc.moveTo(X(0), Y(arr[s * nW]));
-          for (let k = 1; k < end; k++) oc.lineTo(X(k), Y(arr[s * nW + k]));
+          for (let k = 1; k < nW; k++) oc.lineTo(X(k), Y(arr[s * nW + k]));
         }
         oc.stroke();
       }
@@ -202,24 +171,11 @@ export default function Simulations({ myName }: { myName: string }) {
       c.save(); c.setLineDash([4, 4]); c.strokeStyle = DIM;
       c.beginPath(); c.moveTo(PAD.l, Y(0)); c.lineTo(w - PAD.r, Y(0)); c.stroke(); c.restore();
     }
-    if (locked > 0) {
-      c.save(); c.strokeStyle = DIM; c.globalAlpha = 0.5;
-      c.beginPath(); c.moveTo(X(locked - 1), PAD.t); c.lineTo(X(locked - 1), h - PAD.b);
-      c.stroke(); c.restore();
-      if (view !== 'margin') {
-        c.save(); c.strokeStyle = INK; c.lineWidth = 2.5; c.lineJoin = 'round';
-        c.beginPath(); c.moveTo(X(0), Y(rolled.realPath[pi][0]));
-        for (let k = 1; k < locked; k++) c.lineTo(X(k), Y(rolled.realPath[pi][k]));
-        c.stroke(); c.restore();
-      }
-    }
-    for (const [sim, col] of [[picked, WIN], [hover, DEAD]] as [number | null, string][]) {
+    for (const [sim, col] of [[picked, WIN], [hover, HOVER]] as [number | null, string][]) {
       if (sim == null) continue;
-      const end = Math.max(liveEnd(sim), 2);
       c.save(); c.strokeStyle = col; c.lineWidth = 2.25; c.lineJoin = 'round';
-      c.globalAlpha = aliveAt(sim) ? 1 : 0.55;
       c.beginPath(); c.moveTo(X(0), Y(arr[sim * nW]));
-      for (let k = 1; k < end; k++) c.lineTo(X(k), Y(arr[sim * nW + k]));
+      for (let k = 1; k < nW; k++) c.lineTo(X(k), Y(arr[sim * nW + k]));
       c.stroke(); c.restore();
     }
     c.fillStyle = DIM; c.font = '10px system-ui, sans-serif';
@@ -230,7 +186,7 @@ export default function Simulations({ myName }: { myName: string }) {
     c.fillText(`W${rolled.weeks[0]}`, X(0), h - PAD.b + 5);
     c.fillText(`W${rolled.weeks[nW - 1]}`, X(nW - 1), h - PAD.b + 5);
     return { X, Y, lo, hi };
-  }, [rolled, act, sample, seriesFor, liveEnd, aliveAt, view, mode, locked, seed, nSims, picked, hover]);
+  }, [rolled, act, sample, seriesFor, view, seed, nSims, picked, hover]);
 
   const panelsRef = useRef<(HTMLCanvasElement | null)[]>([]);
   const soloRef = useRef<HTMLCanvasElement>(null);
@@ -273,8 +229,7 @@ export default function Simulations({ myName }: { myName: string }) {
       const t = (mx - PAD.l) / (p.w - PAD.l - PAD.r);
       const k = Math.max(0, Math.min(nW - 1, Math.round(t * (nW - 1))));
       let bd = 14;
-      for (const s of [...sample.alive, ...sample.dead]) {
-        if (liveEnd(s) <= k) continue;
+      for (const s of sample) {
         const d = Math.abs(p.Y(arr[s * nW + k]) - my);
         if (d < bd) { bd = d; found = s; }
       }
@@ -289,7 +244,6 @@ export default function Simulations({ myName }: { myName: string }) {
       .sort((a, b) => b[1] - a[1]);
     tip.innerHTML =
       `<strong>Simulation #${found + 1}</strong> · ${sourceLabel(model!.sources[rolled.source[found]])}` +
-      (aliveAt(found) ? '' : ` · <span style="color:${DEAD}">no longer possible</span>`) +
       '<br>' + fin.map(([p, v], i) => `${i === 0 ? '🏆 ' : ''}${p} — ${v}`).join('<br>');
     tip.style.opacity = '1';
     tip.style.left = `${Math.min(e.clientX - r.left + 14, wrap.clientWidth - 220)}px`;
@@ -301,9 +255,9 @@ export default function Simulations({ myName }: { myName: string }) {
 
   const pct = (pi: number) => {
     if (!rolled || !act) return '—';
-    let n = 0, c = 0;
-    for (let s = 0; s < rolled.nSims; s++) if (aliveAt(s)) { n++; if (act.winner[s] === pi + 1) c++; }
-    return `${((c / Math.max(n, 1)) * 100).toFixed(0)}%`;
+    let c = 0;
+    for (let s = 0; s < rolled.nSims; s++) if (act.winner[s] === pi + 1) c++;
+    return `${((c / rolled.nSims) * 100).toFixed(0)}%`;
   };
 
   return (
@@ -312,10 +266,6 @@ export default function Simulations({ myName }: { myName: string }) {
         <div className="sim-seg">
           <button className={view === 'all' ? 'on' : ''} onClick={() => setView('all')}>All teams</button>
           <button className={view === 'margin' ? 'on' : ''} onClick={() => setView('margin')}>Single margin</button>
-        </div>
-        <div className="sim-seg">
-          <button className={mode === 'resim' ? 'on' : ''} onClick={() => setMode('resim')}>Simulate forward</button>
-          <button className={mode === 'possible' ? 'on' : ''} onClick={() => setMode('possible')}>Preseason sim</button>
         </div>
         {view === 'margin' && (
           <select value={meIdx} onChange={(e) => setMeIdx(+e.target.value)}>
@@ -333,12 +283,8 @@ export default function Simulations({ myName }: { myName: string }) {
 
       {model.played.length > 0 && (
         <p className="sim-note">
-          {model.played.length} game{model.played.length === 1 ? '' : 's'} played.{' '}
-          {mode === 'resim'
-            ? 'Every simulation starts from the real results.'
-            : rolled
-              ? `${rolled.nAlive.toLocaleString()} of ${nSims.toLocaleString()} preseason simulations are still possible.`
-              : 'These were rolled before week 1, so results can rule them out.'}
+          {model.played.length} game{model.played.length === 1 ? '' : 's'} played.
+          Every simulation starts from the real results.
         </p>
       )}
       <div className="panel">
@@ -346,9 +292,6 @@ export default function Simulations({ myName }: { myName: string }) {
           <span><i style={{ background: WIN }} />
             {view === 'margin' ? `${model.players[meIdx].split(' ')[0]} wins` : 'this player wins'}</span>
           <span><i style={{ background: CLOUD }} />someone else wins</span>
-          {mode === 'possible' && rolled && rolled.nAlive < nSims &&
-            <span><i style={{ background: DEAD }} />ruled out ({(nSims - rolled.nAlive).toLocaleString()})</span>}
-          {locked > 0 && view !== 'margin' && <span><i style={{ background: INK }} />results so far</span>}
           <span className="sim-hint">
             {busy
               ? `rolling ${(done || 0).toLocaleString()} of ${nSims.toLocaleString()}…`
@@ -375,56 +318,44 @@ export default function Simulations({ myName }: { myName: string }) {
       </div>
 
       {picked != null && rolled && act
-        ? <SeasonDetail model={model} rolled={rolled} sim={picked} seed={seed}
-                        alive={aliveAt(picked)} />
+        ? <SeasonDetail model={model} sim={picked} seed={seed} />
         : <div className="panel sim-empty">Click any line to open that simulation.</div>}
     </div>
   );
 }
 
-function SeasonDetail({ model, rolled, sim, seed, alive }: {
-  model: SimModel; rolled: Rolled; sim: number; seed: number; alive: boolean;
+function SeasonDetail({ model, sim, seed }: {
+  model: SimModel; sim: number; seed: number;
 }) {
   const [lit, setLit] = useState<string | null>(null);
   const d = useMemo(() => {
-    const pre = rolled.preseason;
-    const sched = scheduleOf(model, pre);
-    const detail = new Uint8Array(sched.length);
-    const src = model.sources[rollSeason(model, seed, sim, detail, pre)];
+    const detail = new Uint8Array(model.games.length);
+    const src = model.sources[rollSeason(model, seed, sim, detail)];
     const ti = new Map(model.teams.map((c, i) => [c, i]));
     const str = model.strength[model.sources.indexOf(src)];
 
-    // real results, so a preseason season can be checked against them
-    const real = new Map(model.played.map(([w, h, a, hw]) => [`${w}|${h}|${a}`, hw]));
-
-    type G = { w: string; l: string; upset: boolean; conflict: boolean; final?: boolean; tie?: boolean; h: string; a: string };
+    type G = { w: string; l: string; upset: boolean; played?: boolean; tie?: boolean; h: string; a: string };
     const byWeek = new Map<number, G[]>();
     const push = (wk: number, g: G) => {
       if (!byWeek.has(wk)) byWeek.set(wk, []);
       byWeek.get(wk)!.push(g);
     };
 
-    // a live cohort never plays the finals, so list them from the real results
-    if (!pre) {
-      for (const [wk, home, away, hw] of model.played) {
-        push(wk, { w: hw === 0 ? away : home, l: hw === 0 ? home : away,
-                   upset: false, conflict: false, final: true, tie: hw === -1, h: home, a: away });
-      }
+    // games with a real score are already in `banked`; show them as settled
+    const tw = Float64Array.from(model.banked);
+    for (const [wk, home, away, hw] of model.played) {
+      push(wk, { w: hw === 0 ? away : home, l: hw === 0 ? home : away,
+                 upset: false, played: true, tie: hw === -1, h: home, a: away });
     }
 
-    const tw = pre ? new Float64Array(model.teams.length) : Float64Array.from(model.banked);
-    let upsets = 0, conflicts = 0;
-    sched.forEach(([wk, home, away], i) => {
+    let upsets = 0;
+    model.games.forEach(([wk, home, away], i) => {
       const h = ti.get(home)!, a = ti.get(away)!;
       const hw = detail[i];
       tw[hw ? h : a]++;
       const upset = (str[h] - str[a] + model.hfa) * (hw ? 1 : -1) < 0;
-      const realHW = real.get(`${wk}|${home}|${away}`);
-      const conflict = realHW !== undefined && realHW !== -1 && realHW !== hw;
       if (upset) upsets++;
-      if (conflict) conflicts++;
-      push(wk, { w: hw ? home : away, l: hw ? away : home, upset, conflict,
-                 final: realHW !== undefined && !conflict, h: home, a: away });
+      push(wk, { w: hw ? home : away, l: hw ? away : home, upset, h: home, a: away });
     });
 
     const owners = model.players.map((p) => {
@@ -433,22 +364,17 @@ function SeasonDetail({ model, rolled, sim, seed, alive }: {
       return { p, codes, total: codes.reduce((t, x) => t + x.n, 0) };
     }).sort((a, b) => b.total - a.total);
 
-    const weeks = [...byWeek].sort((a, b) => a[0] - b[0]);
-    return { src, weeks, owners, upsets, conflicts, finals: model.played.length, pre };
-  }, [model, rolled, sim, seed]);
+    return { src, weeks: [...byWeek].sort((a, b) => a[0] - b[0]), owners,
+             upsets, played: model.played.length };
+  }, [model, sim, seed]);
 
   const best = d.owners[0].total;
   return (
     <div className="panel sim-detail">
       <h2>Simulation #{sim + 1} using {sourceLabel(d.src)} rankings</h2>
       <p className="sim-meta">
-        {d.pre ? 'Rolled before week 1. ' : d.finals > 0 ? `${d.finals} played game${d.finals === 1 ? '' : 's'} locked in. ` : ''}
-        {d.upsets} upsets.{' '}
-        {alive
-          ? 'Still possible.'
-          : d.conflicts
-            ? `Ruled out: ${d.conflicts} game${d.conflicts === 1 ? '' : 's'} went the other way.`
-            : 'Ruled out.'}
+        {d.played > 0 && `${d.played} played game${d.played === 1 ? '' : 's'} locked in. `}
+        {d.upsets} upsets.
       </p>
       <div className="sim-owners">
         {d.owners.map((o) => (
@@ -475,7 +401,7 @@ function SeasonDetail({ model, rolled, sim, seed, alive }: {
             <div className="sim-wk-lab">Wk {wk}</div>
             {games.map((g, i) => (
               <div key={i}
-                   className={`sim-g${g.final ? ' played' : ''}${g.conflict ? ' conflict' : ''}${lit && (g.h === lit || g.a === lit) ? ' hit' : ''}`}>
+                   className={`sim-g${g.played ? ' played' : ''}${lit && (g.h === lit || g.a === lit) ? ' hit' : ''}`}>
                 <span className="mk">{g.upset ? '*' : ''}</span>
                 <span className="w">{g.tie ? 'tie' : g.w}</span>
                 <span className="l">{g.tie ? `${g.h}/${g.a}` : g.l}</span>
