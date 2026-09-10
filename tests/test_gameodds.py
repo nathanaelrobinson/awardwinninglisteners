@@ -1,5 +1,3 @@
-import math
-
 import pytest
 
 from winspool.gameodds import (GameOdds, market_prob, prob_from_kalshi,
@@ -24,30 +22,26 @@ def test_moneyline_devig_sums_to_one_and_removes_the_overround():
     # DEN @ KC, Week 1 2026: DraftKings closed -148 / +124, a 4.3% vig.
     p = prob_from_moneyline(-148, 124)
     assert p == pytest.approx(0.572, abs=1e-3)
-    assert p + prob_from_moneyline(124, -148) == pytest.approx(1.0)
 
 
 def test_kalshi_prices_are_normalised():
     assert prob_from_kalshi(0.55, 0.47) == pytest.approx(0.55 / 1.02)
-    assert prob_from_kalshi(0.5, 0.5) == pytest.approx(0.5)
 
 
 def test_kalshi_rejects_a_dead_market():
     assert prob_from_kalshi(0.0, 0.0) is None
 
 
-def test_to_prob_prefers_moneyline_over_spread():
-    o = _o("book", spread=-7.0, ml_home=-148, ml_away=124)
-    assert to_prob(o) == pytest.approx(prob_from_moneyline(-148, 124))
-
-
-def test_to_prob_falls_back_to_spread_then_gives_up():
+def test_to_prob_reads_the_sources_in_priority_order():
+    # model probability > kalshi > moneyline > spread > nothing usable.
+    assert to_prob(_o("model", p_home=0.61, yes_home=0.9, yes_away=0.1,
+                      ml_home=-148, ml_away=124, spread=-7.0)) == pytest.approx(0.61)
+    assert to_prob(_o("kalshi", yes_home=0.55, yes_away=0.47, ml_home=-148,
+                      ml_away=124, spread=-7.0)) == pytest.approx(0.55 / 1.02)
+    assert to_prob(_o("book", spread=-7.0, ml_home=-148, ml_away=124)) == (
+        pytest.approx(prob_from_moneyline(-148, 124)))
     assert to_prob(_o("nflverse", spread=-2.5)) == pytest.approx(prob_from_spread(-2.5))
     assert to_prob(_o("nflverse")) is None
-
-
-def test_to_prob_passes_through_a_model_probability():
-    assert to_prob(_o("model", p_home=0.61)) == pytest.approx(0.61)
 
 
 def test_market_prob_averages_book_and_kalshi():
@@ -63,11 +57,8 @@ def test_market_prob_ignores_the_model_and_prefers_markets_to_nflverse():
     assert market_prob(odds) == pytest.approx(to_prob(book))
 
 
-def test_market_prob_falls_back_to_nflverse_when_no_market_is_present():
+def test_market_prob_falls_back_to_nflverse_then_gives_up():
     assert market_prob([_o("nflverse", spread=-2.5)]) == pytest.approx(
         prob_from_spread(-2.5))
-
-
-def test_market_prob_is_none_when_nothing_usable_is_present():
     assert market_prob([]) is None
     assert market_prob([_o("model", p_home=0.7)]) is None

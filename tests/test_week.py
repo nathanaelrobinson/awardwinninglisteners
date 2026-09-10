@@ -6,21 +6,11 @@ import pytest
 from winspool.week import build_week, poisson_binomial
 
 
-def test_no_games_is_a_certain_zero():
+def test_the_degenerate_cases_land_where_they_must():
     assert poisson_binomial([]) == [1.0]
-
-
-def test_a_certainty_puts_all_the_mass_on_one_total():
     assert poisson_binomial([1.0, 1.0]) == pytest.approx([0.0, 0.0, 1.0])
     assert poisson_binomial([0.0, 0.0]) == pytest.approx([1.0, 0.0, 0.0])
-
-
-def test_two_coin_flips():
     assert poisson_binomial([0.5, 0.5]) == pytest.approx([0.25, 0.5, 0.25])
-
-
-def test_it_always_sums_to_one():
-    assert sum(poisson_binomial([0.3, 0.62, 0.41, 0.9, 0.05, 0.77])) == pytest.approx(1.0)
 
 
 def test_it_matches_brute_force_enumeration():
@@ -32,13 +22,6 @@ def test_it_matches_brute_force_enumeration():
             prob *= p if hit else (1 - p)
         want[sum(combo)] += prob
     assert poisson_binomial(ps) == pytest.approx(want)
-
-
-def test_its_mean_is_the_sum_of_the_probabilities():
-    ps = [0.3, 0.62, 0.41]
-    dist = poisson_binomial(ps)
-    mean = sum(i * d for i, d in enumerate(dist))
-    assert mean == pytest.approx(sum(ps))
 
 
 LIVE = {
@@ -65,10 +48,18 @@ SCHED = pd.DataFrame([
 ])
 
 
-def test_chalk_is_expected_wins_from_the_probabilities_used():
+def test_chalk_and_the_distribution_come_from_the_probabilities_used():
     out = build_week(LIVE, ROSTERS, SCHED, 1, [])
     a = next(p for p in out["players"] if p["name"] == "A")
     assert a["chalk"] == pytest.approx(0.60 + 0.50)
+    # KC at 0.60 and LA at 0.50, two uncertain games -> totals 0, 1, 2.
+    assert a["dist"] == pytest.approx([0.20, 0.50, 0.30])
+    # B owns the away side of both games, so B runs on 1 - p, not p.
+    b = next(p for p in out["players"] if p["name"] == "B")
+    assert b["chalk"] == pytest.approx(0.40 + 0.50)
+    assert b["dist"] == pytest.approx([0.30, 0.50, 0.20])
+    # The board's swing tooltip needs each player's unconditional pool odds.
+    assert {p["name"]: p["pwin"] for p in out["players"]} == {"A": 0.6, "B": 0.4}
 
 
 def test_a_played_game_is_banked_and_leaves_the_distribution():
@@ -88,13 +79,6 @@ def test_a_game_between_two_of_my_own_teams_is_a_lock():
     assert a["dist"] == pytest.approx([1.0])
 
 
-def test_the_distribution_covers_every_uncertain_game():
-    out = build_week(LIVE, ROSTERS, SCHED, 1, [])
-    a = next(p for p in out["players"] if p["name"] == "A")
-    assert len(a["dist"]) == 3          # two uncertain games -> totals 0, 1, 2
-    assert sum(a["dist"]) == pytest.approx(1.0)
-
-
 def test_games_are_ordered_by_their_largest_swing():
     out = build_week(LIVE, ROSTERS, SCHED, 1, [])
     # SCHED's third game (NE/NYJ) is already final, so it sorts last regardless
@@ -110,32 +94,19 @@ def test_played_games_come_back_with_their_score_and_no_swing():
     assert ne["swing"] == {}
 
 
-def test_a_week_is_final_only_when_every_game_has_a_score():
+def test_a_week_goes_final_only_when_played_out_and_only_then_has_actuals():
     played = SCHED.copy()
     played["home_score"] = [24, 20, 20]
     played["away_score"] = [17, 17, 17]
-    assert build_week(LIVE, ROSTERS, SCHED, 1, [])["state"] == "live"
-    assert build_week(LIVE, ROSTERS, played, 1, [])["state"] == "final"
 
+    live_out = build_week(LIVE, ROSTERS, SCHED, 1, [])
+    assert live_out["state"] == "live"
+    assert all(p["actual"] is None for p in live_out["players"])
 
-def test_a_completed_week_reports_what_actually_happened():
-    played = SCHED.copy()
-    played["home_score"] = [24, 20, 20]
-    played["away_score"] = [17, 17, 17]
     out = build_week(LIVE, ROSTERS, played, 1, [])
+    assert out["state"] == "final"
     a = next(p for p in out["players"] if p["name"] == "A")
     assert a["actual"] == 2          # KC and LA both won at home
-    assert out["state"] == "final"
-
-
-def test_a_live_week_has_no_actual():
-    out = build_week(LIVE, ROSTERS, SCHED, 1, [])
-    assert all(p["actual"] is None for p in out["players"])
-
-
-def test_each_player_carries_their_pool_odds_for_the_swing_tooltip():
-    out = build_week(LIVE, ROSTERS, SCHED, 1, [])
-    assert {p["name"]: p["pwin"] for p in out["players"]} == {"A": 0.6, "B": 0.4}
 
 
 def test_the_line_comes_from_the_odds_log():

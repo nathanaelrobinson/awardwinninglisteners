@@ -46,7 +46,7 @@ def test_market_probs_keys_on_the_home_away_pair():
     assert got[("KC", "DEN")] == pytest.approx(0.572, abs=1e-3)
 
 
-def test_current_week_games_are_simulated_from_the_market(inseason):
+def test_a_quoted_game_uses_the_market_and_an_unquoted_one_the_model(inseason):
     doc = live.compute_live(ROSTERS, inseason, market={("BUF", "DAL"): 0.90},
                             **_kw())
     game = next(g for g in doc["games"] if g["home"] == "BUF")
@@ -54,10 +54,7 @@ def test_current_week_games_are_simulated_from_the_market(inseason):
     assert game["source"] == "market"
     assert game["p_model"] != pytest.approx(0.90)
 
-
-def test_a_game_with_no_market_falls_back_to_the_model(inseason):
-    doc = live.compute_live(ROSTERS, inseason, market={("BUF", "DAL"): 0.90},
-                            **_kw())
+    # KC/PHI is in the same week with no market quoted: it keeps the model.
     other = next(g for g in doc["games"] if g["home"] == "KC")
     assert other["source"] == "model"
     assert other["p_used"] == pytest.approx(other["p_model"])

@@ -25,15 +25,12 @@ def kalshi_markets():
     return _load("kalshi_games_2026_wk1.json")["markets"]
 
 
-def test_espn_returns_one_row_per_game(espn_payload):
+def test_espn_carries_raw_quoted_values_and_no_probability(espn_payload):
     got = parse_espn(espn_payload, fetched_at=123.0)
     assert len(got) == 16
     assert {o.source for o in got} == {"book"}
     assert {o.fetched_at for o in got} == {123.0}
-
-
-def test_espn_carries_raw_quoted_values_and_no_probability(espn_payload):
-    kc = next(o for o in parse_espn(espn_payload, 0.0) if o.home == "KC")
+    kc = next(o for o in got if o.home == "KC")
     assert kc.away == "DEN"
     assert kc.spread == pytest.approx(-2.5)
     assert kc.total == pytest.approx(43.5)
@@ -56,11 +53,8 @@ def test_kalshi_matches_games_by_team_pair(kalshi_markets):
     for o in got:
         assert 0 < o.yes_home < 1 and 0 < o.yes_away < 1
         assert o.p_home is None
-
-
-def test_kalshi_skips_pairs_it_has_no_market_for(kalshi_markets):
-    got = parse_kalshi(kalshi_markets, {("KC", "ZZZ")}, 0.0)
-    assert got == []
+    # a pair with no market on the exchange is skipped, not faked
+    assert parse_kalshi(kalshi_markets, {("KC", "ZZZ")}, 0.0) == []
 
 
 def test_from_schedule_reads_the_nflverse_columns():
@@ -69,6 +63,9 @@ def test_from_schedule_reads_the_nflverse_columns():
          "spread_line": 2.5, "total_line": 43.5},
         {"week": 2, "game_type": "REG", "home_team": "LA", "away_team": "SF",
          "spread_line": 3.5, "total_line": 48.5},
+        # a week-1 game with no line yet is skipped rather than defaulted
+        {"week": 1, "game_type": "REG", "home_team": "NE", "away_team": "NYJ",
+         "spread_line": None, "total_line": None},
     ])
     got = from_schedule(df, week=1, fetched_at=1.0)
     assert len(got) == 1
@@ -78,14 +75,6 @@ def test_from_schedule_reads_the_nflverse_columns():
     assert o.spread == pytest.approx(-2.5)
     assert o.total == pytest.approx(43.5)
     assert o.p_home is None
-
-
-def test_from_schedule_skips_games_with_no_line():
-    df = pd.DataFrame([
-        {"week": 1, "game_type": "REG", "home_team": "KC", "away_team": "DEN",
-         "spread_line": None, "total_line": None},
-    ])
-    assert from_schedule(df, week=1, fetched_at=1.0) == []
 
 
 def test_week_pairs_is_home_away_for_the_regular_season_week():

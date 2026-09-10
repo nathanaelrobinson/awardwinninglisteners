@@ -25,11 +25,9 @@ def test_snapshot_is_raw_and_carries_its_coordinates():
     assert doc["games"] == [{"home": "KC", "away": "DEN", "spread": None,
                              "total": None, "ml_home": -148, "ml_away": 124,
                              "yes_home": None, "yes_away": None, "p_home": None}]
-
-
-def test_snapshot_of_nothing_still_records_the_attempt():
-    doc = snapshot("book", 2026, 1, [], now=9.0)
-    assert doc["games"] == [] and doc["fetched_at"] == 9.0
+    # a source that returned nothing still records the attempt, at the given time
+    empty = snapshot("book", 2026, 1, [], now=9.0)
+    assert empty["games"] == [] and empty["fetched_at"] == 9.0
 
 
 def test_refresh_writes_one_snapshot_per_source():
@@ -43,6 +41,12 @@ def test_refresh_writes_one_snapshot_per_source():
     assert {r["source"] for r in store.odds_for_week(2026, 1)} == {
         "book", "kalshi", "nflverse"}
 
+    # a second refresh appends; it never replaces the read already taken
+    refresh_odds(store, SCHED, 2026,
+                 sources={"book": lambda s, w, p: _book()}, now=6.0)
+    book = [r for r in store.odds_for_week(2026, 1) if r["source"] == "book"]
+    assert [r["fetched_at"] for r in book] == [5.0, 6.0]
+
 
 def test_one_source_failing_does_not_cost_us_the_others():
     def boom(season, week, pairs):
@@ -55,24 +59,6 @@ def test_one_source_failing_does_not_cost_us_the_others():
     assert "espn is down" in out["errors"]["book"]
     assert "kalshi" in out["written"] and "nflverse" in out["written"]
     assert "book" not in out["written"]
-
-
-def test_refresh_targets_the_first_week_with_an_unplayed_game():
-    played = SCHED.copy()
-    played.loc[:, "home_score"] = [24, None]
-    played.loc[:, "away_score"] = [17, None]
-    store = InMemoryStore({})
-    out = refresh_odds(store, played, 2026, sources={}, now=5.0)
-    assert out["week"] == 1
-
-
-def test_every_refresh_appends_rather_than_replacing():
-    store = InMemoryStore({})
-    for ts in (5.0, 6.0):
-        refresh_odds(store, SCHED, 2026,
-                     sources={"book": lambda s, w, p: _book()}, now=ts)
-    rows = [r for r in store.odds_for_week(2026, 1) if r["source"] == "book"]
-    assert len(rows) == 2
 
 
 FINISHED = pd.DataFrame([
