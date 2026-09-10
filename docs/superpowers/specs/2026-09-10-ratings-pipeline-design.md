@@ -52,20 +52,40 @@ after calibration has something to say), and any rating of our own.
 | EPA | weekly, Tue | our own computation over nflverse play-by-play | `nfl_data_py.import_pbp_data`, memory-heavy |
 | ESPN FPI | weekly, Tue | publishes weekly | plain HTTP |
 | PFF | weekly, Tue | publishes weekly | plain HTTP |
-| nfelo | weekly, Tue | publishes weekly | headless Chromium via playwright |
 
 Tuesday morning is after Monday night football and matches when the rating
 services publish.
 
-**Permanently excluded:** Clay (a preseason PDF that will never change again),
-covers and betmgm (preseason win totals, already faded out of the ensemble by
-`vegas_share` by week 9). Refetching a frozen artifact is pure risk for no
-information.
+**Not fetched:** Clay (a preseason PDF that will never change again), covers and
+betmgm (preseason win totals), and **nfelo** — dropped by the project owner
+because it is the only source needing a headless browser, and putting playwright
+and chromium on the Pi is not worth one weekly rating. No browser dependency
+ships to the Pi at all.
 
-**One provisioning step:** nfelo needs `playwright install chromium` on the Pi.
-The Python package is installed; the browser binaries are not. The Pi is
-aarch64 with 8GB RAM and 916GB of NVMe, so this is comfortable — but it is a
-manual step and belongs in the runbook, not in a timer.
+### The consequence: half the ensemble is frozen
+
+Dropping nfelo leaves four voices that update — FPI, PFF, EPA, Kalshi — and
+three that never will: Clay, the covers/betmgm win totals, and nfelo's last
+September value. They are weighted equally, so every week that passes the frozen
+half drags the projection back toward preseason beliefs, and the fresher the
+other half becomes the worse that distortion gets.
+
+The codebase already contains the answer. `vegas_share` fades preseason win
+totals from full weight at week 1 to nothing from week 9, on the explicit grounds
+that stale information should lose to fresh information. That reasoning applies
+identically to Clay and to a frozen nfelo — they are the same kind of thing.
+
+**So the fade generalises from "vegas" to "any preseason-only source".** The
+weight of a source that cannot update decays on the existing schedule; sources
+that do update keep full weight. This is in scope for phase 1 precisely because
+it is a direct consequence of not fetching nfelo, not a weight-tuning exercise —
+tuning the weights of *live* sources remains phase 3, after calibration has
+something to say.
+
+Concretely: `live.vegas_share(week)` becomes `stale_share(week)` applied to the
+set `{vegas, clay, nfelo}`, and `source_matrix_for_week` scales those weights
+rather than only vegas's. The behaviour for `vegas` is unchanged, so week-1
+output is identical and the existing tests still pin it.
 
 ## Storage
 
@@ -170,10 +190,11 @@ a standing test-reduction order; the suite is 353 and should not balloon.
 
 ## Known limitations
 
-**nfelo depends on a headless browser on an ARM host.** It is the most likely
-source to break, and unlike the others its failure is a dependency problem rather
-than a network blip. The per-source design means it degrades to its last good
-value rather than taking the ensemble with it.
+**Three voices are now permanently frozen** and fade rather than update. By week
+9 the ensemble is effectively FPI, PFF, EPA and Kalshi. That is a smaller
+ensemble than it looks on paper, and phase 3's calibration should be asked
+whether four voices with real information beat seven where three are stale — it
+is not obvious that adding a frozen prior helps at all.
 
 **EPA is memory-heavy.** `import_pbp_data` over a season is the largest thing the
 Pi will do. 4GB free is enough today; if it becomes a problem the fix is to
