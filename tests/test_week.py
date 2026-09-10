@@ -120,3 +120,27 @@ def test_the_line_comes_from_the_odds_log():
     assert kc["total"] == pytest.approx(43.5)
     assert kc["p_book"] == pytest.approx(0.572, abs=1e-3)
     assert kc["p_kalshi"] is None
+
+
+def test_history_is_one_market_prob_per_cycle_and_skips_unpriced_ones():
+    # Cycle 1 prices both games; cycle 2 only re-prices KC/DEN, so LA/SF's
+    # history should have one entry, not two with a gap filled in.
+    rows = [
+        {"source": "book", "fetched_at": 1.0, "games": [
+            {"home": "KC", "away": "DEN", "spread": -2.5, "total": 43.5,
+             "ml_home": None, "ml_away": None, "yes_home": None,
+             "yes_away": None, "p_home": None},
+            {"home": "LA", "away": "SF", "spread": 1.0, "total": 44.0,
+             "ml_home": None, "ml_away": None, "yes_home": None,
+             "yes_away": None, "p_home": None}]},
+        {"source": "book", "fetched_at": 2.0, "games": [
+            {"home": "KC", "away": "DEN", "spread": -3.0, "total": 43.5,
+             "ml_home": None, "ml_away": None, "yes_home": None,
+             "yes_away": None, "p_home": None}]},
+    ]
+    out = build_week(LIVE, ROSTERS, SCHED, 1, rows)
+    kc = next(g for g in out["games"] if g["home"] == "KC")
+    la = next(g for g in out["games"] if g["home"] == "LA")
+    assert [fetched_at for fetched_at, _ in kc["history"]] == [1.0, 2.0]
+    assert kc["history"][-1][1] == pytest.approx(kc["p_book"], abs=1e-4)
+    assert len(la["history"]) == 1

@@ -126,6 +126,7 @@ export interface WeekGame {
   p_book: number | null; p_kalshi: number | null;
   home_score: number | null; away_score: number | null;
   swing: Record<string, number>;
+  history: [number, number][];
 }
 export interface WeekPlayer {
   name: string; teams: string[]; locks: number; banked: number;

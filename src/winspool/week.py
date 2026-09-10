@@ -4,7 +4,7 @@ Assembles the tab's payload from three things that already exist — the live
 doc's per-game swings, the odds log, and the schedule frame. Nothing here
 simulates anything; the season projection has already paid that cost.
 """
-from .gameodds import GameOdds, to_prob
+from .gameodds import GameOdds, market_prob, to_prob
 from .live import split_schedule
 from .teams import resolve
 
@@ -50,6 +50,37 @@ def _odds_by_game(odds_rows) -> dict:
     return out
 
 
+def _history_by_game(odds_rows) -> dict:
+    """(home, away) -> [[fetched_at, p], ...], oldest first, one entry per
+    cycle that priced the game.
+
+    Every source in an hourly `refresh_odds` run shares one `fetched_at`, so
+    grouping by it recovers the cycles; `market_prob` is then re-run over each
+    cycle's raw quotes, never over a stored probability, so a later change to
+    the consensus rule replays over history for free.
+    """
+    cycles: dict[float, dict[tuple, list]] = {}
+    for row in odds_rows:
+        fetched_at = float(row.get("fetched_at") or 0.0)
+        source = row["source"]
+        for g in row.get("games") or []:
+            key = (g["home"], g["away"])
+            cycles.setdefault(fetched_at, {}).setdefault(key, []).append(GameOdds(
+                source=source, home=g["home"], away=g["away"], fetched_at=fetched_at,
+                spread=g.get("spread"), total=g.get("total"),
+                ml_home=g.get("ml_home"), ml_away=g.get("ml_away"),
+                yes_home=g.get("yes_home"), yes_away=g.get("yes_away"),
+                p_home=g.get("p_home")))
+
+    out: dict[tuple, list] = {}
+    for fetched_at in sorted(cycles):
+        for key, odds in cycles[fetched_at].items():
+            p = market_prob(odds)
+            if p is not None:
+                out.setdefault(key, []).append([fetched_at, round(p, 4)])
+    return out
+
+
 def build_week(live_doc: dict, rosters: dict, sched_df, week: int,
                odds_rows: list) -> dict:
     """Everything the Week tab renders, in one document."""
@@ -57,6 +88,7 @@ def build_week(live_doc: dict, rosters: dict, sched_df, week: int,
     played = played[played["week"] == week]
     remaining = remaining[remaining["week"] == week]
     odds = _odds_by_game(odds_rows)
+    history = _history_by_game(odds_rows)
     swings = {(g["home"], g["away"]): g for g in live_doc.get("games") or []}
 
     games = []
@@ -78,6 +110,7 @@ def build_week(live_doc: dict, rosters: dict, sched_df, week: int,
             "p_kalshi": None if kalshi is None else to_prob(kalshi),
             "home_score": None, "away_score": None,
             "swing": live_game.get("swing") or {},
+            "history": history.get((home, away), []),
         })
 
     for row in played.itertuples(index=False):
@@ -97,6 +130,7 @@ def build_week(live_doc: dict, rosters: dict, sched_df, week: int,
             "p_kalshi": None,
             "home_score": int(row.home_score), "away_score": int(row.away_score),
             "swing": {},
+            "history": history.get((home, away), []),
         })
 
     games.sort(key=lambda g: (g["state"] == "final",
