@@ -6,6 +6,7 @@ fetchers (requests; not unit-tested). Each fetcher returns {team_code: value}.
 Add a source by writing a parse_* function + a fetch wrapper, then registering
 it in registry.default_sources().
 """
+import os
 import re
 
 import numpy as np
@@ -20,8 +21,18 @@ HEADERS = {"User-Agent": _UA, "Accept-Language": "en-US,en;q=0.9"}
 TIMEOUT = 25
 
 COVERS_URL = "https://www.covers.com/nfl/nfl-odds-win-totals"
-ESPN_FPI_URL = ("https://site.web.api.espn.com/apis/fitt/v3/sports/football/nfl/"
-                "powerindex?region=us&lang=en&season=2026&limit=1000")
+
+
+def season() -> int:
+    """The season every source is asked about. Read at call time, not import
+    time, so a test (or next September) can move it with WINSPOOL_SEASON and
+    have the whole pipeline follow — a hardcoded year freezes silently."""
+    return int(os.environ.get("WINSPOOL_SEASON", "2026"))
+
+
+def espn_fpi_url(year: int | None = None) -> str:
+    return ("https://site.web.api.espn.com/apis/fitt/v3/sports/football/nfl/"
+            f"powerindex?region=us&lang=en&season={year or season()}&limit=1000")
 
 
 def _num(text):
@@ -86,15 +97,33 @@ def covers_totals():
 
 
 def espn_fpi():
-    return parse_espn_fpi(_get(ESPN_FPI_URL).json())
+    return parse_espn_fpi(_get(espn_fpi_url()).json())
 
 
 # --- EPA efficiency rating (our own, from nflverse play-by-play) ----------
 
-EPA_SEASONS = (2026, 2025)     # (current, prior) — current is shrunk toward prior
 EPA_POINTS_SCALE = 50.0        # net EPA/play -> rough points scale
 EPA_SHRINK_K = 8000             # plays at which this season and last count equally
 EPA_RIDGE = 1.0                 # regularises the near-singular early-season system
+
+# Only the columns the regression actually reads. import_pbp_data otherwise
+# pulls ~380 columns per season and this job holds two seasons live at once on
+# a Raspberry Pi; participation is a second download of a file nflverse stopped
+# publishing after 2023.
+EPA_PBP_COLUMNS = ["pass", "rush", "epa", "posteam", "defteam", "season"]
+
+# Past this week, an empty current-season frame is a FAILURE, not a cold start.
+# Falling back to last season is correct in week 1 — that is what the shrinkage
+# is for — but in week 6 it means handing back a full 32-team dict of LAST
+# year's ratings, which would be stored ok=True with today's timestamp and
+# would never look wrong anywhere.
+EPA_FALLBACK_MAX_WEEK = 2
+
+
+def epa_seasons() -> tuple[int, int]:
+    """(current, prior) — current is shrunk toward prior."""
+    cur = season()
+    return cur, cur - 1
 
 
 def shrink_weight(n_plays: int, k: int = EPA_SHRINK_K) -> float:
@@ -158,26 +187,58 @@ def epa_adjusted(pbp, ridge: float = EPA_RIDGE) -> dict:
     return {t: (v - mean) * EPA_POINTS_SCALE for t, v in net.items()}
 
 
-def epa_ratings():
+def epa_ratings(week: int):
     """Opponent-adjusted efficiency from nflverse play-by-play (free), this
-    season shrunk toward last so September is not driven by one game."""
+    season shrunk toward last so September is not driven by one game.
+
+    `week` is not cosmetic. `nfl_data_py.import_pbp_data` swallows a per-year
+    failure internally and returns an EMPTY frame, so "nflverse is down" and
+    "the season has not started" arrive looking identical. Before
+    `EPA_FALLBACK_MAX_WEEK` we treat that as the cold start it probably is and
+    lean on last season; after it we raise, so `refresh_ratings` records
+    ok=False with a reason and the health endpoint 503s. The alternative is a
+    year-old rating stored with today's timestamp — a failure nobody would ever
+    see.
+
+    The returned dict carries a `__meta__` entry (n_plays, w) alongside the 32
+    team ratings so the Admin panel can tell a rating that is 2% this season
+    from one that is 90% this season. Consumers key by team code, so the extra
+    entry is inert to them."""
     import nfl_data_py as nfl
-    cur, prior = EPA_SEASONS
+    cur, prior = epa_seasons()
 
     def _load(year):
+        """(frame or None, reason). Never raises: the caller decides whether an
+        absent season is fatal, and that depends on the week."""
         try:
-            df = nfl.import_pbp_data([year], downcast=True)
-            return df if len(df) else None
-        except Exception:
-            return None
+            df = nfl.import_pbp_data([year], columns=EPA_PBP_COLUMNS,
+                                     downcast=True, include_participation=False)
+        except Exception as e:                # noqa: BLE001 - reported upward
+            return None, f"{type(e).__name__}: {e}"
+        return (df, "") if len(df) else (None, "empty frame")
 
-    cur_pbp, prior_pbp = _load(cur), _load(prior)
+    cur_pbp, cur_why = _load(cur)
     cur_out = epa_adjusted(cur_pbp) if cur_pbp is not None else {}
+    n_plays = _usable_plays(cur_pbp) if cur_pbp is not None else 0
+    cur_pbp = None                            # two seasons of pbp will not both fit
+    if not cur_out and int(week) > EPA_FALLBACK_MAX_WEEK:
+        raise RuntimeError(
+            f"no usable {cur} play-by-play at week {week} "
+            f"({cur_why or 'no plays survived filtering'}); refusing to store "
+            f"{prior} ratings as current")
+
+    prior_pbp, prior_why = _load(prior)
     prior_out = epa_adjusted(prior_pbp) if prior_pbp is not None else {}
-    if not cur_out:
-        return prior_out
+    if not cur_out and not prior_out:
+        why_c = cur_why or "no usable plays"
+        why_p = prior_why or "no usable plays"
+        raise RuntimeError(f"no play-by-play for {cur} ({why_c}) or {prior} ({why_p})")
+
+    w = shrink_weight(n_plays) if cur_out else 0.0
     if not prior_out:
-        return cur_out
-    w = shrink_weight(_usable_plays(cur_pbp))
-    return {t: w * cur_out.get(t, 0.0) + (1 - w) * prior_out.get(t, 0.0)
-            for t in set(cur_out) | set(prior_out)}
+        w = 1.0
+    out = {t: w * cur_out.get(t, 0.0) + (1 - w) * prior_out.get(t, 0.0)
+           for t in set(cur_out) | set(prior_out)}
+    out["__meta__"] = {"n_plays": int(n_plays), "w": round(float(w), 4),
+                       "season": int(cur), "prior_season": int(prior)}
+    return out
