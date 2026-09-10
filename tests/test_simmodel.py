@@ -135,7 +135,7 @@ def test_one_game_final_mid_week_is_banked_and_reported(rosters):
     assert m["banked"][TEAM_INDEX[home]] == 1
     assert len(m["games"]) == 4 * (N_TEAMS // 2) - 1
     assert not any(g[1] == home and g[0] == 1 for g in m["games"])
-    assert m["played"] == [[1, home, df.at[first, "away_team"], 1]]
+    assert m["played"] == [[1, home, df.at[first, "away_team"], 1, 31, 3]]
 
 
 def test_a_tie_is_reported_and_split(rosters):
@@ -143,7 +143,7 @@ def test_a_tie_is_reported_and_split(rosters):
     first = df.index[0]
     df.loc[first, ["home_score", "away_score"]] = [17, 17]
     m = build(df, rosters)
-    assert m["played"][0][3] == -1
+    assert m["played"][0][3:] == [-1, 17, 17]
     assert sum(m["banked"]) == 1.0            # half a win each side
 
 

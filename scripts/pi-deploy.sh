@@ -31,6 +31,12 @@ uv sync --extra dev
 echo "==> web build"
 (cd web && npm ci --silent && npm run build)
 
+# Build the Simulations model before the restart, not after: it is stored, so
+# the new process starts with it in hand and never serves a cold build.
+echo -n "==> warming the simulation model"
+curl -fsS --max-time 180 "http://127.0.0.1:$PORT/api/league/sim-model" >/dev/null 2>&1 \
+  && echo " ok" || echo " skipped (will build after restart)"
+
 echo "==> restarting"
 $SUDO systemctl restart winspool
 
@@ -38,11 +44,8 @@ echo -n "==> waiting for health"
 for i in $(seq 1 60); do
   if curl -fsS "http://127.0.0.1:$PORT/api/teams" >/dev/null 2>&1; then
     echo " ok (${i}s)"
-    # Build the Simulations model now rather than making the first visitor wait
-    # for it. It is stored, so this is a one-off after a restart.
-    echo -n "==> warming the simulation model"
-    curl -fsS --max-time 120 "http://127.0.0.1:$PORT/api/league/sim-model" >/dev/null 2>&1 \
-      && echo " ok" || echo " skipped"
+    # Cheap when the pre-restart warm worked; the real build only when it did not.
+    curl -fsS --max-time 180 "http://127.0.0.1:$PORT/api/league/sim-model" >/dev/null 2>&1 || true
     exit 0
   fi
   echo -n "."

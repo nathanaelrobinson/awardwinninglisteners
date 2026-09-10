@@ -57,7 +57,8 @@ def build_model(rosters: dict, sched_df: pd.DataFrame, *, totals_path, power_pat
     # gone from `games` while the rest of its week is still to be played. Ship
     # them so a client can show what is already settled alongside what is not.
     final = [[int(r.week), r.home_team, r.away_team,
-              1 if r.home_score > r.away_score else (0 if r.away_score > r.home_score else -1)]
+              1 if r.home_score > r.away_score else (0 if r.away_score > r.home_score else -1),
+              int(r.home_score), int(r.away_score)]
              for r in played.sort_values(["week"], kind="stable").itertuples(index=False)]
 
     # Round, then put the rounding residual back so a client can sample the

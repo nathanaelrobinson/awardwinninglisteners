@@ -731,13 +731,22 @@
   color: var(--text-dim); font-size: 10px; letter-spacing: 0.05em;
   text-transform: uppercase; border-bottom: 1px solid var(--border); margin-bottom: 2px;
 }
-.sim-wk-lab span { color: var(--accent); font-weight: 700; }
+.sim-wk-lab span { color: var(--navy); font-weight: 700; }
 /* The grid's job: which team won, and whether that has actually happened.
    Weight carries played-vs-simulated; position and weight carry the winner. */
-.sim-g { display: grid; grid-template-columns: 8px 30px 30px; gap: 3px; }
+.sim-g {
+  display: grid; grid-template-columns: 8px 30px 30px; gap: 3px;
+  /* every row reserves the accent, so a played one gains colour, not width */
+  border-left: 3px solid transparent; padding-left: 4px;
+  border-radius: 0 3px 3px 0;
+}
 .sim-g .mk { color: var(--text-dim); opacity: 0.55; }
 .sim-g .w { font-weight: 600; color: #7b8496; }        /* simulated winner */
 .sim-g .l { color: #b7bdc8; }                          /* simulated loser  */
+.sim-g.played {
+  background: rgba(1, 51, 105, 0.13);            /* navy: the app's "this is real" */
+  border-left-color: var(--navy);
+}
 .sim-g.played .w { font-weight: 700; color: var(--text); }
 .sim-g.played .l { color: var(--text-dim); }
 .sim-g.played .mk { opacity: 0.9; }
