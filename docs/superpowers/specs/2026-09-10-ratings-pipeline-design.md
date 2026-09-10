@@ -11,8 +11,9 @@ exists but its own help text says "run weekly from a laptop", and it has not
 been run.
 
 This matters more than it sounds. Several of these sources already learn from
-results: ESPN FPI and PFF publish weekly, nfelo publishes weekly, and EPA is
-computed from nflverse play-by-play by our own code. The projection is not
+results: ESPN FPI publishes weekly from a live API, and EPA is computed from
+nflverse play-by-play by our own code. (Auditing the rest turned up that several
+"sources" cannot update at all — see *What gets fetched*.) The projection is not
 failing to learn because nobody wrote a learner — it is running on a snapshot
 taken before a single game was played.
 
@@ -70,7 +71,8 @@ So the surviving ensemble is:
 | Kalshi `KXNFLWINS` | daily | live market, absorbs every result; also the sigma calibration target | plain HTTP, existing client |
 | ESPN FPI | weekly, Tue | live API, publishes weekly | plain HTTP |
 | covers win totals | daily | live futures market | plain HTTP |
-| EPA (in-season) | weekly, Tue | see below — the only independent non-market voice | `nfl_data_py.import_pbp_data` |
+| Adjusted EPA | weekly, Tue | opponent-adjusted efficiency, computed by us | `nfl_data_py.import_pbp_data` |
+| Market strength | weekly, Tue | team strengths inverted from every closing spread to date | the odds log we already keep |
 
 Tuesday morning is after Monday night football and matches when the rating
 services publish.
@@ -87,7 +89,23 @@ supersedes that. A source that is removed cannot drift back in, and there is no
 decay curve to argue about. `vegas_share` itself stays exactly as it is for the
 covers win totals, which are a live market but a season-long one.
 
-### Making EPA live, with shrinkage
+### DVOA, and why we compute it rather than fetch it
+
+DVOA is the obvious candidate for an opponent-adjusted voice, and it is not
+available. `footballoutsiders.com` no longer resolves since the FTN acquisition.
+FTN's DVOA page returns HTTP 200 but contains zero `<table>` elements, zero
+percentage values and no `__NEXT_DATA__` — the numbers are client-rendered — and
+the page carries `Subscribe`, `Log In`, `Upgrade` and `Premium`. It would need
+the headless browser we just removed, and behind that it is paid. We do not build
+scrapers against paywalls.
+
+What DVOA contributes over raw EPA is opponent adjustment, and that is a
+computation, not a data source. Computing it ourselves is strictly better than
+scraping would have been: free, live, no browser, no subscription, immune to a
+page redesign, and genuinely ours — which is the point of a rule that only
+sources we can keep current get to predict.
+
+### Making EPA live, opponent-adjusted, and shrunk
 
 The three surviving external sources are one model (FPI) and two markets (Kalshi,
 covers) — and the two markets are highly correlated, so it is closer to two
@@ -101,6 +119,20 @@ data, so it reports last year's efficiency and will do so forever.
 Pointing it at 2026 makes it live, and reintroduces the problem that presumably
 caused the original choice: as of week 1 the season holds **166 plays across one
 game**, and net EPA/play over that is close to noise.
+
+**It also becomes opponent-adjusted.** The current calculation is a plain mean of
+offensive EPA minus defensive EPA allowed, which flatters a team that has faced
+weak opponents — precisely the flaw DVOA exists to correct. Replace the group-by
+means with a ridge regression of play-level EPA on offence-team and defence-team
+indicators plus home field. The fitted coefficients are opponent-adjusted
+offensive and defensive strengths; net offence minus defence, mean-centered and
+scaled by `EPA_POINTS_SCALE`, produces the same shape the source returns today.
+
+At roughly 40,000 plays against 64 indicator columns this is a trivial
+least-squares solve — numpy, no new dependency, and fast enough that it is
+dwarfed by the play-by-play download preceding it. The ridge penalty also handles
+the early-season case where a team has faced one or two opponents and the system
+is near-singular.
 
 So it is shrunk toward the prior season by how much of this season exists:
 
@@ -122,30 +154,41 @@ intended: the prior-season term is not a stale *forecast* being kept past its
 usefulness, it is regularisation on a small sample. The distinction matters —
 what the owner's rule throws out is stale opinion, not statistical shrinkage.
 
-### The consequence: half the ensemble is frozen
+## Market strength, inverted from the spreads we already keep
 
-Dropping nfelo leaves four voices that update — FPI, PFF, EPA, Kalshi — and
-three that never will: Clay, the covers/betmgm win totals, and nfelo's last
-September value. They are weighted equally, so every week that passes the frozen
-half drags the projection back toward preseason beliefs, and the fresher the
-other half becomes the worse that distortion gets.
+Per-game odds currently do one job: set the win probability for the current
+week's games. Everything from next week onward runs on season-level strengths. So
+the sharpest data in the system is spent on sixteen games and then discarded,
+while more of it accumulates hourly in the odds log.
 
-The codebase already contains the answer. `vegas_share` fades preseason win
-totals from full weight at week 1 to nothing from week 9, on the explicit grounds
-that stale information should lose to fresh information. That reasoning applies
-identically to Clay and to a frozen nfelo — they are the same kind of thing.
+Every closing spread directly measures the difference between two teams:
 
-**So the fade generalises from "vegas" to "any preseason-only source".** The
-weight of a source that cannot update decays on the existing schedule; sources
-that do update keep full weight. This is in scope for phase 1 precisely because
-it is a direct consequence of not fetching nfelo, not a weight-tuning exercise —
-tuning the weights of *live* sources remains phase 3, after calibration has
-something to say.
+```
+spread ≈ s_home − s_away + HFA
+```
 
-Concretely: `live.vegas_share(week)` becomes `stale_share(week)` applied to the
-set `{vegas, clay, nfelo}`, and `source_matrix_for_week` scales those weights
-rather than only vegas's. The behaviour for `vegas` is unchanged, so week-1
-output is identical and the existing tests still pin it.
+One week gives 16 equations over 32 unknowns; four weeks gives 64 and the system
+is well determined. A least-squares solve over every game played to date yields a
+market-implied strength vector that updates weekly.
+
+This is not a duplicate of the season futures markets. Kalshi and covers win
+totals bake in remaining schedule and games already banked; a spread is a clean
+read on how good a team is *right now*. It is also opponent-adjusted by
+construction — it is nothing but a system of relative comparisons — reaching the
+same property the adjusted-EPA work buys, but from market prices rather than
+play-by-play.
+
+**Recency.** Strength drifts across a season, so a week-1 spread should not count
+as much as last week's. Games are weighted by exponential decay on age,
+`w = 0.5 ** (weeks_ago / HALF_LIFE_WEEKS)` with `HALF_LIFE_WEEKS = 4`. Like the
+EPA shrinkage constant this is a judgement call chosen to move deliberately
+rather than fitted, and phase 3's calibration should own it.
+
+**Source of truth** is the odds log's closing read per game — the last snapshot
+before that game's own kickoff, which the retention pass already preserves
+precisely because it must never be thinned away. Prefer the `book` source,
+falling back to `nflverse`, then to the Kalshi per-game price converted to a
+spread. Games with no usable read are dropped from the system, never imputed.
 
 ## Storage
 
@@ -155,7 +198,7 @@ versioned. Three concerns get three shapes:
 ```sql
 CREATE TABLE ratings (
   id         TEXT PRIMARY KEY,   -- source:fetched_at
-  source     TEXT NOT NULL,      -- 'espn_fpi', 'nfelo', 'pff', 'epa', 'kalshi', 'vegas'
+  source     TEXT NOT NULL,      -- 'espn_fpi', 'kalshi', 'covers', 'epa_adj', 'market_strength'
   kind       TEXT NOT NULL,      -- 'power' | 'totals' | 'distribution'
   fetched_at REAL NOT NULL,
   ok         INTEGER NOT NULL,   -- 0 when the fetch failed; doc holds the error
@@ -257,10 +300,17 @@ is not evidence about a season in progress. Whether four live voices beat seven
 mostly-frozen ones is exactly the question phase 3's calibration is built to
 answer — and the stored history this phase produces is what will answer it.
 
-**`K = 8000` in the EPA shrinkage is an unvalidated judgement call.** It was
-chosen to move slowly rather than fitted to anything. If it is wrong, EPA is
-either too jumpy in September or too anchored in December. Calibration should
-revisit it once there is enough history to score.
+**Two unvalidated constants.** `K = 8000` in the EPA shrinkage and
+`HALF_LIFE_WEEKS = 4` in the market-strength decay were both chosen to move
+deliberately rather than fitted to anything. If `K` is wrong, EPA is too jumpy in
+September or too anchored in December; if the half-life is wrong, market strength
+either chases noise or lags real change. Both are module constants carrying their
+reasoning, and both are exactly what phase 3 exists to settle.
+
+**Market strength is thin in September.** Through week 3 the spread system has
+fewer equations than teams and leans on its ridge term. It is honest but
+low-information early, and improves every week — the opposite of the sources it
+replaces.
 
 **EPA is memory-heavy.** `import_pbp_data` over a season is the largest thing the
 Pi will do. 4GB free is enough today; if it becomes a problem the fix is to
