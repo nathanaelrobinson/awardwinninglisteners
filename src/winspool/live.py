@@ -5,6 +5,7 @@ home_team, away_team, home_score, away_score) and the data/cache ratings files.
 No store or network access except in refresh_live()."""
 import json
 import os
+import sys
 import time
 
 import numpy as np
@@ -427,8 +428,10 @@ def refresh_live(store, cache_dir, *, n_seasons=5000) -> dict:
                       for g in doc["games"]]
         store.add_odds(snapshot("model", SEASON, doc["week"], model_odds,
                                 now=doc["computed_at"]))
-    except Exception:
-        pass                      # the log is a record, not a dependency
+    except Exception as e:        # noqa: BLE001 - logged, not raised
+        # Non-fatal: the log is a record, not a dependency. But a silent failure
+        # here is a permanently empty model log, so say so.
+        print(f"  WARNING: model odds snapshot failed, skipping: {e}", file=sys.stderr)
     # The Simulations tab needs the ensemble itself, not this summary of it.
     # Build it here off the schedule we already have: on its own it would refetch
     # the season from nfl_data_py, which costs ~2s a request.

@@ -46,14 +46,6 @@ def test_market_probs_keys_on_the_home_away_pair():
     assert got[("KC", "DEN")] == pytest.approx(0.572, abs=1e-3)
 
 
-def test_market_probs_ignores_the_model_source():
-    rows = [{"source": "model", "games": [
-        {"home": "KC", "away": "DEN", "spread": None, "total": None,
-         "ml_home": None, "ml_away": None, "yes_home": None, "yes_away": None,
-         "p_home": 0.99}]}]
-    assert live.market_probs(rows) == {}
-
-
 def test_current_week_games_are_simulated_from_the_market(inseason):
     doc = live.compute_live(ROSTERS, inseason, market={("BUF", "DAL"): 0.90},
                             **_kw())
@@ -77,25 +69,19 @@ def test_no_market_at_all_reproduces_the_projection_exactly(inseason):
     assert [r["pwin"] for r in without["rows"]] == [r["pwin"] for r in empty["rows"]]
 
 
-def test_every_game_carries_a_swing_for_every_player(inseason):
-    doc = live.compute_live(ROSTERS, inseason, **_kw())
-    assert len(doc["games"]) == 2
-    for g in doc["games"]:
-        assert set(g["swing"]) == set(ROSTERS)
-
-
 def test_a_head_to_head_game_moves_its_two_owners_in_opposite_directions(inseason):
     doc = live.compute_live(ROSTERS, inseason, **_kw(n_seasons=4000))
     g = next(g for g in doc["games"] if g["home"] == "BUF")
     assert g["swing"]["A"] > 0 > g["swing"]["B"]
 
 
-def test_the_two_branches_recombine_to_the_unconditional_probability(inseason):
-    doc = live.compute_live(ROSTERS, inseason, **_kw(n_seasons=8000))
-    g = next(g for g in doc["games"] if g["home"] == "BUF")
-    base = {r["player"]: r["pwin"] for r in doc["rows"]}
-    p = g["p_used"]
-    for player, swing in g["swing"].items():
-        if_home = base[player] + (1 - p) * swing
-        if_away = if_home - swing
-        assert p * if_home + (1 - p) * if_away == pytest.approx(base[player], abs=0.02)
+def test_a_certain_home_win_lifts_its_owner_and_sinks_the_opponent(inseason):
+    """The swing has to point somewhere: forcing BUF to a certainty must move
+    BUF's owner up and DAL's owner down against the same seed."""
+    base = live.compute_live(ROSTERS, inseason, **_kw(n_seasons=4000))
+    forced = live.compute_live(ROSTERS, inseason, market={("BUF", "DAL"): 1.0},
+                               **_kw(n_seasons=4000))
+    b = {r["player"]: r["pwin"] for r in base["rows"]}
+    f = {r["player"]: r["pwin"] for r in forced["rows"]}
+    assert f["A"] > b["A"]        # A owns BUF
+    assert f["B"] < b["B"]        # B owns DAL

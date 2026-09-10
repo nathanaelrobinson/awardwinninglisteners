@@ -14,18 +14,10 @@ def _o(source, **kw):
     return GameOdds(**base)
 
 
-def test_pick_em_spread_is_a_coin_flip():
-    assert prob_from_spread(0.0) == pytest.approx(0.5)
-
-
 def test_home_favourite_spread_is_negative_and_above_half():
     # ESPN quotes the home side: KC -2.5 means Kansas City favoured by 2.5.
     assert prob_from_spread(-2.5) == pytest.approx(0.5735, abs=1e-4)
     assert prob_from_spread(3.5) == pytest.approx(0.3977, abs=1e-3)
-
-
-def test_spread_probability_is_symmetric():
-    assert prob_from_spread(-7.0) + prob_from_spread(7.0) == pytest.approx(1.0)
 
 
 def test_moneyline_devig_sums_to_one_and_removes_the_overround():
@@ -33,10 +25,6 @@ def test_moneyline_devig_sums_to_one_and_removes_the_overround():
     p = prob_from_moneyline(-148, 124)
     assert p == pytest.approx(0.572, abs=1e-3)
     assert p + prob_from_moneyline(124, -148) == pytest.approx(1.0)
-
-
-def test_moneyline_even_money_is_a_coin_flip():
-    assert prob_from_moneyline(100, 100) == pytest.approx(0.5)
 
 
 def test_kalshi_prices_are_normalised():

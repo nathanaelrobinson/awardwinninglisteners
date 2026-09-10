@@ -614,6 +614,11 @@ def test_live_404_until_refreshed_and_public_after_draft(api, store, live_env):
     # six teams each play once; a game between two of a player's own teams is one locked chip
     assert all(sum(2 if g["lock"] else 1 for g in r["games"]) == 6 for r in body["this_week"])
     assert store.get_live()["week"] == 2
+    # The model's own per-game read is logged too, or the completed-week
+    # model-against-market comparison has nothing to score.
+    model = [r for r in store.all_odds() if r["source"] == "model"]
+    assert model and model[-1]["games"]
+    assert all(g["p_home"] is not None for g in model[-1]["games"])
 
 
 def test_live_and_weeks_401_before_draft_done(api, store, live_env):
