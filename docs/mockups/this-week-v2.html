@@ -1050,6 +1050,9 @@ const img = (c,s=18) => `<img class="t" src="${logo(c)}" width="${s}" height="${
 const first = n => n.split(' ')[0];
 const pct = v => v==null ? '—' : Math.round(v*100)+'%';
 const OWNER = {}; LIVE.players.forEach(p => p.teams.forEach(t => OWNER[t]=p.name));
+// One scale for every bar on the board, so a 4.6 is visibly wider than a 3.5.
+const SWING_MAX = Math.max(0.01,
+  ...LIVE.games.flatMap(g => Object.values(g.lev).map(Math.abs)));
 
 /* ---------------- player strip ---------------- */
 function chipsLive(p){
@@ -1130,11 +1133,10 @@ function swing(g){
   const axis = `<div class="sax"><span></span>
     <span class="l">${img(g.away,15)}</span><span class="r">${img(g.home,15)}</span><span></span></div>`;
   if (!ent.length) return '';
-  const mx = Math.max(...ent.map(([,v])=>Math.abs(v)), 0.01);
   const BASE = {}; LIVE.players.forEach(p => BASE[p.name] = p.pwin);
   // lev is signed for a HOME win: positive -> that player needs the home team.
   return axis + ent.map(([n,v])=>{
-    const w = Math.abs(v)/mx*100, needsHome = v>0, team = needsHome?g.home:g.away;
+    const w = Math.abs(v)/SWING_MAX*100, needsHome = v>0, team = needsHome?g.home:g.away;
     const bar = `<i style="width:${w}%;background:${PC[n]}"></i>`;
     const ifH = BASE[n] + (1-g.p_model)*v, ifA = ifH - v;
     const tip = `${first(n)} to win the pool — ${g.away} wins ${(ifA*100).toFixed(1)}%, ${g.home} wins ${(ifH*100).toFixed(1)}%`;

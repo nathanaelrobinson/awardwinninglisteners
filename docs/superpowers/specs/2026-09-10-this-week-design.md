@@ -280,8 +280,10 @@ against the amount of text already on the row.
 
 The swing column hangs off an axis captioned with the two teams' logos, away
 left and home right. Each affected player gets a bar growing toward the team they
-need, length proportional to the swing, in their player colour, with the
-magnitude in points at the end. Players moved less than 0.2 points are omitted.
+need, in their player colour, with the magnitude in points at the end. Bar
+length is scaled against the largest absolute swing across the whole week, not
+against the largest on its own row, so widths are comparable between games —
+which is the point of ordering the board by swing at all. Players moved less than 0.2 points are omitted.
 Hovering states it in words: *"Evan to win the pool — DEN wins 15.4%, KC wins
 18.8%."*
 
