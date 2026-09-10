@@ -474,12 +474,22 @@ class SqliteStore:
                  "ok": bool(r[4]), "doc": json.loads(r[5])} for r in rows]
 
     def latest_ratings(self) -> dict[str, dict]:
-        best: dict[str, dict] = {}
-        for r in self._rating_rows(
-                "SELECT id, source, kind, fetched_at, ok, doc FROM ratings "
-                "WHERE ok=1 ORDER BY fetched_at, rowid"):
-            best[r["source"]] = r
-        return best
+        """The newest successful row per source.
+
+        Only those rows are decoded. Reading the whole ok=1 history and keeping
+        the last of each meant JSON-parsing every 32-team document ever stored
+        — several hundred by week 18 — on every `ratings_stamp`, every market
+        lookup and every 60-second Admin poll. The row picked is identical to
+        what that scan picked, ties included: newest fetched_at, then the row
+        written last."""
+        return {r["source"]: r for r in self._rating_rows(
+            "SELECT id, source, kind, fetched_at, ok, doc FROM ratings "
+            "WHERE rowid IN ("
+            "  SELECT max(rowid) FROM ratings WHERE ok=1"
+            "   AND (source, fetched_at) IN ("
+            "     SELECT source, max(fetched_at) FROM ratings WHERE ok=1"
+            "      GROUP BY source)"
+            "  GROUP BY source)")}
 
     def ratings_history(self, source: str) -> list[dict]:
         return self._rating_rows(
