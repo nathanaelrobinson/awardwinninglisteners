@@ -183,8 +183,19 @@ def _market_distributions(kalshi_dist_path, store=None):
         if not rows:
             return None
         doc = max(rows, key=lambda r: float(r["fetched_at"]))["doc"]
-        codes = sorted(doc)
-        return codes, np.asarray([doc[c] for c in codes], dtype=float)
+        from .data import _valid_pmf
+        good = {c: p for c in sorted(doc) if (p := _valid_pmf(doc[c])) is not None}
+        bad = sorted(set(doc) - set(good))
+        if bad:
+            # Per team, not per source: a ragged ladder drops that team from the
+            # market comparison rather than passing a bad row into rng.choice,
+            # where it would surface as a numpy error naming neither.
+            print(f"  WARNING: kalshi: skipping malformed win distribution for "
+                  f"{', '.join(bad)}", file=sys.stderr)
+        if not good:
+            return None
+        codes = sorted(good)
+        return codes, np.asarray([good[c] for c in codes], dtype=float)
     if not kalshi_dist_path or not os.path.exists(kalshi_dist_path):
         return None
     return load_distributions(kalshi_dist_path)
@@ -472,8 +483,12 @@ def refresh_live(store, *, n_seasons=5000) -> dict:
     from . import simmodel as _simmodel
     try:
         _simmodel.refresh_model(store, sched_df=df)
-    except Exception:
-        pass                      # a stale model beats failing the live refresh
+    except Exception as e:        # noqa: BLE001 - logged, not raised
+        # Non-fatal: a stale model beats failing the live refresh. But serving
+        # the Simulations tab a frozen model forever with nothing said is the
+        # exact failure this branch exists to remove, so say so.
+        print(f"  WARNING: simulation model refresh failed, serving the "
+              f"previous one: {e}", file=sys.stderr)
     if not any(w["week"] == doc["week"] for w in store.list_weeks()):
         store.put_week(doc["week"], doc)
     return doc
