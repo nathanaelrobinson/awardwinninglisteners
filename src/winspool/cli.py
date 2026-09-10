@@ -85,7 +85,7 @@ def main(argv=None):
         if not sources:
             print("No sources configured. See src/winspool/fetch/registry.py.")
             return 1
-        print(f"fetching {len(sources)} sources (nfelo renders headless, ~slow)…")
+        print(f"fetching {len(sources)} sources…")
         now = datetime.datetime.now().isoformat(timespec="seconds")
         meta = refresh(sources, args.cache, now=now)
         for m in meta:
