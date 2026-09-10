@@ -228,6 +228,20 @@ recorded and surfaced (see *Loudness*).
 `sim_matrix.npz`. The three ratings CSVs and `sources_meta.json` are deleted from
 the repo once the store is populated.
 
+> **Implementation note (2026-09-10):** the three ratings CSVs were **moved to
+> `data/preseason/`, not deleted**, and `sources_meta.json` was dropped
+> entirely. Deleting the CSVs outright turned out to break more than this
+> section assumed: `server.py`'s `_ensure_ready` loads win totals at startup
+> from a file path, and `winspool analyze`/`positional`/`market` do too — both
+> would fail to boot with no file on disk. More importantly, Draft Review's
+> `build_wins` replays a finished draft as it looked on draft night and
+> legitimately wants the *preseason* numbers, not whatever the live ensemble
+> says today. So the three files live on at `data/preseason/` as a frozen,
+> never-refreshed draft-night snapshot, read only by that path. The live
+> ensemble does not read them and has no CSV fallback — an empty store fails
+> the request with a 503, deliberately, rather than silently serving stale
+> preseason numbers under a live-projection label.
+
 ## The loader boundary, and the property that must hold
 
 Thirty-nine call sites thread `totals_path`, `power_path` and `kalshi_dist_path`

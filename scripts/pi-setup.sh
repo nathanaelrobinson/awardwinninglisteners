@@ -32,6 +32,7 @@ if [[ ! -f $ENV_FILE ]]; then
 STORE=sqlite
 WINSPOOL_DB=$DATA_DIR/league.db
 WINSPOOL_DATA_DIR=$APP_DIR/data/cache
+WINSPOOL_PRESEASON_DIR=$APP_DIR/data/preseason
 WINSPOOL_WEB_DIST=$APP_DIR/web/dist
 WINSPOOL_BEHIND_PROXY=1
 # Changing this invalidates every session cookie.

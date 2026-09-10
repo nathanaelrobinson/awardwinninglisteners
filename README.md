@@ -35,15 +35,29 @@ make export      # dump the live league to JSON (mode 600 — PIN hashes)
 
 ## Data
 
-The tool reads two files from `data/cache/`:
-- `schedule_2026.csv` — fetch the real schedule: `uv run python scripts/fetch_data.py`
-- `win_totals.csv` — Vegas season win totals (`team,win_total`). A placeholder set is
-  seeded; replace with real numbers. (A multi-source `winspool fetch` pipeline exists —
-  see `docs/data-sources.md` — but its live scrapers need endpoint verification first.)
-- `kalshi_distributions.csv` — Kalshi `KXNFLWINS` market-implied per-team win
-  distributions (public API, no auth). Kalshi is its own forecast voice (not blended
-  into `win_totals.csv`); the full distribution calibrates the sim's per-team season
-  variance to match Kalshi's implied volatility, and powers `winspool market`.
+The live power-rating ensemble is **not** files. Every rating lives in SQLite (the
+`ratings` table, append-only), fetched daily by `winspool-ratings.timer` on the Pi
+(`POST /internal/refresh-ratings`, see below) and read straight from the store —
+there is no cached-CSV fallback. Five live voices are blended: ESPN FPI, Kalshi
+season win-total distributions, covers.com win totals, an opponent-adjusted
+in-season EPA rating, and a market-strength vector inverted from every closing
+spread in the odds log. A source that cannot be kept current does not get a vote —
+PFF, Clay, betmgm and nfelo were dropped for exactly that reason (nfelo also needed
+a headless browser we won't run on the Pi).
+
+`data/cache/` now holds only two genuinely derived, safe-to-regenerate artifacts:
+`schedule_2026.csv` (the real schedule) and `sim_matrix.npz` (the served sim
+depth). Fetch the schedule with `uv run python scripts/fetch_data.py`.
+
+`data/preseason/` (`win_totals.csv`, `power_ratings.csv`,
+`kalshi_distributions.csv`) is a **frozen draft-night snapshot**, not a cache —
+nothing refreshes it. It exists only because Draft Review's `build_wins` replays
+the draft as it looked that night and legitimately wants the preseason numbers,
+and because `server.py` and `winspool analyze`/`positional`/`market` still need
+*some* file on disk to boot from. `winspool fetch` still runs and still writes to
+`data/cache/`, but nothing reads what it writes any more — it's a leftover from
+the old file-based pipeline, not a way to refresh the live ratings. Don't run it
+expecting it to change what the app serves.
 
 ## Run the draft app
 
@@ -94,10 +108,17 @@ one stored result instead of each triggering a live fetch; the commissioner can 
 team's wins by clicking the number.
 
 **Refresh jobs.** `POST /internal/refresh-standings` refreshes the wins cache,
-`POST /internal/refresh-live` recomputes the in-season projection, and
+`POST /internal/refresh-live` recomputes the in-season projection,
 `POST /internal/refresh-odds` snapshots what each of the three betting-odds
-sources says about the current week's games, hourly (all three take header
-`X-Refresh-Token: $REFRESH_TOKEN`). On the Pi, systemd timers call them — see
+sources says about the current week's games (hourly), and
+`POST /internal/refresh-ratings` fetches all five live rating sources and
+appends what each said to the store, daily at 05:40 (all four take header
+`X-Refresh-Token: $REFRESH_TOKEN`). `refresh-ratings` returns **503 if any
+source failed or any source's last-good reading is older than its staleness
+limit** — that's deliberate: it's the whole reason this pipeline exists, so a
+silently-rotting rating never again looks like a passing health check. A
+commissioner-only Admin tab in the UI shows per-source freshness and the last
+recorded error. On the Pi, systemd timers call these — see
 `docs/pi-runbook.md`.
 
 `STORE=sqlite` selects the SQLite store; the database path comes from
