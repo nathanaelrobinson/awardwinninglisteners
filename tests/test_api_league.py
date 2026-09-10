@@ -765,3 +765,27 @@ def test_refresh_odds_requires_the_token(api, store, monkeypatch):
     assert api.post("/internal/refresh-odds").status_code == 403
     assert api.post("/internal/refresh-odds",
                     headers={"X-Refresh-Token": "wrong"}).status_code == 403
+
+
+def test_week_requires_a_viewer(api):
+    assert api.get("/api/week").status_code in (401, 403)
+
+
+def test_week_rejects_an_out_of_range_week(api, store):
+    c, _ = login(api, PLAYERS[0])
+    assert c.get("/api/week?week=0").status_code == 422
+    assert c.get("/api/week?week=19").status_code == 422
+
+
+def test_week_is_503_before_a_projection_exists(api, store):
+    c, _ = login(api, PLAYERS[0])
+    assert c.get("/api/week").status_code == 503
+
+
+def test_week_serves_the_current_week_from_the_live_doc(api, store):
+    c, _ = login(api, PLAYERS[0])
+    store.put_live({"week": 1, "computed_at": 0.0, "rows": [], "games": []})
+    body = c.get("/api/week").json()
+    assert body["week"] == 1 and body["state"] in ("live", "final")
+    assert isinstance(body["games"], list)
+    assert {p["name"] for p in body["players"]}

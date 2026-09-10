@@ -16,6 +16,7 @@ from . import live as _live
 from . import oddslog as _oddslog
 from . import simmodel as _simmodel
 from . import standings as _standings
+from . import week as _week
 from .auth import current_user, require_commissioner, set_cookie, viewer
 from .league import LeagueError
 from .store import get_store
@@ -280,6 +281,32 @@ def get_live(_: str | None = Depends(viewer)):
     if doc is None:
         raise HTTPException(404, "no live projection yet")
     return doc
+
+
+@router.get("/api/week")
+def get_week(week: int | None = None, _: str | None = Depends(viewer)):
+    if week is not None and not 1 <= week <= 18:
+        raise HTTPException(422, "week out of range")
+    store = get_store()
+    live_doc = store.get_live()
+    if live_doc is None:
+        raise HTTPException(503, "projection not ready")
+    target = live_doc["week"] if week is None else week
+
+    # A past week is served from what we recorded at the time. Recomputing it
+    # with today's information would be a lie about what we knew.
+    source_doc = live_doc
+    if target != live_doc["week"]:
+        stored = next((w for w in store.list_weeks() if w["week"] == target), None)
+        if stored is None:
+            raise HTTPException(404, "no record for that week")
+        source_doc = stored
+
+    rosters = league.view(_doc())["rosters"]
+    df = _live._load_schedule_cached()
+    out = _week.build_week(source_doc, rosters, df, target,
+                           store.odds_for_week(SEASON, target))
+    return {"season": SEASON, **out}
 
 
 @router.get("/api/league/weeks")
