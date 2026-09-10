@@ -149,7 +149,7 @@ def test_creates_parent_directory(tmp_path):
 
 
 def test_concurrent_updates_do_not_lose_writes(tmp_path):
-    """The guarantee Firestore transactions gave us: no lost updates under
+    """The transactional guarantee `update` provides: no lost updates under
     simultaneous picks. 20 threads each increment; all 20 must land."""
     s = SqliteStore(tmp_path / "league.db")
     s.put({"n": 0})

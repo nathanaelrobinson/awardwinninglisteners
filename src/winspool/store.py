@@ -1,6 +1,5 @@
 """League persistence. One league document + a messages subcollection.
-InMemoryStore for tests/dev; SqliteStore for the Pi (STORE=sqlite);
-FirestoreStore for Cloud Run (STORE=firestore)."""
+InMemoryStore for tests/dev; SqliteStore for the Pi (STORE=sqlite)."""
 import json
 import os
 import sqlite3
@@ -177,152 +176,12 @@ class InMemoryStore:
         return sorted(self._odds, key=lambda r: r["fetched_at"])
 
 
-class FirestoreStore:
-    def __init__(self, project: str | None = None):
-        from google.cloud import firestore  # imported lazily: prod-only dep
-        self._fs = firestore
-        self._db = firestore.Client(project=project)
-        self._ref = self._db.collection("leagues").document(LEAGUE_ID)
-
-    def get(self):
-        snap = self._ref.get()
-        if not snap.exists:
-            raise LookupError("league not initialized")
-        return snap.to_dict()
-
-    def put(self, doc):
-        self._ref.set(doc)
-
-    def update(self, fn):
-        transaction = self._db.transaction(max_attempts=10)
-        ref = self._ref
-
-        @self._fs.transactional
-        def _run(tx):
-            snap = ref.get(transaction=tx)
-            if not snap.exists:
-                raise LookupError("league not initialized")
-            new = fn(snap.to_dict())
-            tx.set(ref, new)
-            return new
-
-        return _run(transaction)
-
-    def add_message(self, by, text):
-        m = {"by": by, "text": text, "ts": time.time()}
-        _, ref = self._ref.collection("messages").add(m)
-        return {"id": ref.id, **m}
-
-    def messages(self, since):
-        from google.cloud.firestore_v1.base_query import FieldFilter
-        q = self._ref.collection("messages").order_by("ts")
-        if since is not None:
-            q = q.where(filter=FieldFilter("ts", ">", since))
-        docs = list(q.limit_to_last(MSG_CAP).get()) if since is None else list(q.limit(MSG_CAP).get())
-        return [{"id": d.id, **d.to_dict()} for d in docs]
-
-    def get_standings(self):
-        snap = self._ref.collection("cache").document("standings").get()
-        return snap.to_dict() if snap.exists else None
-
-    def put_standings(self, doc):
-        self._ref.collection("cache").document("standings").set(doc)
-
-    def get_preseason(self):
-        snap = self._ref.collection("cache").document("preseason").get()
-        return snap.to_dict() if snap.exists else None
-
-    def put_preseason(self, doc):
-        self._ref.collection("cache").document("preseason").set(doc)
-
-    def get_live(self):
-        snap = self._ref.collection("cache").document("live").get()
-        return snap.to_dict() if snap.exists else None
-
-    def put_live(self, doc):
-        self._ref.collection("cache").document("live").set(doc)
-
-    def get_sim_model(self):
-        snap = self._ref.collection("cache").document("sim_model").get()
-        return snap.to_dict() if snap.exists else None
-
-    def put_sim_model(self, doc):
-        self._ref.collection("cache").document("sim_model").set(doc)
-
-    def put_week(self, week, doc):
-        self._ref.collection("weeks").document(str(int(week))).set(doc)
-
-    def list_weeks(self):
-        docs = [d.to_dict() for d in self._ref.collection("weeks").stream()]
-        return sorted(docs, key=lambda d: d["week"])
-
-    def add_snapshot(self, snapshot):
-        _, ref = self._ref.collection("snapshots").add(snapshot)
-        return ref.id
-
-    def clear_messages(self):
-        docs = list(self._ref.collection("messages").stream())
-        n = 0
-        for i in range(0, len(docs), 400):
-            batch = self._db.batch()
-            for d in docs[i:i + 400]:
-                batch.delete(d.reference)
-            batch.commit()
-            n += len(docs[i:i + 400])
-        return n
-
-    def list_snapshots(self):
-        q = self._ref.collection("snapshots").order_by(
-            "taken_at", direction=self._fs.Query.DESCENDING).limit(SNAPSHOT_CAP)
-        return [{"id": d.id, **d.to_dict()} for d in q.get()]
-
-    def all_messages(self):
-        """Every message, oldest first, uncapped (MSG_CAP does not apply). Export only."""
-        q = self._ref.collection("messages").order_by("ts")
-        return [{"id": d.id, **d.to_dict()} for d in q.stream()]
-
-    def all_snapshots(self):
-        """Full snapshot docs, oldest first, uncapped. Export only."""
-        q = self._ref.collection("snapshots").order_by("taken_at")
-        return [{"id": d.id, **d.to_dict()} for d in q.stream()]
-
-    # --- odds log (append only) ---
-
-    def _odds_col(self):
-        return self._ref.collection("odds")
-
-    def add_odds(self, snapshot: dict) -> str:
-        row = {**snapshot, "id": snapshot.get("id") or uuid.uuid4().hex}
-        self.put_odds(row)
-        return row["id"]
-
-    def put_odds(self, snapshot: dict) -> None:
-        self._odds_col().document(snapshot["id"]).set(snapshot)
-
-    def odds_for_week(self, season: int, week: int) -> list[dict]:
-        from google.cloud.firestore_v1.base_query import FieldFilter
-        q = (self._odds_col()
-             .where(filter=FieldFilter("season", "==", int(season)))
-             .where(filter=FieldFilter("week", "==", int(week))))
-        docs = [d.to_dict() for d in q.stream()]
-        return sorted(docs, key=lambda r: r["fetched_at"])
-
-    def latest_odds(self, season: int, week: int) -> list[dict]:
-        best: dict[str, dict] = {}
-        for r in self.odds_for_week(season, week):
-            best[r["source"]] = r
-        return list(best.values())
-
-    def all_odds(self) -> list[dict]:
-        return [d.to_dict() for d in self._odds_col().order_by("fetched_at").stream()]
-
-
 class SqliteStore:
-    """Single-file SQLite store. Same semantics as FirestoreStore, no cloud.
+    """Single-file SQLite store.
 
     One connection in autocommit mode (isolation_level=None) guarded by a lock,
     so `update` can drive its own BEGIN IMMEDIATE ... COMMIT. That write lock is
-    what gives us Firestore's "one pick at a time" transactional guarantee.
+    what gives us a "one pick at a time" transactional guarantee.
     """
 
     SCHEMA = """
@@ -393,7 +252,7 @@ class SqliteStore:
 
     def messages(self, since: float | None) -> list[dict]:
         # Oldest-first either way: without `since` the newest MSG_CAP, with it the
-        # first MSG_CAP after `since` — same contract as the Firestore path.
+        # first MSG_CAP after `since`.
         if since is None:
             rows = self._db.execute(
                 'SELECT id, "by", text, ts FROM messages ORDER BY ts DESC, rowid DESC LIMIT ?',
@@ -551,9 +410,7 @@ def get_store() -> Store:
     global _STORE
     if _STORE is None:
         kind = os.environ.get("STORE")
-        if kind == "firestore":
-            _STORE = FirestoreStore(os.environ.get("GOOGLE_CLOUD_PROJECT"))
-        elif kind == "sqlite":
+        if kind == "sqlite":
             _STORE = SqliteStore(os.environ.get("WINSPOOL_DB") or "data/league.db")
         else:
             _STORE = InMemoryStore()

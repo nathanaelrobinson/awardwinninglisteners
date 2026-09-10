@@ -1,4 +1,4 @@
-"""`winspool export` -> `winspool import` is the Cloud Run -> Pi cutover path.
+"""`winspool export` -> `winspool import` is the SQLite backup and restore path.
 Nothing may be lost or renumbered on the way across."""
 import json
 import random

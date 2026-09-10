@@ -34,7 +34,7 @@ WINSPOOL_DB=$DATA_DIR/league.db
 WINSPOOL_DATA_DIR=$APP_DIR/data/cache
 WINSPOOL_WEB_DIST=$APP_DIR/web/dist
 WINSPOOL_BEHIND_PROXY=1
-# MUST match the Cloud Run revision, or every player is logged out on cutover.
+# Changing this invalidates every session cookie.
 SESSION_SECRET=
 REFRESH_TOKEN=
 ENVEOF

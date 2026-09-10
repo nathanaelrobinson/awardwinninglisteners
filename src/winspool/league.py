@@ -1,6 +1,6 @@
 """Pure state machine for the live league. Every function takes the league
 dict and returns a NEW dict (never mutates), so the store can wrap it in a
-transaction and tests never touch Firestore."""
+transaction and tests never touch a real store."""
 import copy
 import hashlib
 import secrets

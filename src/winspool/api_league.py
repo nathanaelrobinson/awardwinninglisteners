@@ -8,7 +8,6 @@ from pathlib import Path
 
 from fastapi import APIRouter, Depends, Header, HTTPException, Response
 from fastapi.responses import JSONResponse
-from google.api_core import exceptions as gexc
 from pydantic import BaseModel, Field
 
 from . import league
@@ -41,7 +40,7 @@ def _doc():
         return get_store().get()
     except LookupError:
         raise HTTPException(503, "league not initialized")
-    except (gexc.GoogleAPICallError, gexc.RetryError, sqlite3.OperationalError):
+    except sqlite3.OperationalError:
         raise HTTPException(503, "busy")
 
 
@@ -50,7 +49,7 @@ def _store_read(fn):
         return fn()
     except LookupError:
         raise HTTPException(503, "league not initialized")
-    except (gexc.GoogleAPICallError, gexc.RetryError, sqlite3.OperationalError):
+    except sqlite3.OperationalError:
         raise HTTPException(503, "busy")
 
 
@@ -66,8 +65,7 @@ def _run(fn):
         raise HTTPException(e.status, e.detail)
     except LookupError:
         raise HTTPException(503, "league not initialized")
-    except (gexc.Aborted, gexc.GoogleAPICallError, gexc.RetryError,
-            sqlite3.OperationalError):
+    except sqlite3.OperationalError:
         raise HTTPException(503, "busy")
     except ValueError as e:
         if "Failed to commit transaction" in str(e):

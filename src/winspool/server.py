@@ -28,9 +28,9 @@ from .recommend import (build_wins, naive_recommend, pwin_after_playout,
 from .teams import DIVISION, N_PLAYERS, N_TEAMS, TEAM_INDEX, TEAM_NAMES, TEAMS
 
 # In a source checkout, src/winspool/server.py -> parents[2] is the repo root.
-# When pip-installed into site-packages (as in the Cloud Run container),
-# parents[2] no longer points at a repo checkout, so data/cache and web/dist
-# locations are overridable via env vars there.
+# When pip-installed into site-packages, parents[2] no longer points at a
+# repo checkout, so data/cache and web/dist locations are overridable via
+# env vars there.
 REPO_ROOT = Path(__file__).resolve().parents[2]
 CACHE = Path(os.environ.get("WINSPOOL_DATA_DIR") or REPO_ROOT / "data" / "cache")
 SCHEDULE = CACHE / "schedule_2026.csv"
@@ -62,9 +62,9 @@ DEV_PLAYERS = ["Nate Robinson", "Evan Goguillon-Bader", "Logan Borgelt",
 def seed_dev_league():
     """Local dev only: STORE unset → in-memory league seeded from env.
 
-    Any configured STORE (firestore on Cloud Run, sqlite on the Pi) is a real
-    deployment: no dev league, and crucially no "dev-secret" fallback — that
-    would sign session cookies with a value published in this repo.
+    Any configured STORE (sqlite on the Pi) is a real deployment: no dev
+    league, and crucially no "dev-secret" fallback — that would sign session
+    cookies with a value published in this repo.
     """
     if os.environ.get("STORE"):
         _require_session_secret()

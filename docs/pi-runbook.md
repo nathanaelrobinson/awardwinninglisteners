@@ -31,7 +31,7 @@ WINSPOOL_DB=/var/lib/winspool/league.db
 WINSPOOL_DATA_DIR=/home/nate/awardwinninglisteners/data/cache
 WINSPOOL_WEB_DIST=/home/nate/awardwinninglisteners/web/dist
 WINSPOOL_BEHIND_PROXY=1     # marks the session cookie Secure behind the tunnel
-SESSION_SECRET=...          # MUST equal the Cloud Run value, or everyone is logged out
+SESSION_SECRET=...          # changing it invalidates every session cookie
 REFRESH_TOKEN=...           # only the scores timer uses it
 ```
 
@@ -128,43 +128,6 @@ sudo cloudflared --config /etc/cloudflared/config.yml tunnel ingress rule https:
 To rebuild it from scratch: `cloudflared tunnel login`, `cloudflared tunnel
 create pi`, `cloudflared tunnel route dns pi <hostname>` for each name, write
 the config above, then `sudo cloudflared service install`.
-
-**The tunnel serves nothing until the zone is active on Cloudflare** — i.e.
-until the nameservers move (cutover step 5). Until then the CNAMEs exist only
-inside the Cloudflare zone and public DNS still answers from Cloud DNS.
-
-## Cutover from Cloud Run (day after the draft)
-
-Preconditions: draft `status == done`, completion snapshot exists, Pi service
-green with a test import.
-
-1. **Freeze** — tell the group standings/comments are read-only for ~10 minutes.
-2. **Export** from the laptop that has gcloud ADC:
-   ```bash
-   STORE=firestore GOOGLE_CLOUD_PROJECT=snowpack-pika \
-     uv run winspool export --out league_export.json
-   ```
-3. **Copy and import** on the Pi (or run `./scripts/pi-cutover.sh /tmp/league_export.json`, which does steps 3–4 plus the permissions/env/unit setup):
-   ```bash
-   scp league_export.json pi:/tmp/
-   sudo -u winspool env $(sudo cat /etc/winspool/env | grep -v '^#' | xargs) \
-     /home/nate/awardwinninglisteners/.venv/bin/winspool import --from /tmp/league_export.json --force
-   sudo systemctl restart winspool
-   ```
-4. **Verify locally** — `curl -fsS localhost:8080/api/teams`, then log in and
-   confirm 30 picks, the full feed, the completion snapshot, and cached standings.
-5. **Switch DNS** to the Cloudflare nameservers (see the design doc §4).
-6. **Verify publicly** at https://awardwinninglisteners.com — existing devices
-   stay logged in if `SESSION_SECRET` matched.
-7. **Run the scores timer once**: `sudo systemctl start winspool-scores.service`.
-8. **Wind down GCP** — pause both Cloud Scheduler jobs, set Cloud Run
-   `--min-instances 0`, switch `.github/workflows/deploy.yml` to
-   `workflow_dispatch` only. Keep everything for 7 days as the rollback window,
-   then delete.
-
-Rollback before step 8's deletions: point the nameservers back at
-`ns-cloud-e*.googledomains.com`. Cloud DNS records and the Cloud Run service are
-untouched and still hold the data as of the freeze.
 
 ## Failure modes
 
