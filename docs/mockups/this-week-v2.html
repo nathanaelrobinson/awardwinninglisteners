@@ -1,0 +1,1199 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>This Week — mockup v2</title>
+<style>
+:root{--s1:4px;--s2:8px;--s3:12px;--s4:16px;--s5:24px;--s6:32px;
+  --shadow:0 1px 3px rgba(0,0,0,.08),0 4px 12px rgba(0,0,0,.06);
+  --bg:#f5f5f5;--panel:#fff;--text:#151515;--dim:#626c80;--border:#d6d9de;
+  --navy:#013369;--accent:#1b48e0;--green:#1a7f37;--red:#d50a0a;}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--text);
+  font:14px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+.wrap{max-width:1280px;margin:0 auto;padding:var(--s5)}
+.card{background:var(--panel);border-radius:12px;box-shadow:var(--shadow);padding:var(--s4);margin-bottom:var(--s5)}
+.eyebrow{display:block;font-size:12px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--dim);margin-bottom:var(--s3)}
+img.t{object-fit:contain;vertical-align:middle}
+.mockhead{max-width:1280px;margin:0 auto;padding:var(--s5) var(--s5) 0}
+.mockhead h1{font:800 italic 26px/1 system-ui;text-transform:uppercase;letter-spacing:-.02em;margin:0 0 var(--s2)}
+.mockhead p{color:var(--dim);margin:0 0 var(--s2);max-width:74ch}
+
+/* week picker */
+.wkbar{display:flex;align-items:center;gap:var(--s3);margin-bottom:var(--s4)}
+.wksel{font:800 italic 18px/1 system-ui;text-transform:uppercase;letter-spacing:-.01em;
+  border:0;background:transparent;color:var(--text);padding:2px 4px;cursor:pointer}
+.wknote{font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.06em}
+
+/* player strip */
+.ph{display:grid;grid-template-columns:104px 1fr 96px 210px;gap:var(--s3);
+  font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--dim);padding-bottom:var(--s2)}
+.ph span:nth-child(3){text-align:right}
+.pl{display:grid;grid-template-columns:104px 1fr 96px 210px;gap:var(--s3);align-items:center;
+  padding:var(--s3) 0;border-top:1px solid var(--border)}
+.pl:first-of-type{border-top:0}
+.sw{display:inline-block;width:10px;height:10px;border-radius:2px;margin-right:7px;vertical-align:-1px}
+.pname{white-space:nowrap;font-weight:600}
+.pgames{display:flex;flex-wrap:wrap;gap:var(--s2)}
+.pg{display:inline-flex;align-items:center;gap:3px;padding:2px 6px;border-radius:6px;background:#f2f4f7;font-size:12px}
+.pg .vs{color:var(--dim);font-size:10px}
+.pg .sp{color:var(--dim);font-variant-numeric:tabular-nums;font-size:11px;margin-left:2px}
+.pg.win{background:rgba(26,127,55,.13)}
+.pg.loss{background:rgba(213,10,10,.10)}
+.pg.lock{background:rgba(1,51,105,.10)}
+.chalk{text-align:right;white-space:nowrap}
+.chalk b{font-size:22px;font-style:italic;font-weight:800;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+.chalk .arrow{color:var(--dim);margin:0 3px}
+.chalk .act{font-size:22px;font-style:italic;font-weight:800;letter-spacing:-.02em;font-variant-numeric:tabular-nums}
+.dist{display:flex;align-items:flex-end;gap:3px;height:44px}
+.dcol{flex:1;display:flex;flex-direction:column;align-items:center;gap:2px}
+.dbar{width:100%;border-radius:2px 2px 0 0;min-height:1px}
+.dlab{font-size:10px;color:var(--dim);font-variant-numeric:tabular-nums}
+.dcol.hit .dlab{color:var(--text);font-weight:800}
+.dcol.hit .dbar{outline:2px solid var(--text);outline-offset:1px}
+
+/* game board */
+.gh,.g{display:grid;grid-template-columns:70px 230px 92px 168px 1fr;gap:var(--s3);align-items:center}
+.gh{font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.06em;color:var(--dim);padding-bottom:var(--s2)}
+.g{padding:11px 0;border-top:1px solid var(--border)}
+.when{font-size:11px;color:var(--dim);text-transform:uppercase;letter-spacing:.04em;line-height:1.25}
+.mu{display:flex;align-items:center;gap:var(--s2);min-width:0}
+.side{display:flex;align-items:center;gap:5px;font-size:13px;white-space:nowrap}
+.side.fav b{font-weight:800}
+.side.dog{color:var(--dim)}
+.dot{width:7px;height:7px;border-radius:2px;flex:none}
+.at{color:var(--dim);font-size:11px}
+.line{font-variant-numeric:tabular-nums;font-size:13px}
+.line .ou{color:var(--dim);font-size:11px;margin-left:6px}
+
+/* variant B probability cell */
+.pb{display:flex;align-items:center;gap:var(--s2)}
+.pbtrack{flex:1;height:12px;background:#eceff3;border-radius:3px;position:relative}
+.pbrange{position:absolute;top:0;bottom:0;background:#d3dae3;border-radius:3px}
+.pbmean{position:absolute;top:-2px;bottom:-2px;width:2px;background:var(--navy)}
+.pbval{font-variant-numeric:tabular-nums;font-size:13px;min-width:34px;text-align:right}
+.pbwho{font-size:10px;color:var(--dim);text-transform:uppercase;letter-spacing:.04em;margin-top:3px}
+.pbwho.split{color:var(--red);font-weight:700}
+
+/* swing, anchored by the two teams */
+.swing{display:flex;flex-direction:column;gap:3px;min-width:0}
+.sax{display:grid;grid-template-columns:52px 1fr 1fr 40px;align-items:center;opacity:.85}
+.sax .l{justify-self:end;padding-right:5px}
+.sax .r{justify-self:start;padding-left:5px}
+.sw-row{display:grid;grid-template-columns:52px 1fr 1fr 40px;align-items:center;font-size:11px}
+.sw-row .who{color:var(--dim);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.sw-l,.sw-r{height:9px;position:relative}
+.sw-l{border-right:1px solid var(--border)}
+.sw-l i,.sw-r i{position:absolute;top:0;bottom:0;border-radius:2px;display:block}
+.sw-l i{right:0}.sw-r i{left:0}
+.sw-row .amt{text-align:right;font-variant-numeric:tabular-nums;padding-left:6px;color:var(--dim)}
+.final{opacity:.6}
+.finalscore{font-variant-numeric:tabular-nums;font-weight:700}
+.legend{display:flex;gap:var(--s4);flex-wrap:wrap;font-size:11px;color:var(--dim);margin-top:var(--s3)}
+.demo{font-size:11px;color:var(--red);text-transform:uppercase;letter-spacing:.06em;font-weight:700}
+</style>
+
+<div class="mockhead">
+  <h1>This Week — mockup v2</h1>
+</div>
+
+<div class="wrap">
+  <div class="card">
+    <div class="wkbar"><select class="wksel" id="wk"></select></div>
+    <div class="ph"><span></span><span></span><span>Chalk</span><span>Week wins</span></div>
+    <div id="strip"></div>
+  </div>
+
+  <div class="card" id="boardcard">
+    <div class="eyebrow" id="boardtitle"></div>
+    <div class="gh">
+      <div>Kickoff</div><div>Matchup</div><div>Line</div><div>Home win</div><div>Pool swing · pts</div>
+    </div>
+    <div id="board"></div>
+  </div>
+</div>
+
+<script>
+const LIVE = {
+ "week": 1,
+ "games": [
+  {
+   "home": "LA",
+   "away": "SF",
+   "kick": "2026-09-11T00:35Z",
+   "status": "9/10 - 8:35 PM EDT",
+   "state": "pre",
+   "spread_nflverse": 3.5,
+   "spread_espn": -3.5,
+   "ou": 48.5,
+   "p_model": 0.6671,
+   "p_book": 0.6309,
+   "p_kalshi": 0.645,
+   "owner_home": "Nate Robinson",
+   "owner_away": "Nate Robinson",
+   "lev": {
+    "Logan Borgelt": 0.0,
+    "Nate Robinson": 0.0,
+    "Mitch Fischer": 0.0,
+    "Evan Goguillon-Bader": 0.0,
+    "Eric Whitley": 0.0
+   }
+  },
+  {
+   "home": "CAR",
+   "away": "CHI",
+   "kick": "2026-09-13T17:00Z",
+   "status": "9/13 - 1:00 PM EDT",
+   "state": "pre",
+   "spread_nflverse": -3.0,
+   "spread_espn": 3.0,
+   "ou": 46.5,
+   "p_model": 0.4181,
+   "p_book": 0.4066,
+   "p_kalshi": 0.399,
+   "owner_home": "Logan Borgelt",
+   "owner_away": "Eric Whitley",
+   "lev": {
+    "Logan Borgelt": 0.0291,
+    "Nate Robinson": 0.0043,
+    "Mitch Fischer": 0.0051,
+    "Evan Goguillon-Bader": 0.0035,
+    "Eric Whitley": -0.0388
+   }
+  },
+  {
+   "home": "CIN",
+   "away": "TB",
+   "kick": "2026-09-13T17:00Z",
+   "status": "9/13 - 1:00 PM EDT",
+   "state": "pre",
+   "spread_nflverse": 3.5,
+   "spread_espn": -3.5,
+   "ou": 50.5,
+   "p_model": 0.5959,
+   "p_book": 0.6369,
+   "p_kalshi": 0.645,
+   "owner_home": "Mitch Fischer",
+   "owner_away": "Eric Whitley",
+   "lev": {
+    "Logan Borgelt": 0.0003,
+    "Nate Robinson": 0.0013,
+    "Mitch Fischer": 0.0439,
+    "Evan Goguillon-Bader": -0.0006,
+    "Eric Whitley": -0.0456
+   }
+  },
+  {
+   "home": "DET",
+   "away": "NO",
+   "kick": "2026-09-13T17:00Z",
+   "status": "9/13 - 1:00 PM EDT",
+   "state": "pre",
+   "spread_nflverse": 7.0,
+   "spread_espn": -7.0,
+   "ou": 50.5,
+   "p_model": 0.724,
+   "p_book": 0.7258,
+   "p_kalshi": 0.745,
+   "owner_home": "Evan Goguillon-Bader",
+   "owner_away": "Logan Borgelt",
+   "lev": {
+    "Logan Borgelt": -0.0281,
+    "Nate Robinson": -0.0008,
+    "Mitch Fischer": -0.0023,
+    "Evan Goguillon-Bader": 0.0292,
+    "Eric Whitley": -0.001
+   }
+  },
+  {
+   "home": "HOU",
+   "away": "BUF",
+   "kick": "2026-09-13T17:00Z",
+   "status": "9/13 - 1:00 PM EDT",
+   "state": "pre",
+   "spread_nflverse": -1.5,
+   "spread_espn": 1.5,
+   "ou": 44.5,
+   "p_model": 0.5207,
+   "p_book": 0.4783,
+   "p_kalshi": 0.4798,
+   "owner_home": "Logan Borgelt",
+   "owner_away": "Logan Borgelt",
+   "lev": {
+    "Logan Borgelt": 0.0,
+    "Nate Robinson": 0.0,
+    "Mitch Fischer": 0.0,
+    "Evan Goguillon-Bader": 0.0,
+    "Eric Whitley": 0.0
+   }
+  },
+  {
+   "home": "IND",
+   "away": "BAL",
+   "kick": "2026-09-13T17:00Z",
+   "status": "9/13 - 1:00 PM EDT",
+   "state": "pre",
+   "spread_nflverse": -3.5,
+   "spread_espn": 3.5,
+   "ou": 47.5,
+   "p_model": 0.4213,
+   "p_book": 0.3908,
+   "p_kalshi": 0.3889,
+   "owner_home": "Eric Whitley",
+   "owner_away": "Eric Whitley",
+   "lev": {
+    "Logan Borgelt": 0.0,
+    "Nate Robinson": 0.0,
+    "Mitch Fischer": 0.0,
+    "Evan Goguillon-Bader": 0.0,
+    "Eric Whitley": 0.0
+   }
+  },
+  {
+   "home": "JAX",
+   "away": "CLE",
+   "kick": "2026-09-13T17:00Z",
+   "status": "9/13 - 1:00 PM EDT",
+   "state": "pre",
+   "spread_nflverse": 8.5,
+   "spread_espn": -8.5,
+   "ou": 39.5,
+   "p_model": 0.7616,
+   "p_book": 0.7867,
+   "p_kalshi": 0.785,
+   "owner_home": "Nate Robinson",
+   "owner_away": "Nate Robinson",
+   "lev": {
+    "Logan Borgelt": 0.0,
+    "Nate Robinson": 0.0,
+    "Mitch Fischer": 0.0,
+    "Evan Goguillon-Bader": 0.0,
+    "Eric Whitley": 0.0
+   }
+  },
+  {
+   "home": "PIT",
+   "away": "ATL",
+   "kick": "2026-09-13T17:00Z",
+   "status": "9/13 - 1:00 PM EDT",
+   "state": "pre",
+   "spread_nflverse": 3.5,
+   "spread_espn": -3.5,
+   "ou": 42.5,
+   "p_model": 0.6228,
+   "p_book": 0.6225,
+   "p_kalshi": 0.625,
+   "owner_home": "Evan Goguillon-Bader",
+   "owner_away": "Nate Robinson",
+   "lev": {
+    "Logan Borgelt": 0.0015,
+    "Nate Robinson": -0.0409,
+    "Mitch Fischer": 0.0021,
+    "Evan Goguillon-Bader": 0.0346,
+    "Eric Whitley": 0.0065
+   }
+  },
+  {
+   "home": "TEN",
+   "away": "NYJ",
+   "kick": "2026-09-13T17:00Z",
+   "status": "9/13 - 1:00 PM EDT",
+   "state": "pre",
+   "spread_nflverse": 1.5,
+   "spread_espn": -1.5,
+   "ou": 38.5,
+   "p_model": 0.597,
+   "p_book": 0.5325,
+   "p_kalshi": 0.5202,
+   "owner_home": "Evan Goguillon-Bader",
+   "owner_away": "Logan Borgelt",
+   "lev": {
+    "Logan Borgelt": -0.0259,
+    "Nate Robinson": -0.0012,
+    "Mitch Fischer": -0.0021,
+    "Evan Goguillon-Bader": 0.0305,
+    "Eric Whitley": 0.0002
+   }
+  },
+  {
+   "home": "LAC",
+   "away": "ARI",
+   "kick": "2026-09-13T20:25Z",
+   "status": "9/13 - 4:25 PM EDT",
+   "state": "pre",
+   "spread_nflverse": 9.5,
+   "spread_espn": -9.5,
+   "ou": 47.5,
+   "p_model": 0.8093,
+   "p_book": 0.8,
+   "p_kalshi": 0.8131,
+   "owner_home": "Mitch Fischer",
+   "owner_away": null,
+   "lev": {
+    "Logan Borgelt": -0.0059,
+    "Nate Robinson": -0.0103,
+    "Mitch Fischer": 0.0344,
+    "Evan Goguillon-Bader": -0.0073,
+    "Eric Whitley": -0.0106
+   }
+  },
+  {
+   "home": "LV",
+   "away": "MIA",
+   "kick": "2026-09-13T20:25Z",
+   "status": "9/13 - 4:25 PM EDT",
+   "state": "pre",
+   "spread_nflverse": 3.0,
+   "spread_espn": -3.0,
+   "ou": 40.5,
+   "p_model": 0.5957,
+   "p_book": 0.5996,
+   "p_kalshi": 0.601,
+   "owner_home": "Mitch Fischer",
+   "owner_away": null,
+   "lev": {
+    "Logan Borgelt": -0.0056,
+    "Nate Robinson": -0.0113,
+    "Mitch Fischer": 0.034,
+    "Evan Goguillon-Bader": -0.0078,
+    "Eric Whitley": -0.0113
+   }
+  },
+  {
+   "home": "MIN",
+   "away": "GB",
+   "kick": "2026-09-13T20:25Z",
+   "status": "9/13 - 4:25 PM EDT",
+   "state": "pre",
+   "spread_nflverse": 1.5,
+   "spread_espn": -1.5,
+   "ou": 46.5,
+   "p_model": 0.4819,
+   "p_book": 0.5261,
+   "p_kalshi": 0.535,
+   "owner_home": "Mitch Fischer",
+   "owner_away": "Evan Goguillon-Bader",
+   "lev": {
+    "Logan Borgelt": -0.0021,
+    "Nate Robinson": -0.003,
+    "Mitch Fischer": 0.0425,
+    "Evan Goguillon-Bader": -0.0355,
+    "Eric Whitley": -0.0039
+   }
+  },
+  {
+   "home": "PHI",
+   "away": "WAS",
+   "kick": "2026-09-13T20:25Z",
+   "status": "9/13 - 4:25 PM EDT",
+   "state": "pre",
+   "spread_nflverse": 5.5,
+   "spread_espn": -5.5,
+   "ou": 44.5,
+   "p_model": 0.7352,
+   "p_book": 0.6575,
+   "p_kalshi": 0.6818,
+   "owner_home": "Eric Whitley",
+   "owner_away": "Evan Goguillon-Bader",
+   "lev": {
+    "Logan Borgelt": -0.0015,
+    "Nate Robinson": -0.002,
+    "Mitch Fischer": -0.0019,
+    "Evan Goguillon-Bader": -0.0359,
+    "Eric Whitley": 0.0436
+   }
+  },
+  {
+   "home": "NYG",
+   "away": "DAL",
+   "kick": "2026-09-14T00:20Z",
+   "status": "9/13 - 8:20 PM EDT",
+   "state": "pre",
+   "spread_nflverse": -3.0,
+   "spread_espn": 3.0,
+   "ou": 48.5,
+   "p_model": 0.4491,
+   "p_book": 0.4066,
+   "p_kalshi": 0.401,
+   "owner_home": "Eric Whitley",
+   "owner_away": "Logan Borgelt",
+   "lev": {
+    "Logan Borgelt": -0.0275,
+    "Nate Robinson": -0.0043,
+    "Mitch Fischer": -0.0051,
+    "Evan Goguillon-Bader": -0.004,
+    "Eric Whitley": 0.0405
+   }
+  },
+  {
+   "home": "KC",
+   "away": "DEN",
+   "kick": "2026-09-15T00:15Z",
+   "status": "9/14 - 8:15 PM EDT",
+   "state": "pre",
+   "spread_nflverse": 2.5,
+   "spread_espn": -2.5,
+   "ou": 43.5,
+   "p_model": 0.5496,
+   "p_book": 0.5721,
+   "p_kalshi": 0.565,
+   "owner_home": "Evan Goguillon-Bader",
+   "owner_away": "Mitch Fischer",
+   "lev": {
+    "Logan Borgelt": 0.0023,
+    "Nate Robinson": 0.002,
+    "Mitch Fischer": -0.0426,
+    "Evan Goguillon-Bader": 0.0339,
+    "Eric Whitley": 0.0043
+   }
+  }
+ ],
+ "final": [
+  {
+   "home": "SEA",
+   "away": "NE",
+   "hs": 13,
+   "as": 10,
+   "final": true
+  }
+ ],
+ "players": [
+  {
+   "name": "Logan Borgelt",
+   "teams": [
+    "BUF",
+    "HOU",
+    "DAL",
+    "NO",
+    "CAR",
+    "NYJ"
+   ],
+   "chalk": 2.65,
+   "locks": 1,
+   "banked": 0,
+   "n": 4,
+   "dist": [
+    0.113,
+    0.339,
+    0.3607,
+    0.1617,
+    0.0256
+   ],
+   "pwin": 0.1176,
+   "season_pwin": 0.118
+  },
+  {
+   "name": "Nate Robinson",
+   "teams": [
+    "LA",
+    "NE",
+    "JAX",
+    "SF",
+    "ATL",
+    "CLE"
+   ],
+   "chalk": 2.38,
+   "locks": 2,
+   "banked": 0,
+   "n": 1,
+   "dist": [
+    0.6228,
+    0.3772
+   ],
+   "pwin": 0.2797,
+   "season_pwin": 0.28
+  },
+  {
+   "name": "Mitch Fischer",
+   "teams": [
+    "SEA",
+    "CIN",
+    "DEN",
+    "LAC",
+    "MIN",
+    "LV"
+   ],
+   "chalk": 3.93,
+   "locks": 0,
+   "banked": 1,
+   "n": 5,
+   "dist": [
+    0.0089,
+    0.0793,
+    0.2487,
+    0.3584,
+    0.2424,
+    0.0624
+   ],
+   "pwin": 0.2435,
+   "season_pwin": 0.244
+  },
+  {
+   "name": "Evan Goguillon-Bader",
+   "teams": [
+    "KC",
+    "DET",
+    "GB",
+    "PIT",
+    "WAS",
+    "TEN"
+   ],
+   "chalk": 3.28,
+   "locks": 0,
+   "banked": 0,
+   "n": 6,
+   "dist": [
+    0.0067,
+    0.0563,
+    0.188,
+    0.3181,
+    0.285,
+    0.1256,
+    0.0203
+   ],
+   "pwin": 0.173,
+   "season_pwin": 0.173
+  },
+  {
+   "name": "Eric Whitley",
+   "teams": [
+    "BAL",
+    "PHI",
+    "CHI",
+    "TB",
+    "IND",
+    "NYG"
+   ],
+   "chalk": 3.17,
+   "locks": 1,
+   "banked": 0,
+   "n": 4,
+   "dist": [
+    0.0363,
+    0.2058,
+    0.3868,
+    0.2935,
+    0.0776
+   ],
+   "pwin": 0.264,
+   "season_pwin": 0.264
+  }
+ ],
+ "rows": [
+  {
+   "player": "Nate Robinson",
+   "teams": [
+    {
+     "code": "LA",
+     "banked": 0.0,
+     "exp_wins": 11.0
+    },
+    {
+     "code": "NE",
+     "banked": 0.0,
+     "exp_wins": 9.7
+    },
+    {
+     "code": "SF",
+     "banked": 0.0,
+     "exp_wins": 9.6
+    },
+    {
+     "code": "JAX",
+     "banked": 0.0,
+     "exp_wins": 9.3
+    },
+    {
+     "code": "ATL",
+     "banked": 0.0,
+     "exp_wins": 7.6
+    },
+    {
+     "code": "CLE",
+     "banked": 0.0,
+     "exp_wins": 6.5
+    }
+   ],
+   "banked": 0.0,
+   "exp_wins": 53.6,
+   "pwin": 0.28,
+   "p10": 44,
+   "p90": 63
+  },
+  {
+   "player": "Eric Whitley",
+   "teams": [
+    {
+     "code": "BAL",
+     "banked": 0.0,
+     "exp_wins": 10.2
+    },
+    {
+     "code": "PHI",
+     "banked": 0.0,
+     "exp_wins": 10.0
+    },
+    {
+     "code": "CHI",
+     "banked": 0.0,
+     "exp_wins": 9.0
+    },
+    {
+     "code": "TB",
+     "banked": 0.0,
+     "exp_wins": 8.5
+    },
+    {
+     "code": "IND",
+     "banked": 0.0,
+     "exp_wins": 8.3
+    },
+    {
+     "code": "NYG",
+     "banked": 0.0,
+     "exp_wins": 7.6
+    }
+   ],
+   "banked": 0.0,
+   "exp_wins": 53.6,
+   "pwin": 0.264,
+   "p10": 45,
+   "p90": 62
+  },
+  {
+   "player": "Mitch Fischer",
+   "teams": [
+    {
+     "code": "SEA",
+     "banked": 1.0,
+     "exp_wins": 10.9
+    },
+    {
+     "code": "DEN",
+     "banked": 0.0,
+     "exp_wins": 9.7
+    },
+    {
+     "code": "CIN",
+     "banked": 0.0,
+     "exp_wins": 9.5
+    },
+    {
+     "code": "LAC",
+     "banked": 0.0,
+     "exp_wins": 9.3
+    },
+    {
+     "code": "MIN",
+     "banked": 0.0,
+     "exp_wins": 8.4
+    },
+    {
+     "code": "LV",
+     "banked": 0.0,
+     "exp_wins": 5.7
+    }
+   ],
+   "banked": 1.0,
+   "exp_wins": 53.4,
+   "pwin": 0.244,
+   "p10": 45,
+   "p90": 62
+  },
+  {
+   "player": "Evan Goguillon-Bader",
+   "teams": [
+    {
+     "code": "DET",
+     "banked": 0.0,
+     "exp_wins": 10.6
+    },
+    {
+     "code": "KC",
+     "banked": 0.0,
+     "exp_wins": 9.5
+    },
+    {
+     "code": "GB",
+     "banked": 0.0,
+     "exp_wins": 9.4
+    },
+    {
+     "code": "PIT",
+     "banked": 0.0,
+     "exp_wins": 8.4
+    },
+    {
+     "code": "WAS",
+     "banked": 0.0,
+     "exp_wins": 7.0
+    },
+    {
+     "code": "TEN",
+     "banked": 0.0,
+     "exp_wins": 6.1
+    }
+   ],
+   "banked": 0.0,
+   "exp_wins": 51.1,
+   "pwin": 0.173,
+   "p10": 42,
+   "p90": 60
+  },
+  {
+   "player": "Logan Borgelt",
+   "teams": [
+    {
+     "code": "BUF",
+     "banked": 0.0,
+     "exp_wins": 10.1
+    },
+    {
+     "code": "HOU",
+     "banked": 0.0,
+     "exp_wins": 9.7
+    },
+    {
+     "code": "DAL",
+     "banked": 0.0,
+     "exp_wins": 9.0
+    },
+    {
+     "code": "NO",
+     "banked": 0.0,
+     "exp_wins": 8.1
+    },
+    {
+     "code": "CAR",
+     "banked": 0.0,
+     "exp_wins": 7.0
+    },
+    {
+     "code": "NYJ",
+     "banked": 0.0,
+     "exp_wins": 5.8
+    }
+   ],
+   "banked": 0.0,
+   "exp_wins": 49.8,
+   "pwin": 0.118,
+   "p10": 41,
+   "p90": 58
+  }
+ ],
+ "sources": [
+  "vegas",
+  "espn_fpi",
+  "nfelo",
+  "clay",
+  "pff",
+  "epa",
+  "kalshi"
+ ]
+};
+const RETRO = {
+ "season": 2025,
+ "week": 1,
+ "games": [
+  {
+   "home": "PHI",
+   "away": "DAL",
+   "spread": 8.5,
+   "p_home": 0.7355,
+   "hs": 24,
+   "as": 20
+  },
+  {
+   "home": "LAC",
+   "away": "KC",
+   "spread": -3.0,
+   "p_home": 0.4121,
+   "hs": 27,
+   "as": 21
+  },
+  {
+   "home": "ATL",
+   "away": "TB",
+   "spread": -1.5,
+   "p_home": 0.4558,
+   "hs": 20,
+   "as": 23
+  },
+  {
+   "home": "CLE",
+   "away": "CIN",
+   "spread": -5.5,
+   "p_home": 0.3419,
+   "hs": 16,
+   "as": 17
+  },
+  {
+   "home": "IND",
+   "away": "MIA",
+   "spread": 1.5,
+   "p_home": 0.5442,
+   "hs": 33,
+   "as": 8
+  },
+  {
+   "home": "JAX",
+   "away": "CAR",
+   "spread": 4.5,
+   "p_home": 0.6306,
+   "hs": 26,
+   "as": 10
+  },
+  {
+   "home": "NE",
+   "away": "LV",
+   "spread": 2.5,
+   "p_home": 0.5735,
+   "hs": 13,
+   "as": 20
+  },
+  {
+   "home": "NO",
+   "away": "ARI",
+   "spread": -6.0,
+   "p_home": 0.3284,
+   "hs": 13,
+   "as": 20
+  },
+  {
+   "home": "NYJ",
+   "away": "PIT",
+   "spread": -3.0,
+   "p_home": 0.4121,
+   "hs": 32,
+   "as": 34
+  },
+  {
+   "home": "WAS",
+   "away": "NYG",
+   "spread": 6.0,
+   "p_home": 0.6716,
+   "hs": 21,
+   "as": 6
+  },
+  {
+   "home": "DEN",
+   "away": "TEN",
+   "spread": 8.5,
+   "p_home": 0.7355,
+   "hs": 20,
+   "as": 12
+  },
+  {
+   "home": "SEA",
+   "away": "SF",
+   "spread": -2.5,
+   "p_home": 0.4265,
+   "hs": 13,
+   "as": 17
+  },
+  {
+   "home": "GB",
+   "away": "DET",
+   "spread": 1.5,
+   "p_home": 0.5442,
+   "hs": 27,
+   "as": 13
+  },
+  {
+   "home": "LA",
+   "away": "HOU",
+   "spread": 3.5,
+   "p_home": 0.6023,
+   "hs": 14,
+   "as": 9
+  },
+  {
+   "home": "BUF",
+   "away": "BAL",
+   "spread": -1.5,
+   "p_home": 0.4558,
+   "hs": 41,
+   "as": 40
+  },
+  {
+   "home": "CHI",
+   "away": "MIN",
+   "spread": -1.5,
+   "p_home": 0.4558,
+   "hs": 24,
+   "as": 27
+  }
+ ],
+ "players": [
+  {
+   "name": "Logan Borgelt",
+   "teams": [
+    "BUF",
+    "HOU",
+    "DAL",
+    "NO",
+    "CAR",
+    "NYJ"
+   ],
+   "locks": 0,
+   "n": 6,
+   "chalk": 2.23,
+   "actual": 1,
+   "dist": [
+    0.06,
+    0.2181,
+    0.3259,
+    0.2563,
+    0.1117,
+    0.0256,
+    0.0024
+   ]
+  },
+  {
+   "name": "Nate Robinson",
+   "teams": [
+    "LA",
+    "NE",
+    "JAX",
+    "SF",
+    "ATL",
+    "CLE"
+   ],
+   "locks": 0,
+   "n": 6,
+   "chalk": 3.18,
+   "actual": 3,
+   "dist": [
+    0.0096,
+    0.0696,
+    0.2059,
+    0.3165,
+    0.2651,
+    0.1139,
+    0.0195
+   ]
+  },
+  {
+   "name": "Mitch Fischer",
+   "teams": [
+    "SEA",
+    "CIN",
+    "DEN",
+    "LAC",
+    "MIN",
+    "LV"
+   ],
+   "locks": 0,
+   "n": 6,
+   "chalk": 3.2,
+   "actual": 5,
+   "dist": [
+    0.008,
+    0.0645,
+    0.2031,
+    0.3204,
+    0.2692,
+    0.1152,
+    0.0197
+   ]
+  },
+  {
+   "name": "Evan Goguillon-Bader",
+   "teams": [
+    "KC",
+    "DET",
+    "GB",
+    "PIT",
+    "WAS",
+    "TEN"
+   ],
+   "locks": 1,
+   "n": 4,
+   "chalk": 3.11,
+   "actual": 3,
+   "dist": [
+    0.041,
+    0.2157,
+    0.3951,
+    0.2868,
+    0.0614
+   ]
+  },
+  {
+   "name": "Eric Whitley",
+   "teams": [
+    "BAL",
+    "PHI",
+    "CHI",
+    "TB",
+    "IND",
+    "NYG"
+   ],
+   "locks": 0,
+   "n": 6,
+   "chalk": 3.15,
+   "actual": 3,
+   "dist": [
+    0.0092,
+    0.0704,
+    0.2113,
+    0.3212,
+    0.2618,
+    0.1084,
+    0.0177
+   ]
+  }
+ ]
+};
+const PC = {'Nate Robinson':'#6b2fb3','Logan Borgelt':'#d50a0a','Eric Whitley':'#1b48e0',
+  'Mitch Fischer':'#e8842b','Evan Goguillon-Bader':'#f5d90a'};
+const logo = c => `https://a.espncdn.com/i/teamlogos/nfl/500/${c.toLowerCase()}.png`;
+const img = (c,s=18) => `<img class="t" src="${logo(c)}" width="${s}" height="${s}" alt="${c}">`;
+const first = n => n.split(' ')[0];
+const pct = v => v==null ? '—' : Math.round(v*100)+'%';
+const OWNER = {}; LIVE.players.forEach(p => p.teams.forEach(t => OWNER[t]=p.name));
+
+/* ---------------- player strip ---------------- */
+function chipsLive(p){
+  const mine = new Set(p.teams), out = [];
+  for (const f of LIVE.final){
+    if (!mine.has(f.home) && !mine.has(f.away)) continue;
+    const h = mine.has(f.home), won = h ? f.hs>f.as : f.as>f.hs;
+    out.push(`<span class="pg ${won?'win':'loss'}">${img(h?f.home:f.away,16)}<span class="vs">${h?'vs':'@'}</span>${img(h?f.away:f.home,16)}<span class="sp">${f.hs}–${f.as}</span></span>`);
+  }
+  for (const g of LIVE.games){
+    const h = mine.has(g.home), a = mine.has(g.away);
+    if (!h && !a) continue;
+    if (h && a){ out.push(`<span class="pg lock">${img(g.home,16)}<span class="vs">vs</span>${img(g.away,16)}<span class="sp">lock</span></span>`); continue; }
+    const me = h?g.home:g.away, opp = h?g.away:g.home, pw = h?g.p_model:1-g.p_model;
+    out.push(`<span class="pg">${img(me,16)}<span class="vs">${h?'vs':'@'}</span>${img(opp,16)}<span class="sp">${Math.round(pw*100)}%</span></span>`);
+  }
+  return out.join('');
+}
+function chipsRetro(p){
+  const mine = new Set(p.teams), out = [];
+  for (const g of RETRO.games){
+    const h = mine.has(g.home), a = mine.has(g.away);
+    if (!h && !a) continue;
+    if (h && a){ out.push(`<span class="pg lock">${img(g.home,16)}<span class="vs">vs</span>${img(g.away,16)}<span class="sp">lock</span></span>`); continue; }
+    const me = h?g.home:g.away, opp = h?g.away:g.home;
+    const won = h ? g.hs>g.as : g.as>g.hs;
+    out.push(`<span class="pg ${won?'win':'loss'}">${img(me,16)}<span class="vs">${h?'vs':'@'}</span>${img(opp,16)}<span class="sp">${g.hs}–${g.as}</span></span>`);
+  }
+  return out.join('');
+}
+function stripRow(p, retro){
+  const off = retro ? p.locks : p.locks + p.banked;
+  const mx = Math.max(...p.dist);
+  const bars = p.dist.map((d,i)=>{
+    const total = i + off;
+    const hit = retro && total === p.actual;
+    return `<div class="dcol${hit?' hit':''}" title="${(d*100).toFixed(1)}% chance of ${total}">
+      <div class="dbar" style="height:${Math.max(1,d/mx*28)}px;background:${PC[p.name]};opacity:${.25+.75*d/mx}"></div>
+      <div class="dlab">${total}</div></div>`;
+  }).join('');
+  const num = retro
+    ? `<b style="color:var(--dim)">${p.chalk.toFixed(1)}</b><span class="arrow">→</span><span class="act">${p.actual}</span>`
+    : `<b>${p.chalk.toFixed(1)}</b>`;
+  return `<div class="pl">
+    <div class="pname"><span class="sw" style="background:${PC[p.name]}"></span>${first(p.name)}</div>
+    <div class="pgames">${retro?chipsRetro(p):chipsLive(p)}</div>
+    <div class="chalk">${num}</div>
+    <div class="dist">${bars}</div></div>`;
+}
+
+/* ---------------- game board ---------------- */
+function when(g){
+  if (!g.kick) return '';
+  const d = new Date(g.kick);
+  return d.toLocaleDateString(undefined,{weekday:'short'}).toUpperCase()+'<br>'+
+         d.toLocaleTimeString(undefined,{hour:'numeric',minute:'2-digit'});
+}
+function matchup(g, s){
+  const homeFav = s!=null && s<0;
+  const side = (c,fav)=>`<span class="side ${fav?'fav':'dog'}">
+    <span class="dot" style="background:${OWNER[c]?PC[OWNER[c]]:'transparent'}"></span>${img(c,20)}<b>${c}</b></span>`;
+  return `<div class="mu">${side(g.away,!homeFav&&s!=null)}<span class="at">@</span>${side(g.home,homeFav)}</div>`;
+}
+function probCell(g){
+  const v=[g.p_model,g.p_book,g.p_kalshi].filter(x=>x!=null);
+  const lo=Math.min(...v), hi=Math.max(...v), mean=v.reduce((a,b)=>a+b,0)/v.length;
+  const split=hi-lo>0.08;
+  return `<div><div class="pb">
+      <span class="pbtrack" title="model ${pct(g.p_model)} · book ${pct(g.p_book)} · kalshi ${pct(g.p_kalshi)}">
+        <i class="pbrange" style="left:${lo*100}%;width:${Math.max(1.2,(hi-lo)*100)}%"></i>
+        <i class="pbmean" style="left:calc(${mean*100}% - 1px)"></i>
+      </span><span class="pbval">${pct(mean)}</span></div>
+    <div class="pbwho${split?' split':''}">${split?'Split '+Math.round((hi-lo)*100):''}</div></div>`;
+}
+function swing(g){
+  const ent = Object.entries(g.lev).filter(([,v])=>Math.abs(v)>=0.002)
+    .sort((a,b)=>Math.abs(b[1])-Math.abs(a[1]));
+  const axis = `<div class="sax"><span></span>
+    <span class="l">${img(g.away,15)}</span><span class="r">${img(g.home,15)}</span><span></span></div>`;
+  if (!ent.length) return '';
+  const mx = Math.max(...ent.map(([,v])=>Math.abs(v)), 0.01);
+  const BASE = {}; LIVE.players.forEach(p => BASE[p.name] = p.pwin);
+  // lev is signed for a HOME win: positive -> that player needs the home team.
+  return axis + ent.map(([n,v])=>{
+    const w = Math.abs(v)/mx*100, needsHome = v>0, team = needsHome?g.home:g.away;
+    const bar = `<i style="width:${w}%;background:${PC[n]}"></i>`;
+    const ifH = BASE[n] + (1-g.p_model)*v, ifA = ifH - v;
+    const tip = `${first(n)} to win the pool — ${g.away} wins ${(ifA*100).toFixed(1)}%, ${g.home} wins ${(ifH*100).toFixed(1)}%`;
+    return `<div class="sw-row" title="${tip}">
+      <span class="who">${first(n)}</span>
+      <span class="sw-l">${needsHome?'':bar}</span>
+      <span class="sw-r">${needsHome?bar:''}</span>
+      <span class="amt">${(Math.abs(v)*100).toFixed(1)}</span></div>`;
+  }).join('');
+}
+function gameRow(g){
+  const s = g.spread_espn;
+  const lt = s==null ? '—' : s===0 ? 'PK' : s<0 ? `${g.home} ${s}` : `${g.away} ${-s}`;
+  return `<div class="g">
+    <div class="when">${when(g)}</div>${matchup(g,s)}
+    <div class="line">${lt}<span class="ou">o/u ${g.ou ?? '—'}</span></div>
+    ${probCell(g)}<div class="swing">${swing(g)}</div></div>`;
+}
+function finalRow(f){
+  const side = c=>`<span class="side"><span class="dot" style="background:${OWNER[c]?PC[OWNER[c]]:'transparent'}"></span>${img(c,20)}<b>${c}</b></span>`;
+  return `<div class="g final"><div class="when">Final</div>
+    <div class="mu">${side(f.away)}<span class="at">@</span>${side(f.home)}</div>
+    <div class="line finalscore">${f.as}–${f.hs}</div>
+    <div></div><div></div></div>`;
+}
+function retroRow(g){
+  const homeWon = g.hs>g.as;
+  const side=(c,won)=>`<span class="side ${won?'fav':'dog'}"><span class="dot" style="background:${OWNER[c]?PC[OWNER[c]]:'transparent'}"></span>${img(c,20)}<b>${c}</b></span>`;
+  const p = g.p_home, called = (p>=.5)===homeWon;
+  return `<div class="g"><div class="when">Final</div>
+    <div class="mu">${side(g.away,!homeWon)}<span class="at">@</span>${side(g.home,homeWon)}</div>
+    <div class="line finalscore">${g.as}–${g.hs}</div>
+    <div><div class="pb"><span class="pbtrack">
+        <i class="pbrange" style="left:0;width:${p*100}%;background:${called?'#cfe0d3':'#f0cfcf'}"></i>
+        <i class="pbmean" style="left:calc(${homeWon?100:0}% - 1px);background:var(--text)"></i>
+      </span><span class="pbval">${pct(p)}</span></div>
+      <div class="pbwho${called?'':' split'}">${called?'':'Upset'}</div></div>
+    <div></div></div>`;
+}
+
+/* ---------------- week picker ---------------- */
+const OPTS = [
+  {id:'live',  label:`Week ${LIVE.week}`},
+  {id:'retro', label:`${RETRO.season} Week ${RETRO.week}`},
+];
+const sel = document.getElementById('wk');
+sel.innerHTML = OPTS.map(o=>`<option value="${o.id}">${o.label}</option>`).join('');
+function render(){
+  const id = sel.value, retro = id==='retro';
+  const ps = retro ? RETRO.players : LIVE.players;
+  const key = retro ? (p=>p.actual) : (p=>p.chalk);
+  document.getElementById('strip').innerHTML =
+    ps.slice().sort((a,b)=>key(b)-key(a)).map(p=>stripRow(p,retro)).join('');
+  document.getElementById('boardtitle').textContent =
+    `Week ${retro ? RETRO.week : LIVE.week} Schedule`;
+  document.getElementById('board').innerHTML = retro
+    ? RETRO.games.slice().sort((a,b)=>Math.abs(.5-b.p_home)-Math.abs(.5-a.p_home)).map(retroRow).join('')
+    : LIVE.games.slice().sort((a,b)=>Math.max(...Object.values(b.lev).map(Math.abs))-Math.max(...Object.values(a.lev).map(Math.abs))).map(gameRow).join('')
+      + LIVE.final.map(finalRow).join('');
+}
+sel.onchange = render; render();
+</script>
