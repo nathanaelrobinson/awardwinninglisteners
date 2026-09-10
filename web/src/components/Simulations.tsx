@@ -49,7 +49,7 @@ export default function Simulations({ myName }: { myName: string }) {
     return () => { alive = false; };
   }, [myName]);
 
-  // Two cohorts, rolled lazily and kept. "Resimulate" starts every season from
+  // Two cohorts, rolled lazily and kept. "Simulate forward" starts every season from
   // today's banked wins; "Still possible" replays the whole season from zero so
   // results have something to rule out. Rolling blocks for a moment, so paint
   // the busy state before starting.
@@ -103,7 +103,7 @@ export default function Simulations({ myName }: { myName: string }) {
 
   const locked = rolled?.playedWeeks ?? 0;
 
-  // Resimulate already starts from banked wins, so its lines need no re-anchoring.
+  // Simulate forward already starts from banked wins; no re-anchoring needed.
   const act = useMemo(() => {
     if (!rolled) return null;
     return { paths: rolled.paths, winner: rolled.winner };
@@ -310,12 +310,12 @@ export default function Simulations({ myName }: { myName: string }) {
     <div className="sim">
       <div className="sim-controls">
         <div className="sim-seg">
-          <button className={view === 'all' ? 'on' : ''} onClick={() => setView('all')}>All five</button>
-          <button className={view === 'margin' ? 'on' : ''} onClick={() => setView('margin')}>Margin</button>
+          <button className={view === 'all' ? 'on' : ''} onClick={() => setView('all')}>All teams</button>
+          <button className={view === 'margin' ? 'on' : ''} onClick={() => setView('margin')}>Single margin</button>
         </div>
         <div className="sim-seg">
-          <button className={mode === 'resim' ? 'on' : ''} onClick={() => setMode('resim')}>Resimulate</button>
-          <button className={mode === 'possible' ? 'on' : ''} onClick={() => setMode('possible')}>Still possible</button>
+          <button className={mode === 'resim' ? 'on' : ''} onClick={() => setMode('resim')}>Simulate forward</button>
+          <button className={mode === 'possible' ? 'on' : ''} onClick={() => setMode('possible')}>Preseason sim</button>
         </div>
         {view === 'margin' && (
           <select value={meIdx} onChange={(e) => setMeIdx(+e.target.value)}>
@@ -326,33 +326,29 @@ export default function Simulations({ myName }: { myName: string }) {
           {COUNTS.map((n) => <option key={n} value={n}>{n.toLocaleString()} sims</option>)}
         </select>
         {busy && <span className="sim-bar"><i style={{ width: `${(done / nSims) * 100}%` }} /></span>}
-        <span className="sim-alive">
-          {mode === 'possible' && rolled && rolled.nAlive < nSims
-            ? <><b>{rolled.nAlive.toLocaleString()}</b> of {nSims.toLocaleString()} still possible</>
-            : <><b>{nSims.toLocaleString()}</b> futures</>}
-        </span>
         <button className="btn" onClick={() => setSeed(Math.floor(Math.random() * 1e9))}>
-          Reroll
+          Resimulate
         </button>
       </div>
 
       {model.played.length > 0 && (
         <p className="sim-note">
-          {model.played.length} game{model.played.length === 1 ? ' is' : 's are'} final.{' '}
+          {model.played.length} game{model.played.length === 1 ? '' : 's'} played.{' '}
           {mode === 'resim'
-            ? `Every one of these ${nSims.toLocaleString()} seasons starts from those results.`
-            : `These ${nSims.toLocaleString()} seasons were rolled before any of them, so results can rule them out.`}
+            ? 'Every simulation starts from the real results.'
+            : rolled
+              ? `${rolled.nAlive.toLocaleString()} of ${nSims.toLocaleString()} preseason simulations are still possible.`
+              : 'These were rolled before week 1, so results can rule them out.'}
         </p>
       )}
-
       <div className="panel">
         <div className="sim-legend">
           <span><i style={{ background: WIN }} />
             {view === 'margin' ? `${model.players[meIdx].split(' ')[0]} wins` : 'this player wins'}</span>
           <span><i style={{ background: CLOUD }} />someone else wins</span>
           {mode === 'possible' && rolled && rolled.nAlive < nSims &&
-            <span><i style={{ background: DEAD }} />ruled out — {(nSims - rolled.nAlive).toLocaleString()}</span>}
-          {locked > 0 && view !== 'margin' && <span><i style={{ background: INK }} />what happened</span>}
+            <span><i style={{ background: DEAD }} />ruled out ({(nSims - rolled.nAlive).toLocaleString()})</span>}
+          {locked > 0 && view !== 'margin' && <span><i style={{ background: INK }} />results so far</span>}
           <span className="sim-hint">
             {busy
               ? `rolling ${(done || 0).toLocaleString()} of ${nSims.toLocaleString()}…`
@@ -446,13 +442,13 @@ function SeasonDetail({ model, rolled, sim, seed, alive }: {
     <div className="panel sim-detail">
       <h2>Simulation #{sim + 1} using {sourceLabel(d.src)} rankings</h2>
       <p className="sim-meta">
-        {d.pre
-          ? <>Rolled from week 1, before anything was played. </>
-          : d.finals > 0 && <><b>{d.finals} already final</b>, banked in. </>}
-        {d.upsets} {d.pre || d.finals === 0 ? 'games were' : 'of the rest were'} upsets.{' '}
+        {d.pre ? 'Rolled before week 1. ' : d.finals > 0 ? `${d.finals} played game${d.finals === 1 ? '' : 's'} locked in. ` : ''}
+        {d.upsets} upsets.{' '}
         {alive
-          ? 'This outcome is still possible.'
-          : `No longer possible${d.conflicts ? `: ${d.conflicts} game${d.conflicts === 1 ? '' : 's'} went the other way.` : '.'}`}
+          ? 'Still possible.'
+          : d.conflicts
+            ? `Ruled out: ${d.conflicts} game${d.conflicts === 1 ? '' : 's'} went the other way.`
+            : 'Ruled out.'}
       </p>
       <div className="sim-owners">
         {d.owners.map((o) => (
@@ -469,14 +465,19 @@ function SeasonDetail({ model, rolled, sim, seed, alive }: {
           </div>
         ))}
       </div>
+      <p className="sim-key">
+        Winner on the left. <b>Dark</b> games have been played, light ones are simulated.{' '}
+        <span className="mk">*</span> means the ratings had the other team ahead.
+      </p>
       <div className={`sim-weeks${lit ? ' dim' : ''}`}>
         {d.weeks.map(([wk, games]) => (
           <div key={wk} className="sim-wk">
             <div className="sim-wk-lab">Wk {wk}</div>
             {games.map((g, i) => (
               <div key={i}
-                   className={`sim-g${g.conflict ? ' conflict' : g.final ? ' final' : ''}${lit && (g.h === lit || g.a === lit) ? ' hit' : ''}`}>
-                <span className={g.upset ? 'w up' : 'w'}>{g.tie ? '—' : g.w}</span>
+                   className={`sim-g${g.final ? ' played' : ''}${g.conflict ? ' conflict' : ''}${lit && (g.h === lit || g.a === lit) ? ' hit' : ''}`}>
+                <span className="mk">{g.upset ? '*' : ''}</span>
+                <span className="w">{g.tie ? 'tie' : g.w}</span>
                 <span className="l">{g.tie ? `${g.h}/${g.a}` : g.l}</span>
               </div>
             ))}

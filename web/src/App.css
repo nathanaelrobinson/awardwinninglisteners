@@ -732,17 +732,21 @@
   text-transform: uppercase; border-bottom: 1px solid var(--border); margin-bottom: 2px;
 }
 .sim-wk-lab span { color: var(--accent); font-weight: 700; }
-.sim-g { display: flex; gap: 5px; }
-.sim-g .w { font-weight: 700; width: 29px; }
-.sim-g .w.up { color: var(--red); }
-.sim-g .l { color: var(--text-dim); width: 29px; }
-.sim-g.locked { background: var(--accent-bg); border-radius: 2px;
-                margin-inline: -4px; padding-inline: 4px; }
-.sim-g.conflict { background: rgba(213, 10, 10, 0.14); border-radius: 2px;
-                  margin-inline: -4px; padding-inline: 4px; }
-.sim-g.final { background: rgba(26, 127, 55, 0.14); border-radius: 2px;
-               margin-inline: -4px; padding-inline: 4px; }
-.sim-g.final .w { color: var(--green); }
+/* The grid's job: which team won, and whether that has actually happened.
+   Weight carries played-vs-simulated; position and weight carry the winner. */
+.sim-g { display: grid; grid-template-columns: 8px 30px 30px; gap: 3px; }
+.sim-g .mk { color: var(--text-dim); opacity: 0.55; }
+.sim-g .w { font-weight: 600; color: #7b8496; }        /* simulated winner */
+.sim-g .l { color: #b7bdc8; }                          /* simulated loser  */
+.sim-g.played .w { font-weight: 700; color: var(--text); }
+.sim-g.played .l { color: var(--text-dim); }
+.sim-g.played .mk { opacity: 0.9; }
+.sim-g.conflict .w { color: var(--red); }
+.sim-key {
+  font-size: 11px; color: var(--text-dim); margin: var(--s4) 0 var(--s1);
+}
+.sim-key b { color: var(--text); }
+.sim-key .mk { font-weight: 700; padding: 0 2px; }
 .sim-weeks.dim .sim-g { opacity: 0.18; }
 .sim-weeks.dim .sim-g.hit { opacity: 1; }
 
