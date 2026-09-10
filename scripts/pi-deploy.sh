@@ -19,11 +19,25 @@ if [[ $EUID -eq 0 && $OWNER != root ]]; then
 fi
 SUDO=""; [[ $EUID -eq 0 ]] || SUDO=sudo
 
+BEFORE_HASH=$(sha256sum "$0")
+
 echo "==> pulling $BRANCH"
 git fetch --quiet origin "$BRANCH"
 git checkout --quiet "$BRANCH"
 git merge --ff-only "origin/$BRANCH"
 echo "    now at $(git rev-parse --short HEAD) $(git log -1 --format=%s)"
+
+# Bash reads this file incrementally as it executes, so a pull that changes
+# this script keeps running the OLD bytes for the rest of the deploy — any
+# step added to the script in the same commit would silently never run (this
+# happened for real: a systemd-unit-install step that never fired). Re-exec
+# the freshly pulled copy so the remaining steps use the new logic. The guard
+# variable stops a second re-exec even if the hash is still different next
+# time, so a bug here fails fast instead of looping forever.
+if [[ "$(sha256sum "$0")" != "$BEFORE_HASH" && -z "${WINSPOOL_DEPLOY_REEXEC:-}" ]]; then
+  echo "==> deploy script changed, re-execing"
+  exec env APP_DIR="$APP_DIR" PORT="$PORT" BRANCH="$BRANCH" WINSPOOL_DEPLOY_REEXEC=1 "$0" "$@"
+fi
 
 echo "==> python deps"
 uv sync --extra dev

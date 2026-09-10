@@ -57,7 +57,11 @@ no manual `systemctl start` of the timers is needed here or after adding one.
 ssh pi '/home/nate/awardwinninglisteners/scripts/pi-deploy.sh'
 ```
 
-Runs as nate (re-execs via sudo if launched as root). Pulls `main`, re-syncs Python deps, rebuilds the front end, installs
+Runs as nate (re-execs via sudo if launched as root). Pulls `main` and, if that
+pull changed `pi-deploy.sh` itself, re-execs the freshly pulled copy — bash
+would otherwise keep running the old script in memory for the rest of the
+deploy, so a step added in the same commit as the pull would silently never
+run. Then it re-syncs Python deps, rebuilds the front end, installs
 every `deploy/pi/*.service` and `*.timer` into `/etc/systemd/system/`, reloads
 systemd, and runs `systemctl enable --now` on every `*.timer` (derived from the
 directory listing, so a newly added timer is picked up with no other change).
