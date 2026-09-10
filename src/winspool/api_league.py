@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 from . import league
 from . import live as _live
 from . import oddslog as _oddslog
+from . import ratingsjob as _ratingsjob
 from . import simmodel as _simmodel
 from . import standings as _standings
 from . import week as _week
@@ -365,4 +366,23 @@ def internal_refresh_odds(x_refresh_token: str | None = Header(default=None)):
     live_written = [n for n in out["written"] if n != "nflverse"]
     if out["errors"] or not live_written:
         return JSONResponse(status_code=503, content={"ok": False, **out})
+    return {"ok": True, **out}
+
+
+@router.post("/internal/refresh-ratings", include_in_schema=False)
+def internal_refresh_ratings(x_refresh_token: str | None = Header(default=None)):
+    _check_refresh_token(x_refresh_token)
+    store = get_store()
+    try:
+        df = _live._load_schedule_cached()
+        out = _ratingsjob.refresh_ratings(store, season=SEASON,
+                                          week=_live.week_of(df))
+    except Exception as e:
+        return JSONResponse(status_code=503, content={"ok": False, "error": str(e)[:200]})
+    aged = _ratingsjob.stale(store)
+    # A stale source means the ensemble is drifting on old information. Fail
+    # loudly so the systemd unit goes red, but keep what DID land.
+    if out["errors"] or aged:
+        return JSONResponse(status_code=503, content={
+            "ok": False, **out, "stale": {k: round(v) for k, v in aged.items()}})
     return {"ok": True, **out}
