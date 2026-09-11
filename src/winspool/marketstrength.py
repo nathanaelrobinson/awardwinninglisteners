@@ -13,7 +13,7 @@ from .gameodds import GameOdds, to_prob
 from .teams import N_TEAMS, resolve
 
 HALF_LIFE_WEEKS = 4.0   # a spread this old counts half as much as last week's
-RIDGE = 1e-3            # base penalty, at a fully connected comparison graph
+RIDGE = 1.0             # base penalty, at a fully connected comparison graph
 SOURCE_ORDER = ("book", "nflverse", "kalshi")
 
 
@@ -75,10 +75,16 @@ def sparsity_ridge(n_games: int, base: float = RIDGE) -> float:
     game's spread with no opponent adjustment at all — yet this is one of five
     equal voices from day one. Shrinking an unidentified estimate toward league
     average is the principled response; a hard games-played gate would instead
-    throw away real market information in the weeks it does exist. The penalty
-    relaxes automatically as the graph connects: 32/16 = 2x base at week 1,
-    down to ~0.2x by week 10, negligible once every team has played everyone
-    it is going to."""
+    throw away real market information in the weeks it does exist.
+
+    Measured, not asserted: with base=RIDGE on a week-1 shape (16 disjoint
+    games, one 7-point favourite each), a favourite's recovered strength is
+    1.750 against a minimum-norm value of 3.500 -- a 50% shrink. At base=1e-3
+    the same shape recovers 3.497, a 0.09% effect: no shrinkage at all, despite
+    what this docstring used to claim. The penalty relaxes automatically as
+    the graph connects -- 32/16 = 2x base at week 1, down to ~0.22x base by
+    week 10 (32/144 games) -- so the shrink that matters at week 1 is already
+    negligible once every team has played everyone it is going to."""
     return float(base) * (N_TEAMS / max(1, int(n_games)))
 
 

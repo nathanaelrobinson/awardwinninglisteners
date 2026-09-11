@@ -1,6 +1,7 @@
 import pytest
 
 from winspool.marketstrength import HALF_LIFE_WEEKS, strength_from_spreads
+from winspool.teams import TEAMS
 
 
 def test_it_recovers_the_strengths_that_generated_the_spreads():
@@ -30,6 +31,43 @@ def test_recent_weeks_outweigh_old_ones():
     got = strength_from_spreads(old + recent, current_week=10,
                                 half_life=HALF_LIFE_WEEKS, ridge=1e-6)
     assert got["BUF"] > got["KC"], "the recent result must dominate"
+
+
+def test_production_ridge_shrinks_when_unidentified_but_not_when_connected():
+    # This is the one test that exercises the production RIDGE constant --
+    # every other test above pins ridge=1e-6 explicitly, which is exactly how
+    # a too-small base ridge went dead without anyone noticing.
+    from winspool.game import HFA
+
+    # Week 1: 16 disjoint games, one 7-point home favourite each. Minimum-norm
+    # (ridge -> 0) hands the favourite half the spread with no opponent
+    # adjustment at all -- this is the under-determined shape the ridge exists
+    # to damp.
+    true = {"home": 3.5, "away": -3.5}
+    sparse_games = []
+    for i in range(16):
+        home, away = TEAMS[2 * i], TEAMS[2 * i + 1]
+        sparse_games.append((home, away, true["away"] - true["home"] - HFA, 1))
+
+    shrunk = strength_from_spreads(sparse_games, current_week=1)
+    unshrunk = strength_from_spreads(sparse_games, current_week=1, ridge=1e-6)
+    favourite = TEAMS[0]
+    assert unshrunk[favourite] == pytest.approx(3.5, abs=0.05)
+    assert abs(shrunk[favourite]) < 0.7 * abs(unshrunk[favourite]), (
+        f"favourite strength should be damped well below minimum-norm when "
+        f"the graph is disjoint: shrunk={shrunk[favourite]} "
+        f"unshrunk={unshrunk[favourite]}")
+
+    # Late season: every team has faced every other team once, so the graph
+    # is fully connected and the same base ridge should barely move anything.
+    dense_games = [(h, a, true["away"] - true["home"] - HFA, 1)
+                   for i, h in enumerate(TEAMS) for a in TEAMS[i + 1:]]
+    dense_shrunk = strength_from_spreads(dense_games, current_week=1)
+    dense_unshrunk = strength_from_spreads(dense_games, current_week=1, ridge=1e-6)
+    assert dense_shrunk[favourite] == pytest.approx(
+        dense_unshrunk[favourite], rel=0.05), (
+        "a densely connected graph should be faithful to the unshrunk fit, "
+        f"got shrunk={dense_shrunk[favourite]} unshrunk={dense_unshrunk[favourite]}")
 
 
 def test_it_recovers_the_strengths_on_an_unbalanced_schedule():
