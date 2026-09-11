@@ -68,7 +68,7 @@ interface DotPlotProps {
   label: string;
 }
 
-interface DotHover { x: number; y: number; title: string; text: string; color: string }
+interface DotHover { id: string; x: number; y: number; title: string; text: string; color: string }
 
 function DotPlot({ rows, voices, colors, lo, hi, ticks, fmt, refName, labelW, maxHeight, label }: DotPlotProps) {
   const [box, w] = useWidth<HTMLDivElement>();
@@ -120,17 +120,28 @@ function DotPlot({ rows, voices, colors, lo, hi, ticks, fmt, refName, labelW, ma
                               fill={colors[v]} stroke="var(--bg-panel)" strokeWidth={2} />
                     );
                   })}
-                  {/* Hit targets last and oversized, so the smallest mark is still easy to hit. */}
-                  {r.ref != null && (
-                    <circle cx={xPx(r.ref)} cy={cy} r={11} fill="transparent"
-                            onMouseEnter={() => setHover({ x: xPx(r.ref as number), y: cy, title: r.label, text: `${refName}: ${fmt(r.ref as number)}`, color: 'var(--text)' })} />
-                  )}
+                  {/* Hit targets last and oversized, so the smallest mark is still easy to hit.
+                      Each clears the tooltip on its own mouseleave (not only the chart's), so
+                      moving into empty plot space between dots drops the tooltip instead of
+                      leaving it stuck on the last mark. Clearing is keyed by id rather than
+                      unconditional, so leaving mark A while already hovering mark B (whichever
+                      order the two events land in) can't clobber B's tooltip with a null. */}
+                  {r.ref != null && (() => {
+                    const id = `ref:${r.key}`;
+                    return (
+                      <circle cx={xPx(r.ref)} cy={cy} r={11} fill="transparent"
+                              onMouseEnter={() => setHover({ id, x: xPx(r.ref as number), y: cy, title: r.label, text: `${refName}: ${fmt(r.ref as number)}`, color: 'var(--text)' })}
+                              onMouseLeave={() => setHover((h) => (h?.id === id ? null : h))} />
+                    );
+                  })()}
                   {voices.map((v) => {
                     const val = r.values[v];
                     if (val == null) return null;
+                    const id = `${v}:${r.key}`;
                     return (
                       <circle key={v} cx={xPx(val)} cy={cy} r={11} fill="transparent"
-                              onMouseEnter={() => setHover({ x: xPx(val), y: cy, title: r.label, text: `${v}: ${fmt(val)}`, color: colors[v] })} />
+                              onMouseEnter={() => setHover({ id, x: xPx(val), y: cy, title: r.label, text: `${v}: ${fmt(val)}`, color: colors[v] })}
+                              onMouseLeave={() => setHover((h) => (h?.id === id ? null : h))} />
                     );
                   })}
                 </g>
@@ -271,8 +282,20 @@ function PwinByWeek({ history, voices, colors, myName }: LineProps) {
             </>
           )}
         </svg>
-        {hi != null && w > 0 && (
-          <div className="viz-tip viz-tip-below" style={{ left: Math.min(Math.max(xPx(hi), 80), Math.max(w - 80, 80)), top: LINE_MT }}>
+        {hi != null && w > 0 && (() => {
+          // Anchor near the top by default, but a tooltip pinned there can sit
+          // on top of whatever is plotted highest that week — worst exactly
+          // when hovering a high-pwin point. Find the highest mark in this
+          // week (blend included) and, if it falls in the upper half of the
+          // plot, hang the tooltip below it instead so it never covers the
+          // point it is describing.
+          const weekVals = [weeks[hi].blend[myName], ...voices.map((v) => valueAt(hi, v))]
+            .filter((v): v is number => v != null);
+          const topY = weekVals.length ? Math.min(...weekVals.map(yPx)) : LINE_MT;
+          const midY = LINE_MT + plotH / 2;
+          const top = topY < midY ? topY + 14 : LINE_MT;
+          return (
+          <div className="viz-tip viz-tip-below" style={{ left: Math.min(Math.max(xPx(hi), 80), Math.max(w - 80, 80)), top }}>
             <div className="viz-tip-title">Week {weeks[hi].week}</div>
             {weeks[hi].blend[myName] != null && (
               <div><span className="viz-swatch viz-swatch-ring" />Blend: {(weeks[hi].blend[myName] * 100).toFixed(1)}%</div>
@@ -287,7 +310,8 @@ function PwinByWeek({ history, voices, colors, myName }: LineProps) {
               );
             })}
           </div>
-        )}
+          );
+        })()}
       </div>
     </div>
   );
