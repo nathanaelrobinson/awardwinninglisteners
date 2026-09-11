@@ -463,6 +463,9 @@
      and is named in the legend rather than inventing a hue. */
   --viz-extra: #8a93a3;
 }
+/* The legend now follows the table it shares a card with, so it needs the gap
+   above that the card's top-of-block spacing used to give it. */
+.admin-card .viz-legend { margin-top: var(--s4); }
 .viz-legend { display: flex; flex-wrap: wrap; gap: var(--s1) var(--s4); margin-bottom: var(--s4); font-size: 12px; color: var(--text); }
 .viz-leg { display: inline-flex; align-items: center; gap: 6px; }
 .viz-swatch { display: inline-block; width: 10px; height: 10px; border-radius: 50%; flex: none; vertical-align: middle; margin-right: 4px; }
@@ -480,4 +483,7 @@
 .viz-tip-title { font-weight: 700; margin-bottom: 3px; }
 .viz-tip-absent { opacity: 0.65; }
 .viz-tip-below { transform: translate(-50%, 0); }
+/* The line chart positions its own top-left corner so the box can follow the
+   crosshair and flip sides; it wants no centring transform of its own. */
+.viz-tip-free { transform: none; }
 .viz-leg .viz-swatch { margin-right: 0; }
