@@ -264,8 +264,6 @@ export default function Admin({ myName }: { myName: string }) {
 
   return (
     <div className="admin">
-      {model && <ModelSection m={model} />}
-      {history && <HistorySection h={history} myName={myName} />}
       <div className="card admin-card">
         <span className="eyebrow">Rating sources</span>
         <div className="admin-sources">
@@ -306,6 +304,8 @@ export default function Admin({ myName }: { myName: string }) {
           ))}
         </div>
       </div>
+      {model && <ModelSection m={model} />}
+      {history && <HistorySection h={history} myName={myName} />}
     </div>
   );
 }
