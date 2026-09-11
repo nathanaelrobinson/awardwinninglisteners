@@ -7,6 +7,10 @@
 import { useEffect, useState } from 'react';
 import type { AdminHealth, AdminHistory, AdminModel } from '../league';
 import { getAdminHealth, getAdminHistory, getAdminModel } from '../league';
+import { allVoices, assignColors } from './viz/palette';
+import VoiceLegend from './viz/VoiceLegend';
+import RowChart, { type RowDatum } from './viz/RowChart';
+import PwinByWeek from './viz/PwinByWeek';
 
 function formatAgo(seconds: number): string {
   const s = Math.max(0, Math.floor(seconds));
@@ -34,16 +38,45 @@ const pct = (p: number) => `${(p * 100).toFixed(1)}%`;
 
 /** What the ensemble computed before it threw the working out away: what each
  *  voice believes on its own, whether season variance was calibrated against
- *  the market, and every team's strength under every voice. */
-function ModelSection({ m }: { m: AdminModel }) {
+ *  the market, and every team's strength under every voice.
+ *
+ *  Each chart sits directly under the table it explains: the numbers are the
+ *  fallback the palette's contrast check relies on, so they stay adjacent. */
+function ModelSection(
+  { m, chartVoices, colors }: { m: AdminModel; chartVoices: string[]; colors: Record<string, string> },
+) {
   const voices = m.sources.map((s) => s.name);
   const players = Object.keys(m.blend_pwin)
     .sort((a, b) => m.blend_pwin[b] - m.blend_pwin[a]);
   const withMeta = m.sources.filter((s) => s.meta != null);
 
+  const playerRows: RowDatum[] = players.map((p) => ({
+    key: p,
+    label: p,
+    values: Object.fromEntries(
+      m.sources.filter((s) => s.pwin[p] != null).map((s) => [s.name, s.pwin[p]]),
+    ),
+    ref: m.blend_pwin[p] ?? null,
+  }));
+
+  const teams = [...m.teams].sort((a, b) => b.consensus - a.consensus);
+  const teamRows: RowDatum[] = teams.map((t) => ({
+    key: t.code,
+    label: t.code,
+    values: t.strength,
+    ref: t.consensus,
+  }));
+  // Strengths are mean-centred, so the axis is centred on zero: a symmetric
+  // domain keeps "left of centre" meaning "below average" for every row.
+  const reach = Math.max(
+    1,
+    ...teams.flatMap((t) => [Math.abs(t.consensus), ...Object.values(t.strength).map(Math.abs)]),
+  );
+  const tReach = Math.ceil(reach / 2) * 2;
+
   return (
     <>
-      <div className="card admin-card">
+      <div className="card admin-card viz">
         <span className="eyebrow">Chance of winning the pool, by rating source</span>
         <div className="admin-scroll">
           <table className="proj-table admin-table">
@@ -72,9 +105,22 @@ function ModelSection({ m }: { m: AdminModel }) {
             ? 'Season variance: calibrated against Kalshi.'
             : `Season variance: NOT calibrated — falling back to base ${m.sigma_base}.`}
         </p>
+        <VoiceLegend voices={chartVoices} colors={colors} refName="Blend" />
+        <RowChart
+          label="Chance of winning the pool, one dot per rating source"
+          rows={playerRows}
+          voices={chartVoices}
+          colors={colors}
+          lo={0}
+          hi={1}
+          ticks={[0, 0.25, 0.5, 0.75, 1]}
+          fmt={(v) => `${Math.round(v * 100)}%`}
+          refName="Blend"
+          labelW={156}
+        />
       </div>
 
-      <div className="card admin-card">
+      <div className="card admin-card viz">
         <span className="eyebrow">Team strength by rating source, on the common scale</span>
         <div className="admin-scroll">
           <table className="proj-table admin-table">
@@ -102,6 +148,24 @@ function ModelSection({ m }: { m: AdminModel }) {
             </tbody>
           </table>
         </div>
+        <VoiceLegend voices={chartVoices} colors={colors} refName="Consensus" />
+        {/* Sigma is in the table above but deliberately not on this chart: the
+            range line is the spread between voices, and drawing season outcome
+            variance the same way would conflate two unrelated facts. */}
+        <RowChart
+          variant="forest"
+          label="Team strength on the common scale, range of the rating sources"
+          rows={teamRows}
+          voices={chartVoices}
+          colors={colors}
+          lo={-tReach}
+          hi={tReach}
+          ticks={[-tReach, -tReach / 2, 0, tReach / 2, tReach]}
+          fmt={(v) => v.toFixed(0)}
+          refName="Consensus"
+          labelW={54}
+          maxHeight={420}
+        />
       </div>
 
       {withMeta.length > 0 && (
@@ -132,7 +196,10 @@ function ModelSection({ m }: { m: AdminModel }) {
  *  documents, so it can show a week with fewer voices than exist today —
  *  a source outage genuinely happened, and that week's row must show only
  *  the voices it actually recorded, not a zero for the ones it lacks. */
-function HistorySection({ h, myName }: { h: AdminHistory; myName: string }) {
+function HistorySection(
+  { h, myName, chartVoices, colors }:
+  { h: AdminHistory; myName: string; chartVoices: string[]; colors: Record<string, string> },
+) {
   const weeks = h.weeks;
   // Union of voices across all weeks, so an outage week simply contributes
   // no column-value for the voices it's missing, rather than every week
@@ -142,7 +209,7 @@ function HistorySection({ h, myName }: { h: AdminHistory; myName: string }) {
 
   return (
     <>
-      <div className="card admin-card">
+      <div className="card admin-card viz">
         <span className="eyebrow">Chance of winning the pool by week, for {myName || 'the viewing commissioner'}</span>
         <div className="admin-scroll">
           <table className="proj-table admin-table">
@@ -174,6 +241,8 @@ function HistorySection({ h, myName }: { h: AdminHistory; myName: string }) {
             </tbody>
           </table>
         </div>
+        <VoiceLegend voices={chartVoices} colors={colors} refName="Blend" />
+        <PwinByWeek history={h} voices={chartVoices} colors={colors} myName={myName} />
       </div>
 
       <div className="card admin-card">
@@ -262,6 +331,12 @@ export default function Admin({ myName }: { myName: string }) {
   if (error) return <div className="card"><span className="eyebrow">Admin</span><p>{error}</p></div>;
   if (!data) return null;
 
+  // One colour map for every chart on the tab, built from the union of voices
+  // the model and the history know about, so a voice keeps its colour in a
+  // week where its neighbours are missing.
+  const chartVoices = allVoices(model, history);
+  const colors = assignColors(chartVoices);
+
   return (
     <div className="admin">
       <div className="card admin-card">
@@ -304,8 +379,8 @@ export default function Admin({ myName }: { myName: string }) {
           ))}
         </div>
       </div>
-      {model && <ModelSection m={model} />}
-      {history && <HistorySection h={history} myName={myName} />}
+      {model && <ModelSection m={model} chartVoices={chartVoices} colors={colors} />}
+      {history && <HistorySection h={history} myName={myName} chartVoices={chartVoices} colors={colors} />}
     </div>
   );
 }

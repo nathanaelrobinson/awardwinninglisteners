@@ -449,3 +449,41 @@
 .admin-run-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
 .admin-run-ok { background: var(--green); }
 .admin-run-fail { background: var(--red); }
+
+/* ---------- admin charts ---------- */
+/* Five categorical slots, validated for CVD separation. Assigned by sorted
+   voice name in VoiceCharts.tsx so colour follows the voice, not its row. */
+.viz {
+  --viz-1: #2a78d6;
+  --viz-2: #eb6834;
+  --viz-3: #1baf7a;
+  --viz-4: #eda100;
+  --viz-5: #e87ba4;
+  /* A sixth voice would be an ensemble change, not a palette one: it goes grey
+     and is named in the legend rather than inventing a hue. */
+  --viz-extra: #8a93a3;
+}
+/* The legend now follows the table it shares a card with, so it needs the gap
+   above that the card's top-of-block spacing used to give it. */
+.admin-card .viz-legend { margin-top: var(--s4); }
+.viz-legend { display: flex; flex-wrap: wrap; gap: var(--s1) var(--s4); margin-bottom: var(--s4); font-size: 12px; color: var(--text); }
+.viz-leg { display: inline-flex; align-items: center; gap: 6px; }
+.viz-swatch { display: inline-block; width: 10px; height: 10px; border-radius: 50%; flex: none; vertical-align: middle; margin-right: 4px; }
+.viz-swatch-ring { background: transparent; box-shadow: inset 0 0 0 2px currentColor; }
+.viz-block + .viz-block { margin-top: var(--s5); }
+.viz-sub { font-size: 13px; font-weight: 700; color: var(--text); margin-bottom: var(--s2); }
+.viz-axis { display: block; }
+.viz-scroll { overscroll-behavior: contain; }
+.viz-rowlabel { font-variant-numeric: tabular-nums; }
+.viz-tip {
+  position: absolute; transform: translate(-50%, -100%);
+  background: var(--navy); border-radius: 6px; padding: 6px 8px;
+  font-size: 11px; color: #ffffff; pointer-events: none; white-space: nowrap; z-index: 5;
+}
+.viz-tip-title { font-weight: 700; margin-bottom: 3px; }
+.viz-tip-absent { opacity: 0.65; }
+.viz-tip-below { transform: translate(-50%, 0); }
+/* The line chart positions its own top-left corner so the box can follow the
+   crosshair and flip sides; it wants no centring transform of its own. */
+.viz-tip-free { transform: none; }
+.viz-leg .viz-swatch { margin-right: 0; }
