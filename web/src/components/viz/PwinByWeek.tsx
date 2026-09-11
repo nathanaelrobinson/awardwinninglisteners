@@ -153,9 +153,11 @@ export default function PwinByWeek({ history, voices, colors, myName }: LineProp
           // side that has room, so it cannot run off the container.
           const cx = xPx(cur.i);
           const roomRight = w - cx - TIP_GAP;
-          const left = roomRight >= tipBox.w || roomRight >= cx - TIP_GAP
+          const side = roomRight >= tipBox.w || roomRight >= cx - TIP_GAP
             ? cx + TIP_GAP
             : cx - TIP_GAP - tipBox.w;
+          // Narrower than the box on both sides: keep it inside the container.
+          const left = Math.min(Math.max(side, 2), Math.max(w - tipBox.w - 2, 2));
           const top = Math.min(Math.max(cur.y - tipBox.h / 2, 2), Math.max(LINE_H - tipBox.h - 2, 2));
           return (
             <div ref={tipRef} className="viz-tip viz-tip-free" style={{ left, top }}>
