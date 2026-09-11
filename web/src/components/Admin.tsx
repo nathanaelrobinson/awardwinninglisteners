@@ -7,6 +7,7 @@
 import { useEffect, useState } from 'react';
 import type { AdminHealth, AdminHistory, AdminModel } from '../league';
 import { getAdminHealth, getAdminHistory, getAdminModel } from '../league';
+import VoiceCharts from './VoiceCharts';
 
 function formatAgo(seconds: number): string {
   const s = Math.max(0, Math.floor(seconds));
@@ -304,6 +305,7 @@ export default function Admin({ myName }: { myName: string }) {
           ))}
         </div>
       </div>
+      {model && <VoiceCharts m={model} h={history} myName={myName} />}
       {model && <ModelSection m={model} />}
       {history && <HistorySection h={history} myName={myName} />}
     </div>
