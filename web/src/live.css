@@ -437,3 +437,10 @@
 .admin-stale .admin-status { color: var(--red); font-weight: 700; }
 .admin-stale .admin-name { color: var(--red); }
 .admin-stale .admin-error { color: var(--red); }
+/* Model internals: many voices wide, so the tables scroll rather than squeeze. */
+.admin-scroll { overflow-x: auto; }
+.admin-table { width: 100%; }
+.admin-table th { text-transform: none; letter-spacing: normal; font-size: 12px; }
+.admin-blend { font-weight: 700; }
+.admin-sigma { margin: var(--s3) 0 0; font-size: 13px; color: var(--text-dim); }
+.admin-sigma-bad { color: var(--red); font-weight: 700; }

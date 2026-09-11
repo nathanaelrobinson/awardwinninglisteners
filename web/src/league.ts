@@ -147,3 +147,22 @@ export interface AdminSource {
 export interface AdminJob { name: string; at: number | null }
 export interface AdminHealth { sources: AdminSource[]; jobs: AdminJob[] }
 export const getAdminHealth = () => call<AdminHealth>('/api/admin/health');
+
+export interface AdminModelSource {
+  name: string; fetched_at: number | null; n_teams: number;
+  /** P(win pool) per player under this voice alone; empty if the live doc predates it. */
+  pwin: Record<string, number>;
+  meta: Record<string, number | string> | null;
+}
+export interface AdminModelTeam {
+  code: string; consensus: number; sigma: number;
+  /** Kalshi's implied per-team win SD; null where the market has no line. */
+  target_sd: number | null;
+  strength: Record<string, number>;
+}
+export interface AdminModel {
+  week: number | null; sources: AdminModelSource[];
+  blend_pwin: Record<string, number>; teams: AdminModelTeam[];
+  sigma_calibrated: boolean; sigma_base: number;
+}
+export const getAdminModel = () => call<AdminModel>('/api/admin/model');

@@ -8,6 +8,7 @@ import os
 import sys
 import time
 from datetime import datetime, timezone
+from typing import NamedTuple
 
 import numpy as np
 import pandas as pd
@@ -97,11 +98,23 @@ def ratings_stamp(store) -> float | None:
     return max(stamps) if stamps else None
 
 
+class Ensemble(NamedTuple):
+    """What the blend is built from. `sigma_calibrated` says whether
+    calibrate_sigma actually ran; the market's target SDs and that flag are
+    bookkeeping the projection itself never needs, but the operator view does —
+    and reading them back from here is the only way it cannot disagree with
+    what the model did."""
+    sources: dict
+    sigma: np.ndarray
+    target_sd: np.ndarray
+    sigma_calibrated: bool
+
+
 def _ensemble(totals_path, power_path, kalshi_dist_path, full_home, full_away, seed=0,
-              store=None):
-    """(sources, sigma_full): the same voices and the same Kalshi-calibrated
-    per-team season sigma that Draft Review's pre-season build uses
-    (recommend.build_wins), so the live model agrees with it before kickoff.
+              store=None) -> Ensemble:
+    """The same voices and the same Kalshi-calibrated per-team season sigma that
+    Draft Review's pre-season build uses (recommend.build_wins), so the live
+    model agrees with it before kickoff.
     Memoised on the ratings' freshness — the backouts and the calibration each
     take seconds, and only a refresh should invalidate them."""
     key = ((ratings_stamp(store),) if store is not None
@@ -114,11 +127,12 @@ def _ensemble(totals_path, power_path, kalshi_dist_path, full_home, full_away, s
                                                kalshi_dist_path, store=store)
         strengths, _ = ensemble(sources, base_sigma=BASE_SIGMA, spread_k=SPREAD_K)
         sigma = np.full(N_TEAMS, BASE_SIGMA)
-        if len(sources) > 1 and np.any(~np.isnan(target_sd)):
+        calibrated = len(sources) > 1 and bool(np.any(~np.isnan(target_sd)))
+        if calibrated:
             sigma = np.asarray(calibrate_sigma(strengths, full_home, full_away, target_sd,
                                                sigma_ref=BASE_SIGMA, tie_base=TIE_BASE,
                                                seed=seed), dtype=float)
-        _ENSEMBLE_CACHE[key] = (sources, sigma)
+        _ENSEMBLE_CACHE[key] = Ensemble(sources, sigma, target_sd, calibrated)
     return _ENSEMBLE_CACHE[key]
 
 
@@ -131,8 +145,9 @@ def source_matrix(totals_path, power_path, kalshi_dist_path, full_home, full_awa
     pre-season totals stop updating once the season starts. They are now fetched
     daily from a live futures market, so there is no staleness left to discount
     and no source outranks another until calibration says otherwise."""
-    sources, sigma_full = _ensemble(totals_path, power_path, kalshi_dist_path,
-                                    full_home, full_away, store=store)
+    ens = _ensemble(totals_path, power_path, kalshi_dist_path,
+                    full_home, full_away, store=store)
+    sources, sigma_full = ens.sources, ens.sigma
     names = list(sources)
     matrix = to_common_scale(sources)
     w = np.ones(len(names))

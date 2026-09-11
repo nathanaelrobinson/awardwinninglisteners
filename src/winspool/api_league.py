@@ -19,7 +19,7 @@ from . import week as _week
 from .auth import current_user, require_commissioner, set_cookie, viewer
 from .league import LeagueError
 from .store import get_store
-from .teams import resolve
+from .teams import TEAM_INDEX, TEAMS, resolve
 from .throttle import Throttle
 
 router = APIRouter()
@@ -417,3 +417,67 @@ def admin_health(_: str = Depends(require_commissioner)):
     jobs = [{"name": "live", "at": live_doc.get("computed_at")},
             {"name": "standings", "at": standings.get("fetched_at")}]
     return {"sources": sources, "jobs": jobs}
+
+
+@router.get("/api/admin/model")
+def admin_model(_: str = Depends(require_commissioner)):
+    """What the ensemble computed on its way to the projection: each voice's
+    team strengths on the common scale, the consensus, per-team season sigma,
+    and whether that sigma was calibrated against the market.
+
+    Nothing here is recomputed — the ensemble is memoised on ratings freshness,
+    so this reads back the very objects the live doc was built from. When a
+    source fails to store, sigma silently falls back to BASE_SIGMA and the
+    projection goes wrong in its spread rather than its centre; the
+    `sigma_calibrated` flag comes out of the branch that makes that decision,
+    so this view cannot disagree with what the model actually did."""
+    from .ratings import to_common_scale
+    store = get_store()
+    live_doc = _store_read(store.get_live)
+    if not live_doc:
+        raise HTTPException(503, "no live projection yet")
+    latest = _store_read(store.latest_ratings)
+    if not latest:
+        raise HTTPException(503, "no ratings stored")
+    try:
+        df = _live._load_schedule_cached()
+    except Exception:
+        raise HTTPException(503, "schedule unavailable")
+    reg = df[df["game_type"].str.upper() == "REG"]
+    full_home = reg["home_team"].map(TEAM_INDEX).to_numpy(dtype=int)
+    full_away = reg["away_team"].map(TEAM_INDEX).to_numpy(dtype=int)
+    matrix, weights, names, sigma = _live.source_matrix(
+        None, None, None, full_home, full_away, store=store)
+    ens = _live._ensemble(None, None, None, full_home, full_away, store=store)
+    strength = _live.consensus(matrix, weights)
+
+    views = live_doc.get("views") or {}
+
+    def pwin_of(view_name):
+        return {r["player"]: r["pwin"] for r in views.get(view_name) or []}
+
+    sources = []
+    for name in names:
+        row = latest.get(name)
+        doc = (row or {}).get("doc") or {}
+        sources.append({"name": name,
+                        "fetched_at": None if row is None else float(row["fetched_at"]),
+                        "n_teams": len(_ratingsjob.team_entries(doc)),
+                        "pwin": pwin_of(name),
+                        "meta": doc.get("__meta__")})
+    teams = [{"code": code,
+              "consensus": round(float(strength[i]), 3),
+              "sigma": round(float(sigma[i]), 3),
+              # NaN is "the market never quoted this team", which JSON cannot
+              # carry and the UI must be able to tell from a real zero.
+              "target_sd": (None if math.isnan(float(ens.target_sd[i]))
+                            else round(float(ens.target_sd[i]), 3)),
+              "strength": {n: round(float(matrix[j][i]), 3) for j, n in enumerate(names)}}
+             for i, code in enumerate(TEAMS)]
+    teams.sort(key=lambda t: t["consensus"], reverse=True)
+    return {"week": live_doc.get("week"),
+            "sources": sources,
+            "blend_pwin": pwin_of("blend"),
+            "teams": teams,
+            "sigma_calibrated": bool(ens.sigma_calibrated),
+            "sigma_base": _live.BASE_SIGMA}

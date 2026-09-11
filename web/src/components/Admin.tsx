@@ -5,8 +5,8 @@
 // board's terse-copy rule — it's read by one person trying to work out
 // whether something is broken, so it spells things out.
 import { useEffect, useState } from 'react';
-import type { AdminHealth } from '../league';
-import { getAdminHealth } from '../league';
+import type { AdminHealth, AdminModel } from '../league';
+import { getAdminHealth, getAdminModel } from '../league';
 
 function formatAgo(seconds: number): string {
   const s = Math.max(0, Math.floor(seconds));
@@ -30,8 +30,106 @@ function formatLimit(seconds: number): string {
   return `${d}d`;
 }
 
+const pct = (p: number) => `${(p * 100).toFixed(1)}%`;
+
+/** What the ensemble computed before it threw the working out away: what each
+ *  voice believes on its own, whether season variance was calibrated against
+ *  the market, and every team's strength under every voice. */
+function ModelSection({ m }: { m: AdminModel }) {
+  const voices = m.sources.map((s) => s.name);
+  const players = Object.keys(m.blend_pwin)
+    .sort((a, b) => m.blend_pwin[b] - m.blend_pwin[a]);
+  const withMeta = m.sources.filter((s) => s.meta != null);
+
+  return (
+    <>
+      <div className="card admin-card">
+        <span className="eyebrow">Chance of winning the pool, by rating source</span>
+        <div className="admin-scroll">
+          <table className="proj-table admin-table">
+            <thead>
+              <tr>
+                <th>Player</th>
+                <th>Blend</th>
+                {voices.map((v) => <th key={v}>{v}</th>)}
+              </tr>
+            </thead>
+            <tbody>
+              {players.map((p) => (
+                <tr key={p}>
+                  <td>{p}</td>
+                  <td className="admin-blend">{pct(m.blend_pwin[p])}</td>
+                  {m.sources.map((s) => (
+                    <td key={s.name}>{s.pwin[p] == null ? '—' : pct(s.pwin[p])}</td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <p className={`admin-sigma${m.sigma_calibrated ? '' : ' admin-sigma-bad'}`}>
+          {m.sigma_calibrated
+            ? 'Season variance: calibrated against Kalshi.'
+            : `Season variance: NOT calibrated — falling back to base ${m.sigma_base}.`}
+        </p>
+      </div>
+
+      <div className="card admin-card">
+        <span className="eyebrow">Team strength by rating source, on the common scale</span>
+        <div className="admin-scroll">
+          <table className="proj-table admin-table">
+            <thead>
+              <tr>
+                <th>Team</th>
+                {voices.map((v) => <th key={v}>{v}</th>)}
+                <th>Consensus</th>
+                <th>Sigma</th>
+                <th>Market SD</th>
+              </tr>
+            </thead>
+            <tbody>
+              {m.teams.map((t) => (
+                <tr key={t.code}>
+                  <td>{t.code}</td>
+                  {voices.map((v) => (
+                    <td key={v}>{t.strength[v] == null ? '—' : t.strength[v].toFixed(2)}</td>
+                  ))}
+                  <td className="admin-blend">{t.consensus.toFixed(2)}</td>
+                  <td>{t.sigma.toFixed(2)}</td>
+                  <td>{t.target_sd == null ? '—' : t.target_sd.toFixed(2)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      {withMeta.length > 0 && (
+        <div className="card admin-card">
+          <span className="eyebrow">What each source recorded about itself</span>
+          <div className="admin-sources">
+            {withMeta.map((s) => (
+              <div key={s.name} className="admin-row">
+                <div className="admin-row-main">
+                  <span className="admin-name">{s.name}</span>
+                  <span className="admin-status">
+                    {Object.entries(s.meta ?? {})
+                      .map(([k, v]) => `${k}: ${v}`)
+                      .join(', ')}
+                  </span>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
 export default function Admin() {
   const [data, setData] = useState<AdminHealth | null>(null);
+  const [model, setModel] = useState<AdminModel | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -44,6 +142,14 @@ export default function Admin() {
       } catch {
         if (alive) setError('Could not load admin health.');
       }
+      // The model view needs a live projection; before the first refresh of the
+      // season there isn't one, and that is not an error worth shouting about.
+      try {
+        const m = await getAdminModel();
+        if (alive) setModel(m);
+      } catch {
+        if (alive) setModel(null);
+      }
       if (alive) timer = window.setTimeout(tick, 60_000);
     };
     tick();
@@ -55,6 +161,7 @@ export default function Admin() {
 
   return (
     <div className="admin">
+      {model && <ModelSection m={model} />}
       <div className="card admin-card">
         <span className="eyebrow">Rating sources</span>
         <div className="admin-sources">
