@@ -112,7 +112,7 @@ export default function App() {
           {tab === 'week' && <Week myName={me?.name ?? ''} />}
           {tab === 'standings' && <Standings me={me} view={view} />}
           {tab === 'simulations' && <Simulations myName={me?.name ?? ''} />}
-          {tab === 'admin' && <Admin />}
+          {tab === 'admin' && <Admin myName={me?.name ?? ''} />}
         </main>
       )}
       {tab === 'practice' && <Practice />}

@@ -840,3 +840,51 @@ def test_refresh_odds_goes_red_unless_a_live_source_wrote(api, store, monkeypatc
     # even with no error recorded, a baseline-only write is not a success
     _returns({"season": 2026, "week": 1, "errors": {}, "written": {"nflverse": 2}})
     assert api.post("/internal/refresh-odds", headers=hdr).status_code == 503
+
+
+def test_admin_model_sigma_calibration_follows_the_market_source(api, store, live_env):
+    """The day the Kalshi row failed to store, per-team sigma fell back to
+    BASE_SIGMA and the projection went wrong in its spread rather than its
+    centre, with nothing anywhere saying so. This is the fact that pins it."""
+    from winspool.fetch.kalshi import MAX_WINS
+    _complete_draft(api, store)
+    assert api.post("/internal/refresh-live",
+                    headers={"X-Refresh-Token": "tok"}).status_code == 200
+    c, _ = login(api, "Nate Robinson")
+
+    body = c.get("/api/admin/model").json()
+    assert body["sigma_calibrated"] is False
+    assert all(t["target_sd"] is None for t in body["teams"])
+    assert all(t["sigma"] == body["sigma_base"] for t in body["teams"])
+
+    pmf = [0.0] * (MAX_WINS + 1)
+    pmf[6], pmf[8], pmf[10] = 0.25, 0.5, 0.25
+    store.add_rating({"source": "kalshi", "kind": "distribution", "ok": True,
+                      "fetched_at": 1_800_000_000.0, "doc": {t: pmf for t in TEAMS}})
+
+    body = c.get("/api/admin/model").json()
+    assert body["sigma_calibrated"] is True
+    assert all(t["target_sd"] is not None for t in body["teams"])
+
+
+def test_admin_history_reports_only_the_voices_a_weeks_document_actually_has(api, store, live_env):
+    """The `weeks` table can hold a week recorded while a source was down,
+    with fewer voices than today's five-source ensemble. That week must come
+    back with exactly the voices its own document has — not padded with 0.0
+    (a real pwin) and not silently dropped or crashed on."""
+    _complete_draft(api, store)
+    assert api.post("/internal/refresh-live",
+                    headers={"X-Refresh-Token": "tok"}).status_code == 200
+    full = store.list_weeks()[0]
+    assert set(full["views"]) == {"blend", "covers", "fpi", "sagarin", "massey"}
+    # Simulate the outage: overwrite the stored week with only two voices.
+    outage = dict(full)
+    outage["views"] = {"blend": full["views"]["blend"], "covers": full["views"]["covers"]}
+    store.put_week(full["week"], outage)
+
+    c, _ = login(api, "Nate Robinson")
+    body = c.get("/api/admin/history").json()
+    week = next(w for w in body["weeks"] if w["week"] == full["week"])
+    assert set(week["views"]) == {"covers"}
+    assert "fpi" not in week["views"] and "sagarin" not in week["views"] \
+        and "massey" not in week["views"]
