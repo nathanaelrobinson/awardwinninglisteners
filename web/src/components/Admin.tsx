@@ -5,8 +5,8 @@
 // board's terse-copy rule — it's read by one person trying to work out
 // whether something is broken, so it spells things out.
 import { useEffect, useState } from 'react';
-import type { AdminHealth, AdminModel } from '../league';
-import { getAdminHealth, getAdminModel } from '../league';
+import type { AdminHealth, AdminHistory, AdminModel } from '../league';
+import { getAdminHealth, getAdminHistory, getAdminModel } from '../league';
 
 function formatAgo(seconds: number): string {
   const s = Math.max(0, Math.floor(seconds));
@@ -127,9 +127,106 @@ function ModelSection({ m }: { m: AdminModel }) {
   );
 }
 
-export default function Admin() {
+/** How each voice's view of the pool has moved week over week, and how each
+ *  source's fetches have held up over time. Built purely from stored
+ *  documents, so it can show a week with fewer voices than exist today —
+ *  a source outage genuinely happened, and that week's row must show only
+ *  the voices it actually recorded, not a zero for the ones it lacks. */
+function HistorySection({ h, myName }: { h: AdminHistory; myName: string }) {
+  const weeks = h.weeks;
+  // Union of voices across all weeks, so an outage week simply contributes
+  // no column-value for the voices it's missing, rather than every week
+  // being forced onto today's roster.
+  const voices = Array.from(new Set(weeks.flatMap((w) => Object.keys(w.views)))).sort();
+  const withMeta = h.sources.filter((s) => s.points.some((p) => p.meta != null));
+
+  return (
+    <>
+      <div className="card admin-card">
+        <span className="eyebrow">Chance of winning the pool by week, for {myName || 'the viewing commissioner'}</span>
+        <div className="admin-scroll">
+          <table className="proj-table admin-table">
+            <thead>
+              <tr>
+                <th>Voice</th>
+                {weeks.map((w) => <th key={w.week}>Week {w.week}</th>)}
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td className="admin-blend">Blend</td>
+                {weeks.map((w) => (
+                  <td key={w.week} className="admin-blend">
+                    {w.blend[myName] == null ? '—' : pct(w.blend[myName])}
+                  </td>
+                ))}
+              </tr>
+              {voices.map((v) => (
+                <tr key={v}>
+                  <td>{v}</td>
+                  {weeks.map((w) => (
+                    <td key={w.week}>
+                      {w.views[v]?.[myName] == null ? '—' : pct(w.views[v][myName])}
+                    </td>
+                  ))}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div className="card admin-card">
+        <span className="eyebrow">Source freshness history</span>
+        <div className="admin-sources">
+          {h.sources.map((s) => (
+            <div key={s.name} className="admin-row">
+              <div className="admin-row-main">
+                <span className="admin-name">{s.name}</span>
+                <span className="admin-status">
+                  {s.points.length === 0 ? 'No fetches recorded yet' : `${s.points.length} most recent fetches, oldest to newest`}
+                </span>
+              </div>
+              <div className="admin-run">
+                {s.points.map((p, i) => (
+                  <span key={i}
+                        className={`admin-run-dot ${p.ok ? 'admin-run-ok' : 'admin-run-fail'}`}
+                        title={`${p.ok ? 'Succeeded' : 'Failed'} ${formatAgo(Date.now() / 1000 - p.fetched_at)}`} />
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      {withMeta.length > 0 && (
+        <div className="card admin-card">
+          <span className="eyebrow">Latest recorded detail per source</span>
+          <div className="admin-sources">
+            {withMeta.map((s) => {
+              const latest = [...s.points].reverse().find((p) => p.meta != null);
+              return (
+                <div key={s.name} className="admin-row">
+                  <div className="admin-row-main">
+                    <span className="admin-name">{s.name}</span>
+                    <span className="admin-status">
+                      {Object.entries(latest?.meta ?? {}).map(([k, v]) => `${k}: ${v}`).join(', ')}
+                    </span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
+export default function Admin({ myName }: { myName: string }) {
   const [data, setData] = useState<AdminHealth | null>(null);
   const [model, setModel] = useState<AdminModel | null>(null);
+  const [history, setHistory] = useState<AdminHistory | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -150,6 +247,12 @@ export default function Admin() {
       } catch {
         if (alive) setModel(null);
       }
+      try {
+        const h = await getAdminHistory();
+        if (alive) setHistory(h);
+      } catch {
+        if (alive) setHistory(null);
+      }
       if (alive) timer = window.setTimeout(tick, 60_000);
     };
     tick();
@@ -162,6 +265,7 @@ export default function Admin() {
   return (
     <div className="admin">
       {model && <ModelSection m={model} />}
+      {history && <HistorySection h={history} myName={myName} />}
       <div className="card admin-card">
         <span className="eyebrow">Rating sources</span>
         <div className="admin-sources">

@@ -481,3 +481,45 @@ def admin_model(_: str = Depends(require_commissioner)):
             "teams": teams,
             "sigma_calibrated": bool(ens.sigma_calibrated),
             "sigma_base": _live.BASE_SIGMA}
+
+
+HISTORY_POINTS_CAP = 50
+
+
+@router.get("/api/admin/history")
+def admin_history(_: str = Depends(require_commissioner)):
+    """How each voice's view of the pool has moved week over week, and how
+    each source's fetches have held up over time.
+
+    Nothing is recomputed: each week is read back exactly as its document was
+    first written, so this shows what we believed at the time, not a replay
+    with hindsight. The set of voices in `views` is whatever that particular
+    week's document happens to hold — an outage can leave a week with fewer
+    voices than the ensemble has today — so a voice missing from a week is
+    left out of that week's dict entirely rather than padded with a 0.0,
+    which would misrepresent a real pwin as a missing one.
+    """
+    store = get_store()
+
+    def pwin_map(rows):
+        return {r["player"]: r["pwin"] for r in rows}
+
+    weeks = []
+    for w in _store_read(store.list_weeks):
+        views = dict(w.get("views") or {})
+        views.pop("blend", None)  # reported separately, below
+        weeks.append({"week": w["week"],
+                      "blend": pwin_map(w["rows"]),
+                      "views": {name: pwin_map(rows) for name, rows in views.items()}})
+
+    sources = []
+    for name in _ratingsjob.MAX_AGE_S:
+        hist = store.ratings_history(name)
+        # Most recent 50 fetches only, so the payload can't grow without
+        # bound as a season's worth of scheduled fetches piles up.
+        points = [{"fetched_at": float(r["fetched_at"]), "ok": r["ok"],
+                   "meta": (r["doc"] or {}).get("__meta__")}
+                  for r in hist[-HISTORY_POINTS_CAP:]]
+        sources.append({"name": name, "points": points})
+
+    return {"weeks": weeks, "sources": sources}

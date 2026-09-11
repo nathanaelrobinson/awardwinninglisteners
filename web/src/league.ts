@@ -166,3 +166,16 @@ export interface AdminModel {
   sigma_calibrated: boolean; sigma_base: number;
 }
 export const getAdminModel = () => call<AdminModel>('/api/admin/model');
+
+export interface AdminHistoryWeek {
+  week: number; blend: Record<string, number>;
+  /** Per voice, only the voices that week's stored document actually has. */
+  views: Record<string, Record<string, number>>;
+}
+export interface AdminHistoryPoint {
+  fetched_at: number; ok: boolean;
+  meta: Record<string, number | string> | null;
+}
+export interface AdminHistorySource { name: string; points: AdminHistoryPoint[] }
+export interface AdminHistory { weeks: AdminHistoryWeek[]; sources: AdminHistorySource[] }
+export const getAdminHistory = () => call<AdminHistory>('/api/admin/history');

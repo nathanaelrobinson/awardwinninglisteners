@@ -865,3 +865,26 @@ def test_admin_model_sigma_calibration_follows_the_market_source(api, store, liv
     body = c.get("/api/admin/model").json()
     assert body["sigma_calibrated"] is True
     assert all(t["target_sd"] is not None for t in body["teams"])
+
+
+def test_admin_history_reports_only_the_voices_a_weeks_document_actually_has(api, store, live_env):
+    """The `weeks` table can hold a week recorded while a source was down,
+    with fewer voices than today's five-source ensemble. That week must come
+    back with exactly the voices its own document has — not padded with 0.0
+    (a real pwin) and not silently dropped or crashed on."""
+    _complete_draft(api, store)
+    assert api.post("/internal/refresh-live",
+                    headers={"X-Refresh-Token": "tok"}).status_code == 200
+    full = store.list_weeks()[0]
+    assert set(full["views"]) == {"blend", "covers", "fpi", "sagarin", "massey"}
+    # Simulate the outage: overwrite the stored week with only two voices.
+    outage = dict(full)
+    outage["views"] = {"blend": full["views"]["blend"], "covers": full["views"]["covers"]}
+    store.put_week(full["week"], outage)
+
+    c, _ = login(api, "Nate Robinson")
+    body = c.get("/api/admin/history").json()
+    week = next(w for w in body["weeks"] if w["week"] == full["week"])
+    assert set(week["views"]) == {"covers"}
+    assert "fpi" not in week["views"] and "sagarin" not in week["views"] \
+        and "massey" not in week["views"]

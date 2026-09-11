@@ -444,3 +444,8 @@
 .admin-blend { font-weight: 700; }
 .admin-sigma { margin: var(--s3) 0 0; font-size: 13px; color: var(--text-dim); }
 .admin-sigma-bad { color: var(--red); font-weight: 700; }
+
+.admin-run { display: flex; flex-wrap: wrap; gap: 3px; margin-top: var(--s2); }
+.admin-run-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+.admin-run-ok { background: var(--green); }
+.admin-run-fail { background: var(--red); }
