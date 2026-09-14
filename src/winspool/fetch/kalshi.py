@@ -22,7 +22,20 @@ TIMEOUT = 30
 
 
 def _price(m):
-    """Usable yes-price for a rung: bid/ask mid when present, else last."""
+    """Usable yes-price for a rung.
+
+    A finalized contract is settled: yes is 1.0, no is 0.0. Kalshi leaves
+    those quoted at bid 0 / ask 1, and the mid of that empty book is 0.5 —
+    which is how every team that had already won a game got a 50% chance of
+    finishing 0-17. Unsettled rungs still use the bid/ask mid, else last.
+    """
+    if m.get("status") == "finalized":
+        result = m.get("result")
+        if result == "yes":
+            return 1.0
+        if result == "no":
+            return 0.0
+        raise ValueError(f"finalized kalshi market has result {result!r}")
     def f(x):
         try:
             return float(x)
