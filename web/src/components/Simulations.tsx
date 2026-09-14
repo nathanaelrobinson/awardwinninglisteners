@@ -5,7 +5,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getSimModel } from '../league';
 import type { Rolled, SimModel } from '../sim';
-import { rollAll, rollSeason, sourceLabel } from '../sim';
+import { rollAll, rollSeason, sourceLabel, finishedFirst } from '../sim';
 import type { RollRequest, RollResponse } from '../sim.worker';
 
 type View = 'all' | 'margin';
@@ -164,7 +164,7 @@ export default function Simulations({ myName }: { myName: string }) {
           oc.beginPath();
           for (let i = from; i < to; i++) {
             const s = sample[i];
-            if ((act.winner[s] === pi + 1) !== wins) continue;
+            if (finishedFirst(act.winner, s, pi) !== wins) continue;
             const j = jitter(s);
             oc.moveTo(X(0), Y(arr[s * nW] + j));
             for (let k = 1; k < nW; k++) oc.lineTo(X(k), Y(arr[s * nW + k] + j));
@@ -190,7 +190,7 @@ export default function Simulations({ myName }: { myName: string }) {
     for (const sim of [picked, hover]) {
       if (sim == null) continue;
       c.save();
-      c.strokeStyle = act.winner[sim] === pi + 1 ? WIN : LOSE;
+      c.strokeStyle = finishedFirst(act.winner, sim, pi) ? WIN : LOSE;
       c.lineWidth = 2.25; c.lineJoin = 'round';
       c.beginPath(); c.moveTo(X(0), Y(arr[sim * nW]));
       for (let k = 1; k < nW; k++) c.lineTo(X(k), Y(arr[sim * nW + k]));
@@ -274,7 +274,7 @@ export default function Simulations({ myName }: { myName: string }) {
   const pct = (pi: number) => {
     if (!rolled || !act) return '—';
     let c = 0;
-    for (let s = 0; s < rolled.nSims; s++) if (act.winner[s] === pi + 1) c++;
+    for (let s = 0; s < rolled.nSims; s++) if (finishedFirst(act.winner, s, pi)) c++;
     return `${((c / rolled.nSims) * 100).toFixed(0)}%`;
   };
 

@@ -2,10 +2,14 @@
 //
 // Rolling seasons in the browser. The server ships the ensemble (see
 // winspool/simmodel.py) and this plays it out: pick a rating source, nudge every
-// team off it, then decide every remaining game with a weighted coin flip.
+// team off it, then decide remaining games. Later weeks are a weighted coin
+// from that world. This week's remaining games are independent coins at the
+// price Standings uses (market quote, else the blend) so the cloud and the
+// card answer the same question.
 //
 // Games that have been played are already in `banked` and absent from `games`,
-// so a real result is locked into every season rolled here.
+// so a real result is locked into every season rolled here. Tied for first
+// counts as a win for everyone tied, matching the prize rule.
 //
 // Each season gets its own RNG stream keyed by its index, so any single season
 // can be replayed on demand. That is what lets the UI open one of a hundred
@@ -26,7 +30,8 @@ export interface SimModel {
   sigma: number[];
   banked: number[];
   weeks: number[];
-  games: [number, string, string][];
+  /** [week, home, away, p]; p is this week's home-win price, or null to roll from the sampled world */
+  games: [number, string, string, number | null][];
   /** finals already banked: [week, home, away, 1 home won / 0 away won / -1 tie, home score, away score] */
   played: [number, string, string, number, number, number][];
 }
@@ -39,7 +44,7 @@ export interface Rolled {
   weeks: number[];
   /** per player: Int16Array(nSims * nWeeks) of running win totals */
   paths: Int16Array[];
-  /** 1-based player index that won, 0 for a tie at the top */
+  /** bit i set when player i is tied for first (co-champions count) */
   winner: Uint8Array;
   /** index into model.sources */
   source: Uint8Array;
@@ -47,17 +52,25 @@ export interface Rolled {
 
 interface Shape {
   gh: Uint8Array; ga: Uint8Array; gw: Uint8Array;
+  gp: Float64Array;
   weekEnd: Int32Array; isEnd: Uint8Array;
   owner: Int8Array; banked0: Float64Array; pbanked0: Float64Array;
   nT: number; nG: number; nP: number; nW: number;
 }
 
 function shapeOf(m: SimModel): Shape {
+  if (m.games.length > 0 && m.games[0].length < 4) {
+    throw new Error('sim model is missing this-week prices');
+  }
   const nT = m.teams.length, nG = m.games.length, nP = m.players.length;
   const nW = m.weeks.length;
   const ti = new Map(m.teams.map((c, i) => [c, i]));
   const gh = new Uint8Array(nG), ga = new Uint8Array(nG), gw = new Uint8Array(nG);
-  m.games.forEach((g, i) => { gw[i] = g[0]; gh[i] = ti.get(g[1])!; ga[i] = ti.get(g[2])!; });
+  const gp = new Float64Array(nG);
+  m.games.forEach((g, i) => {
+    gw[i] = g[0]; gh[i] = ti.get(g[1])!; ga[i] = ti.get(g[2])!;
+    gp[i] = g[3] == null ? Number.NaN : g[3];
+  });
   const wkIdx = new Map(m.weeks.map((w, i) => [w, i]));
   const weekEnd = new Int32Array(nW);
   for (let i = 0; i < nG; i++) weekEnd[wkIdx.get(gw[i])!] = i;
@@ -68,7 +81,7 @@ function shapeOf(m: SimModel): Shape {
   const banked0 = Float64Array.from(m.banked);
   const pbanked0 = new Float64Array(nP);
   for (let t = 0; t < nT; t++) if (owner[t] >= 0) pbanked0[owner[t]] += banked0[t];
-  return { gh, ga, gw, weekEnd, isEnd, owner, banked0, pbanked0, nT, nG, nP, nW };
+  return { gh, ga, gw, gp, weekEnd, isEnd, owner, banked0, pbanked0, nT, nG, nP, nW };
 }
 
 /** mulberry32 plus Box-Muller as plain locals, so the hot loop stays monomorphic */
@@ -114,15 +127,25 @@ export function rollSeason(m: SimModel, seed: number, s: number, detail: Uint8Ar
   const st = new Float64Array(sh.nT);
   const src = world(m, st, rand, gauss);
   for (let g = 0; g < sh.nG; g++) {
+    const p = sh.gp[g];
+    if (p === p) {                       // this-week priced coin; NaN is the mixture
+      detail[g] = rand() < p ? 1 : 0;
+      continue;
+    }
     const h = sh.gh[g], b = sh.ga[g];
     detail[g] = (st[h] - st[b] + m.hfa) > m.scale * gauss() ? 1 : 0;
   }
   return src;
 }
 
+/** Whether player `pi` finished first (or tied for first) in season `s`. */
+export function finishedFirst(winner: Uint8Array, s: number, pi: number): boolean {
+  return (winner[s] & (1 << pi)) !== 0;
+}
+
 export function rollAll(m: SimModel, nSims: number, seed: number,
                         onProgress?: (done: number) => void): Rolled {
-  const { gh, ga, isEnd, owner, banked0, pbanked0, nT, nG, nP, nW } = shapeOf(m);
+  const { gh, ga, gp, isEnd, owner, banked0, pbanked0, nT, nG, nP, nW } = shapeOf(m);
 
   const paths = m.players.map(() => new Int16Array(nSims * nW));
   const winner = new Uint8Array(nSims);
@@ -139,7 +162,9 @@ export function rollAll(m: SimModel, nSims: number, seed: number,
     let w = 0;
     for (let g = 0; g < nG; g++) {
       const h = gh[g], b = ga[g];
-      const wt = (st[h] - st[b] + hfa) > scale * gauss() ? h : b;
+      const p = gp[g];
+      const home = p === p ? rand() < p : (st[h] - st[b] + hfa) > scale * gauss();
+      const wt = home ? h : b;
       acc[wt]++;
       const o = owner[wt];
       if (o >= 0) ptot[o]++;
@@ -149,12 +174,11 @@ export function rollAll(m: SimModel, nSims: number, seed: number,
         w++;
       }
     }
-    let best = -1, bi = -1, tie = false;
-    for (let p = 0; p < nP; p++) {
-      if (ptot[p] > best) { best = ptot[p]; bi = p; tie = false; }
-      else if (ptot[p] === best) tie = true;
-    }
-    winner[s] = tie ? 0 : bi + 1;
+    let best = -1;
+    for (let p = 0; p < nP; p++) if (ptot[p] > best) best = ptot[p];
+    let bits = 0;
+    for (let p = 0; p < nP; p++) if (ptot[p] >= best) bits |= 1 << p;
+    winner[s] = bits;
   }
 
   return { nSims, nWeeks: nW, nPlayers: nP, nTeams: nT, weeks: m.weeks, paths, winner, source };
