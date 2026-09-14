@@ -71,12 +71,46 @@ def test_no_games_played_means_nothing_banked(rosters):
     assert m["week"] == 1
 
 
+def test_this_week_games_carry_the_live_price(rosters):
+    """Standings prices the current week (market, else the blend) and rolls
+    later weeks from the mixture. The model has to ship that split or the
+    Simulations tab cannot reproduce the card."""
+    m = build(full_schedule(played_weeks=1), rosters)
+    assert m["week"] == 2
+    this = later = 0
+    for g in m["games"]:
+        assert len(g) == 4
+        wk, _home, _away, p = g
+        if wk == m["week"]:
+            assert 0.0 < p < 1.0
+            this += 1
+        else:
+            assert p is None
+            later += 1
+    assert this == N_TEAMS // 2
+    assert later == 2 * (N_TEAMS // 2)
+
+
+def test_a_market_quote_is_the_price_this_week_ships(rosters):
+    df = full_schedule(played_weeks=1)
+    row = df[(df["week"] == 2) & df["home_score"].isna()].iloc[0]
+    market = {(row.home_team, row.away_team): 0.91}
+    m = simmodel.build_model(rosters, df, totals_path=TOTALS, power_path=POWER,
+                             kalshi_dist_path=KALSHI, now=0.0, market=market)
+    hit = [g for g in m["games"] if g[1] == row.home_team and g[2] == row.away_team]
+    assert hit and hit[0][3] == pytest.approx(0.91)
+
+
 def test_rolling_the_model_matches_the_server_projection(rosters):
     """Play the model the way the browser does and land on the same win
     probabilities live.compute_live reports. Both are Monte Carlo, so this is a
-    tolerance check, not equality."""
+    tolerance check, not equality. Ties count for everyone tied, matching
+    pool_pwin / the prize rule."""
     df = full_schedule(played_weeks=1)
-    m = build(df, rosters)
+    row = df[(df["week"] == 2) & df["home_score"].isna()].iloc[0]
+    market = {(row.home_team, row.away_team): 0.91}
+    m = simmodel.build_model(rosters, df, totals_path=TOTALS, power_path=POWER,
+                             kalshi_dist_path=KALSHI, now=0.0, market=market)
 
     rng = np.random.default_rng(0)
     n = 20000
@@ -85,9 +119,12 @@ def test_rolling_the_model_matches_the_server_projection(rosters):
     st = strength[src] + rng.standard_normal((n, N_TEAMS)) * np.array(m["sigma"])
 
     wins = np.tile(np.array(m["banked"]), (n, 1))
-    for _wk, home, away in m["games"]:
+    for _wk, home, away, p in m["games"]:
         h, a = TEAM_INDEX[home], TEAM_INDEX[away]
-        home_win = rng.standard_normal(n) < (st[:, h] - st[:, a] + m["hfa"]) / m["scale"]
+        if p is None:
+            home_win = rng.standard_normal(n) < (st[:, h] - st[:, a] + m["hfa"]) / m["scale"]
+        else:
+            home_win = rng.random(n) < p
         wins[:, h] += home_win
         wins[:, a] += ~home_win
 
@@ -97,7 +134,7 @@ def test_rolling_the_model_matches_the_server_projection(rosters):
 
     doc = live.compute_live(rosters, df, totals_path=TOTALS, power_path=POWER,
                             kalshi_dist_path=KALSHI, ratings_fetched_at=None,
-                            n_seasons=20000, seed=0, now=0.0)
+                            market=market, n_seasons=20000, seed=0, now=0.0)
     theirs = {r["player"]: r["pwin"] for r in doc["rows"]}
 
     for p in rosters:
@@ -163,6 +200,9 @@ class _StubStore:
 
     def latest_ratings(self):
         return self._ratings
+
+    def latest_odds(self, season, week):
+        return []
 
     def put_sim_model(self, doc):
         self.saved = doc

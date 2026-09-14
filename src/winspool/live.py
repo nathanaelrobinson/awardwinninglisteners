@@ -77,6 +77,27 @@ def remaining_games_per_team(remaining: pd.DataFrame) -> np.ndarray:
     return per
 
 
+def week_home_p(matrix, weights, wh, wa, market=None):
+    """Home-win P for this week's remaining games: market quote else blend.
+
+    These are the same coins `compute_live` uses for the current week. Returns
+    `(p, source)` aligned with `wh`/`wa`; source[i] is 'market' or 'model'.
+    """
+    n = len(wh)
+    source = ["model"] * n
+    if n == 0:
+        return np.zeros(0), source
+    strength = consensus(matrix, weights)
+    p = np.asarray(win_prob(strength[wh], strength[wa]), dtype=float)
+    if market:
+        for g in range(n):
+            mp = market.get((TEAMS[wh[g]], TEAMS[wa[g]]))
+            if mp is not None:
+                p[g] = float(mp)
+                source[g] = "market"
+    return p, source
+
+
 BASE_SIGMA = 4.5
 SPREAD_K = 2.0
 TIE_BASE = 0.003
@@ -335,14 +356,7 @@ def compute_live(rosters: dict, sched_df: pd.DataFrame, *, totals_path=None, pow
 
     # Current-week games are simulated from the market where we have one:
     # fresher information wins.
-    override = np.full(len(wh), np.nan)
-    game_source = ["model"] * len(wh)
-    if market:
-        for g in range(len(wh)):
-            p = market.get((TEAMS[wh[g]], TEAMS[wa[g]]))
-            if p is not None:
-                override[g] = p
-                game_source[g] = "market"
+    override, game_source = week_home_p(matrix, weights, wh, wa, market)
 
     blend, _team_totals, totals, future_rest, p_home, week_outcomes = _project(
         rosters, banked, matrix, weights, sigma, rest, wh, wa, n_seasons, rng,
@@ -497,7 +511,7 @@ def refresh_live(store, *, n_seasons=5000) -> dict:
     # the season from nfl_data_py, which costs ~2s a request.
     from . import simmodel as _simmodel
     try:
-        _simmodel.refresh_model(store, sched_df=df)
+        _simmodel.refresh_model(store, sched_df=df, market=market)
     except Exception as e:        # noqa: BLE001 - logged, not raised
         # Non-fatal: a stale model beats failing the live refresh. But serving
         # the Simulations tab a frozen model forever with nothing said is the

@@ -22,7 +22,8 @@ from .teams import TEAM_INDEX, TEAMS
 
 
 def build_model(rosters: dict, sched_df: pd.DataFrame, *, totals_path=None, power_path=None,
-                kalshi_dist_path=None, ratings_fetched_at=None, now=None, store=None) -> dict:
+                kalshi_dist_path=None, ratings_fetched_at=None, now=None, store=None,
+                market=None) -> dict:
     """Everything a client needs to reproduce the live projection's mixture.
 
     `strength` is one row per rating source, all on a common scale; a season
@@ -31,10 +32,14 @@ def build_model(rosters: dict, sched_df: pd.DataFrame, *, totals_path=None, powe
 
         home wins  <=>  strength[home] - strength[away] + hfa > scale * Z
 
-    which is exactly `game.win_prob` written as a draw instead of a probability.
+    except games whose fourth entry is a probability: those are this week's
+    remaining games, priced the same way Standings prices them (market quote
+    if we have one, else the blend), and flipped as an independent coin so a
+    sampled rating-world does not also decide tonight.
+
     `banked` already holds the wins from games that have been played, and those
     games are absent from `games` — so a result, once real, is locked into every
-    season the client rolls.
+    season the client rolls. Pool ties count for every player tied for first.
     """
     played, remaining = live.split_schedule(sched_df)
     week = live.week_of(sched_df)
@@ -46,11 +51,19 @@ def build_model(rosters: dict, sched_df: pd.DataFrame, *, totals_path=None, powe
 
     matrix, weights, names, sigma_full = live.source_matrix(
         totals_path, power_path, kalshi_dist_path, full_home, full_away, store=store)
-    sigma = live.season_sigma(live.remaining_games_per_team(remaining),
+    this_week = live.games_in_week(remaining, week)
+    rest = remaining[remaining["week"] != week].reset_index(drop=True)
+    sigma = live.season_sigma(live.remaining_games_per_team(rest),
                               base_sigma=sigma_full)
+    wh, wa = live.remaining_matchups(this_week)
+    p_week, _src = live.week_home_p(matrix, weights, wh, wa, market)
+    priced = {(TEAMS[wh[g]], TEAMS[wa[g]]): round(float(p_week[g]), 4)
+              for g in range(len(wh))}
 
-    games = [[int(r.week), r.home_team, r.away_team]
-             for r in remaining.sort_values(["week"], kind="stable").itertuples(index=False)]
+    games = []
+    for r in remaining.sort_values(["week"], kind="stable").itertuples(index=False):
+        p = priced.get((r.home_team, r.away_team)) if int(r.week) == week else None
+        games.append([int(r.week), r.home_team, r.away_team, p])
 
     # Finals are per game, not per week: one Thursday night result is banked and
     # gone from `games` while the rest of its week is still to be played. Ship
@@ -83,15 +96,19 @@ def build_model(rosters: dict, sched_df: pd.DataFrame, *, totals_path=None, powe
     }
 
 
-def refresh_model(store, sched_df: pd.DataFrame | None = None) -> dict:
+def refresh_model(store, sched_df: pd.DataFrame | None = None, market=None) -> dict:
     """Rebuild from the league's rosters and the current schedule + ratings, and
     store it. Pass `sched_df` when the caller already has the schedule in hand:
     loading it means pulling the season from nfl_data_py, which is the whole
-    reason this is precomputed rather than built per request."""
+    reason this is precomputed rather than built per request. `market` is the
+    same this-week map `compute_live` uses; without one we read the odds log."""
     from . import league as _league
     rosters = _league.view(store.get())["rosters"]
+    df = live._load_schedule_cached() if sched_df is None else sched_df
+    if market is None:
+        market = live.market_probs(store.latest_odds(live.SEASON, live.week_of(df)))
     doc = build_model(
-        rosters, live._load_schedule_cached() if sched_df is None else sched_df,
-        store=store, ratings_fetched_at=live.ratings_fetched_at(store))
+        rosters, df, store=store, ratings_fetched_at=live.ratings_fetched_at(store),
+        market=market)
     store.put_sim_model(doc)
     return doc
