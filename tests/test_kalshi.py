@@ -2,7 +2,10 @@ import json
 import numpy as np
 import pandas as pd
 import pytest
-from winspool.fetch.kalshi import ladder_to_pmf, pmf_mean, pmf_sd, pmf_line, team_from_event_ticker, events_to_distributions, write_distributions
+from winspool.fetch.kalshi import (
+    _price, ladder_to_pmf, pmf_mean, pmf_sd, pmf_line,
+    team_from_event_ticker, events_to_distributions, write_distributions,
+)
 
 
 def _markets(entries):
@@ -98,6 +101,41 @@ def test_ladder_to_pmf_skips_market_missing_floor_strike():
     pmf = ladder_to_pmf(markets)  # must not raise
     assert pmf.shape == (18,)
     assert pytest.approx(pmf.sum(), abs=1e-9) == 1.0
+
+
+def test_price_reads_settled_result_not_the_empty_book():
+    # Kalshi leaves a finalized contract quoted at bid 0 / ask 1. The mid of
+    # that is 0.5, which is how every team that had already won a game got a
+    # 50% chance of finishing 0-17.
+    yes = {"status": "finalized", "result": "yes",
+           "yes_bid_dollars": "0.0000", "yes_ask_dollars": "1.0000",
+           "last_price_dollars": "0.9300"}
+    no = {"status": "finalized", "result": "no",
+          "yes_bid_dollars": "0.0000", "yes_ask_dollars": "1.0000",
+          "last_price_dollars": "0.0100"}
+    assert _price(yes) == 1.0
+    assert _price(no) == 0.0
+
+
+def test_settled_yes_rung_does_not_put_mass_on_zero_wins():
+    # Live Jets 2026-09-14: >=1 finalized yes with a 0/1 book, then a real
+    # market around 6-7 wins. Mid-of-empty-book priced P(W>=1)=0.5, the
+    # cummin capped the whole ladder at 0.5, and pmf_line collapsed to 1.0.
+    markets = [
+        {"floor_strike": 1, "status": "finalized", "result": "yes",
+         "yes_bid_dollars": "0.0000", "yes_ask_dollars": "1.0000",
+         "last_price_dollars": "0.9300"},
+        {"floor_strike": 6, "status": "active",
+         "yes_bid_dollars": "0.6100", "yes_ask_dollars": "0.6200",
+         "last_price_dollars": "0.6200"},
+        {"floor_strike": 7, "status": "active",
+         "yes_bid_dollars": "0.4700", "yes_ask_dollars": "0.4800",
+         "last_price_dollars": "0.4400"},
+    ]
+    pmf = ladder_to_pmf(markets)
+    assert pmf[0] == 0.0
+    assert pmf_line(pmf) > 5.0
+    assert pmf_mean(pmf) > 5.0
 
 
 @pytest.mark.network
