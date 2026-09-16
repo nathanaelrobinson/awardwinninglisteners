@@ -1,12 +1,18 @@
 // web/src/components/Simulations.tsx
 //
 // The season, rolled a hundred thousand times, drawn as a hundred thousand
-// lines. The server ships the ensemble; every roll happens here (see sim.ts).
+// lines. Pin this week's games to keep only the seasons that went that way.
+// The source table is P(win) if that rating world was the true one.
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getSimModel } from '../league';
 import type { Rolled, SimModel } from '../sim';
-import { rollAll, rollSeason, sourceLabel, finishedFirst } from '../sim';
+import {
+  expectedTeamWins, finishedFirst, leadOf, leadPhrase, playedHistory,
+  playerBanked, pwinBySource, pwinOf, rollAll, rollSeason, seasonMatches,
+  sourceLabel, thisWeekIndexes, togglePin,
+} from '../sim';
 import type { RollRequest, RollResponse } from '../sim.worker';
+import TeamLogo from './TeamLogo';
 
 type View = 'all' | 'margin';
 
@@ -19,6 +25,53 @@ const LOSE = '#d50a0a';        // ...and the seasons they don't
 const CLOUD = '#a6a6a6';       // someone else wins (neutral, so blue reads as blue)
 const RULE = '#d6d9de';
 const DIM = '#626c80';
+
+/** This-week pin chip: home logo, home-win % (not a target), away logo. Pin marks the winning logo only. */
+function WeekChip({ bit, home, away, p, mask, want, onPin }: {
+  bit: number; home: string; away: string; p: number;
+  mask: number; want: number; onPin: (bit: number, homeWin: boolean) => void;
+}) {
+  const mbit = 1 << bit;
+  const pinned = (mask & mbit) !== 0;
+  const homeOn = pinned && (want & mbit) !== 0;
+  const awayOn = pinned && (want & mbit) === 0;
+  const pct = `${(p * 100).toFixed(0)}%`;
+  const label = `${home} ${pct} ${away}`;
+  return (
+    <div className="sim-chip" title={label} role="group" aria-label={label}>
+      <button className={homeOn ? 'on' : ''} onClick={() => onPin(bit, true)}
+              title={`${home} ${pct}`} aria-label={`${home} ${pct}`}>
+        <TeamLogo code={home} size={12} />
+      </button>
+      <span className="sim-chip-p">{pct}</span>
+      <button className={awayOn ? 'on' : ''} onClick={() => onPin(bit, false)}
+              title={away} aria-label={away}>
+        <TeamLogo code={away} size={12} />
+      </button>
+    </div>
+  );
+}
+
+/** History prefix plus one remaining path: axis length and y-at-(sim, week). */
+function axisOf(pre: number[], arr: Int16Array, nW: number) {
+  const nAxis = pre.length + nW;
+  const at = (s: number, k: number) => k < pre.length ? pre[k] : arr[s * nW + (k - pre.length)];
+  return { nAxis, at };
+}
+
+/** Same margin as the remaining path, for the shared played-week prefix. */
+function marginPrefix(totals: number[][], meIdx: number): number[] {
+  if (totals.length === 0 || totals[0].length === 0) return [];
+  const nW = totals[0].length;
+  const out = new Array<number>(nW);
+  for (let w = 0; w < nW; w++) {
+    let best = -Infinity;
+    for (let p = 0; p < totals.length; p++)
+      if (p !== meIdx && totals[p][w] > best) best = totals[p][w];
+    out[w] = totals[meIdx][w] - best;
+  }
+  return out;
+}
 
 export default function Simulations({ myName }: { myName: string }) {
   const [model, setModel] = useState<SimModel | null>(null);
@@ -33,6 +86,8 @@ export default function Simulations({ myName }: { myName: string }) {
   const [meIdx, setMeIdx] = useState(0);
   const [picked, setPicked] = useState<number | null>(null);
   const [hover, setHover] = useState<number | null>(null);
+  const [mask, setMask] = useState(0);
+  const [want, setWant] = useState(0);
 
   const wrapRef = useRef<HTMLDivElement>(null);
   const cloudCache = useRef(new Map<string, HTMLCanvasElement>());
@@ -93,7 +148,7 @@ export default function Simulations({ myName }: { myName: string }) {
     return () => w.removeEventListener('message', onMsg);
   }, [model, nSims, seed]);
 
-  useEffect(() => { cohorts.current.clear(); }, [model]);
+  useEffect(() => { cohorts.current.clear(); setMask(0); setWant(0); }, [model]);
 
   const act = useMemo(() => (rolled ? { paths: rolled.paths, winner: rolled.winner } : null), [rolled]);
 
@@ -121,21 +176,56 @@ export default function Simulations({ myName }: { myName: string }) {
     return out;
   }, [rolled]);
 
+  const weekGames = useMemo(() => {
+    if (!model) return [] as { bit: number; home: string; away: string; p: number }[];
+    return thisWeekIndexes(model).map((gi, bit) => {
+      const g = model.games[gi];
+      if (g[3] == null) throw new Error('this-week game is missing a price');
+      return { bit, home: g[1], away: g[2], p: g[3] };
+    });
+  }, [model]);
+
+  const hist = useMemo(() => (
+    model ? playedHistory(model) : { weeks: [] as number[], totals: [] as number[][] }
+  ), [model]);
+  const histMargin = useMemo(() => marginPrefix(hist.totals, meIdx), [hist, meIdx]);
+
+  const matchN = useMemo(() => {
+    if (!rolled) return 0;
+    let n = 0;
+    for (let s = 0; s < rolled.nSims; s++) if (seasonMatches(rolled.thisWeek[s], mask, want)) n++;
+    return n;
+  }, [rolled, mask, want]);
+
+  const sourceRows = useMemo(() => {
+    if (!rolled || !model) return [];
+    return pwinBySource(rolled.source, rolled.winner, model.sources, meIdx,
+                        rolled.thisWeek, mask, want);
+  }, [rolled, model, meIdx, mask, want]);
+
+  useEffect(() => {
+    if (picked == null || !rolled) return;
+    if (!seasonMatches(rolled.thisWeek[picked], mask, want)) setPicked(null);
+  }, [picked, rolled, mask, want]);
+
   const seriesFor = useCallback((pi: number) =>
     (view === 'margin' ? margins! : act!.paths[pi]), [view, margins, act]);
 
   const drawPanel = useCallback((c: CanvasRenderingContext2D, w: number, h: number, pi: number) => {
     if (!rolled || !act) return null;
-    const nW = rolled.nWeeks, arr = seriesFor(pi);
+    const arr = seriesFor(pi);
+    const pre = view === 'margin' ? histMargin : (hist.totals[pi] ?? []);
+    const { nAxis, at } = axisOf(pre, arr, rolled.nWeeks);
+    const axis = hist.weeks.concat(rolled.weeks);
     let lo = Infinity, hi = -Infinity;
     for (const s of sample)
-      for (let k = 0; k < nW; k++) { const v = arr[s * nW + k]; if (v < lo) lo = v; if (v > hi) hi = v; }
+      for (let k = 0; k < nAxis; k++) { const v = at(s, k); if (v < lo) lo = v; if (v > hi) hi = v; }
     if (!isFinite(lo)) { lo = 0; hi = 1; }
     const pad = Math.max(1, (hi - lo) * 0.04); lo -= pad; hi += pad;
-    const X = (i: number) => PAD.l + (w - PAD.l - PAD.r) * (nW === 1 ? 0.5 : i / (nW - 1));
+    const X = (i: number) => PAD.l + (w - PAD.l - PAD.r) * (nAxis === 1 ? 0.5 : i / (nAxis - 1));
     const Y = (v: number) => PAD.t + (h - PAD.t - PAD.b) * (1 - (v - lo) / (hi - lo || 1));
 
-    const key = `${pi}|${view}|${w}|${h}|${seed}|${nSims}`;
+    const key = `${pi}|${view}|${w}|${h}|${seed}|${nSims}|${mask}|${want}`;
     let off = cloudCache.current.get(key);
     if (!off) {
       cloudCache.current.clear();
@@ -156,6 +246,18 @@ export default function Simulations({ myName }: { myName: string }) {
       const jitter = (s: number) => ((Math.imul(s, 0x9e3779b1) >>> 8) % 1024) / 1024 - 0.5;
       const SLICES = 12, per = Math.ceil(sample.length / SLICES);
       oc.lineWidth = 1;
+      if (mask !== 0) {
+        oc.globalAlpha = a * 0.22;
+        oc.strokeStyle = CLOUD;
+        oc.beginPath();
+        for (const s of sample) {
+          if (seasonMatches(rolled.thisWeek[s], mask, want)) continue;
+          const j = jitter(s);
+          oc.moveTo(X(0), Y(at(s, 0) + j));
+          for (let k = 1; k < nAxis; k++) oc.lineTo(X(k), Y(at(s, k) + j));
+        }
+        oc.stroke();
+      }
       oc.globalAlpha = a;
       for (let slice = 0; slice < SLICES; slice++) {
         const from = slice * per, to = Math.min(sample.length, from + per);
@@ -164,10 +266,11 @@ export default function Simulations({ myName }: { myName: string }) {
           oc.beginPath();
           for (let i = from; i < to; i++) {
             const s = sample[i];
+            if (mask !== 0 && !seasonMatches(rolled.thisWeek[s], mask, want)) continue;
             if (finishedFirst(act.winner, s, pi) !== wins) continue;
             const j = jitter(s);
-            oc.moveTo(X(0), Y(arr[s * nW] + j));
-            for (let k = 1; k < nW; k++) oc.lineTo(X(k), Y(arr[s * nW + k] + j));
+            oc.moveTo(X(0), Y(at(s, 0) + j));
+            for (let k = 1; k < nAxis; k++) oc.lineTo(X(k), Y(at(s, k) + j));
           }
           oc.stroke();
         }
@@ -192,8 +295,8 @@ export default function Simulations({ myName }: { myName: string }) {
       c.save();
       c.strokeStyle = finishedFirst(act.winner, sim, pi) ? WIN : LOSE;
       c.lineWidth = 2.25; c.lineJoin = 'round';
-      c.beginPath(); c.moveTo(X(0), Y(arr[sim * nW]));
-      for (let k = 1; k < nW; k++) c.lineTo(X(k), Y(arr[sim * nW + k]));
+      c.beginPath(); c.moveTo(X(0), Y(at(sim, 0)));
+      for (let k = 1; k < nAxis; k++) c.lineTo(X(k), Y(at(sim, k)));
       c.stroke(); c.restore();
     }
     c.fillStyle = DIM; c.font = '10px system-ui, sans-serif';
@@ -201,10 +304,10 @@ export default function Simulations({ myName }: { myName: string }) {
     const step = Math.max(1, Math.round((hi - lo) / 4));
     for (let v = Math.ceil(lo / step) * step; v <= hi; v += step) c.fillText(String(v), PAD.l - 5, Y(v));
     c.textAlign = 'center'; c.textBaseline = 'top';
-    c.fillText(`W${rolled.weeks[0]}`, X(0), h - PAD.b + 5);
-    c.fillText(`W${rolled.weeks[nW - 1]}`, X(nW - 1), h - PAD.b + 5);
+    c.fillText(`W${axis[0]}`, X(0), h - PAD.b + 5);
+    c.fillText(`W${axis[nAxis - 1]}`, X(nAxis - 1), h - PAD.b + 5);
     return { X, Y, lo, hi };
-  }, [rolled, act, sample, seriesFor, view, seed, nSims, picked, hover]);
+  }, [rolled, act, sample, seriesFor, view, seed, nSims, picked, hover, mask, want, hist, histMargin]);
 
   const panelsRef = useRef<(HTMLCanvasElement | null)[]>([]);
   const soloRef = useRef<HTMLCanvasElement>(null);
@@ -243,12 +346,15 @@ export default function Simulations({ myName }: { myName: string }) {
       const r = p.el.getBoundingClientRect();
       if (e.clientX < r.left || e.clientX > r.right || e.clientY < r.top || e.clientY > r.bottom) continue;
       const mx = e.clientX - r.left, my = e.clientY - r.top;
-      const arr = seriesFor(p.pi), nW = rolled.nWeeks;
+      const arr = seriesFor(p.pi);
+      const pre = view === 'margin' ? histMargin : (hist.totals[p.pi] ?? []);
+      const { nAxis, at } = axisOf(pre, arr, rolled.nWeeks);
       const t = (mx - PAD.l) / (p.w - PAD.l - PAD.r);
-      const k = Math.max(0, Math.min(nW - 1, Math.round(t * (nW - 1))));
+      const k = Math.max(0, Math.min(nAxis - 1, Math.round(t * (nAxis - 1))));
       let bd = 14;
       for (const s of sample) {
-        const d = Math.abs(p.Y(arr[s * nW + k]) - my);
+        if (mask !== 0 && !seasonMatches(rolled.thisWeek[s], mask, want)) continue;
+        const d = Math.abs(p.Y(at(s, k)) - my);
         if (d < bd) { bd = d; found = s; }
       }
     }
@@ -272,10 +378,17 @@ export default function Simulations({ myName }: { myName: string }) {
   if (!model) return <div className="panel sim-empty">Loading…</div>;
 
   const pct = (pi: number) => {
-    if (!rolled || !act) return '—';
-    let c = 0;
-    for (let s = 0; s < rolled.nSims; s++) if (finishedFirst(act.winner, s, pi)) c++;
-    return `${((c / rolled.nSims) * 100).toFixed(0)}%`;
+    if (!rolled || !act) return '--';
+    const { wins, n } = pwinOf(act.winner, pi, rolled.thisWeek, mask, want);
+    if (n === 0) return '0% of 0';
+    const body = `${((wins / n) * 100).toFixed(0)}%`;
+    return mask === 0 ? body : `${body} of ${n.toLocaleString()}`;
+  };
+
+  /** Pin or clear one this-week game; the cloud and win% follow. */
+  const pin = (bit: number, homeWin: boolean) => {
+    const [m, w] = togglePin(mask, want, bit, homeWin);
+    setMask(m); setWant(w);
   };
 
   return (
@@ -306,16 +419,41 @@ export default function Simulations({ myName }: { myName: string }) {
         </p>
       )}
       <div className="panel">
+        {weekGames.length > 0 && (
+          <div className="sim-week">
+            <span className="sim-week-lab">This week{mask !== 0 ? ` · ${matchN.toLocaleString()} of ${nSims.toLocaleString()} seasons` : ''}</span>
+            <div className="sim-week-chips">
+              {weekGames.map((g) => (
+                <WeekChip key={g.bit} bit={g.bit} home={g.home} away={g.away} p={g.p}
+                          mask={mask} want={want} onPin={pin} />
+              ))}
+            </div>
+          </div>
+        )}
         <div className="sim-legend">
           <span><i style={{ background: WIN }} />
             {view === 'margin' ? `${model.players[meIdx].split(' ')[0]} wins` : 'this player wins'}</span>
           <span><i style={{ background: CLOUD }} />someone else wins</span>
           <span className="sim-hint">
             {busy
-              ? `rolling ${(done || 0).toLocaleString()} of ${nSims.toLocaleString()}…`
-              : 'hover a line to read it, click to open it'}
+              ? `rolling ${(done || 0).toLocaleString()} of ${nSims.toLocaleString()}...`
+              : 'pin a this-week game to slice the cloud, click a line to open it'}
           </span>
         </div>
+        {!busy && view === 'margin' && sourceRows.length > 0 && (
+          <div className="sim-sources">
+            <span className="sim-sources-lab">
+              {model.players[meIdx].split(' ')[0]} win % if that ranking is right
+            </span>
+            {sourceRows.map((r) => (
+              <div key={r.source} className="sim-src">
+                <span>{sourceLabel(r.source)}</span>
+                <b>{r.n === 0 ? '0% of 0' : `${((r.wins / r.n) * 100).toFixed(0)}%`}</b>
+                <em>{r.n.toLocaleString()}</em>
+              </div>
+            ))}
+          </div>
+        )}
 
         <div className="sim-wrap" ref={wrapRef} onMouseMove={onMove}
              onMouseLeave={() => { setHover(null); if (tipRef.current) tipRef.current.style.opacity = '0'; }}
@@ -325,7 +463,7 @@ export default function Simulations({ myName }: { myName: string }) {
               {model.players.map((p, i) => (
                 <div key={p} className="sim-p">
                   <h3>{p}</h3>
-                  <div className="sim-pct">{pct(i)} win</div>
+                  <div className="sim-pct">{pct(i)}{mask === 0 ? ' win' : ''}</div>
                   <canvas ref={(el) => { panelsRef.current[i] = el; }} />
                 </div>
               ))}
@@ -336,21 +474,26 @@ export default function Simulations({ myName }: { myName: string }) {
       </div>
 
       {picked != null && rolled && act
-        ? <SeasonDetail model={model} sim={picked} seed={seed} />
+        ? <SeasonDetail model={model} sim={picked} seed={seed} rolled={rolled} />
         : <div className="panel sim-empty">Click any line to open that simulation.</div>}
     </div>
   );
 }
 
-function SeasonDetail({ model, sim, seed }: {
-  model: SimModel; sim: number; seed: number;
+function SeasonDetail({ model, sim, seed, rolled }: {
+  model: SimModel; sim: number; seed: number; rolled: Rolled;
 }) {
   const [lit, setLit] = useState<string | null>(null);
   const d = useMemo(() => {
     const detail = new Uint8Array(model.games.length);
     const src = model.sources[rollSeason(model, seed, sim, detail)];
     const ti = new Map(model.teams.map((c, i) => [c, i]));
-    const str = model.strength[model.sources.indexOf(src)];
+    const srcIdx = model.sources.indexOf(src);
+    const str = model.strength[srcIdx];
+    const ew = expectedTeamWins(model, srcIdx);
+    const start = playerBanked(model);
+    const leads: Record<string, ReturnType<typeof leadOf>> = {};
+    model.players.forEach((p, pi) => { leads[p] = leadOf(start, rolled.paths, rolled.weeks, sim, pi); });
 
     type G = { w: string; l: string; upset: boolean; played?: boolean; tie?: boolean;
                h: string; a: string; score?: string };
@@ -380,18 +523,23 @@ function SeasonDetail({ model, sim, seed }: {
     });
 
     const owners = model.players.map((p) => {
-      const codes = model.rosters[p].map((c) => ({ c, n: tw[ti.get(c)!] }))
-        .sort((x, y) => y.n - x.n);
+      const codes = model.rosters[p].map((c) => {
+        const i = ti.get(c);
+        if (i === undefined) throw new Error(`unknown team ${c}`);
+        return { c, n: tw[i], d: tw[i] - ew[i] };
+      }).sort((x, y) => y.n - x.n);
       return { p, codes, total: codes.reduce((t, x) => t + x.n, 0) };
     }).sort((a, b) => b.total - a.total);
 
     const finalsPerWeek = new Map<number, number>();
     for (const [wk] of model.played) finalsPerWeek.set(wk, (finalsPerWeek.get(wk) ?? 0) + 1);
     return { src, weeks: [...byWeek].sort((a, b) => a[0] - b[0]), owners,
-             upsets, played: model.played.length, finalsPerWeek };
-  }, [model, sim, seed]);
+             upsets, played: model.played.length, finalsPerWeek, leads };
+  }, [model, sim, seed, rolled]);
 
   const best = d.owners[0].total;
+  /** Signed one-decimal team luck versus this world's expected wins. */
+  const fmt = (n: number) => `${n >= 0 ? '+' : ''}${n.toFixed(1)}`;
   return (
     <div className="panel sim-detail">
       <h2>Simulation #{sim + 1} using {sourceLabel(d.src)} rankings</h2>
@@ -403,19 +551,24 @@ function SeasonDetail({ model, sim, seed }: {
         {d.owners.map((o) => (
           <div key={o.p} className={`sim-own${o.total === best ? ' first' : ''}`}>
             <div className="sim-own-hd"><span>{o.p}</span><b>{o.total}</b></div>
+            {o.total === best
+              ? <div className="sim-own-lead">{leadPhrase(d.leads[o.p], true)}</div>
+              : null}
             {o.codes.map((t) => (
               <div key={t.c} className="sim-tm"
                    onMouseEnter={() => setLit(t.c)} onMouseLeave={() => setLit(null)}>
                 <span className="c">{t.c}</span>
                 <span className="b" style={{ width: `${(t.n / 17) * 100}%` }} />
                 <span className="n">{t.n}</span>
+                <span className="d">{fmt(t.d)}</span>
               </div>
             ))}
           </div>
         ))}
       </div>
       <p className="sim-key">
-        Winner on the left. <b>Shaded rows have been played</b> — hover one for the score.
+        Winner on the left. Team numbers are final wins vs this world's expected.
+        <b> Shaded rows have been played</b> - hover one for the score.
         The pale ones are simulated.{' '}
         <span className="mk">*</span> means the ratings had the other team ahead.
       </p>

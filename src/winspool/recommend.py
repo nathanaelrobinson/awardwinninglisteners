@@ -5,14 +5,38 @@ from .ratings import strength_from_totals
 from .sim import simulate, simulate_mixture
 from .draft import player_totals, pwin, PICK_ORDER, greedy_pick
 
+def _remaining_totals(totals, banked):
+    """Season win totals minus wins already in the bank. `banked` is None
+    before kickoff, which is a zero vector."""
+    t = np.asarray(totals, dtype=float)
+    if banked is None:
+        return t
+    return t - np.asarray(banked, dtype=float)
+
+
+def _invert_totals(totals, home, away, banked, hfa, scale):
+    """Invert a totals voice against the schedule the caller passed.
+
+    Live passes the remaining slate and banked wins so the target is remaining
+    expected wins, not the season line. An empty remaining slate raises --
+    that is not a full-season invert in disguise.
+    """
+    from .ratings import backout_market
+    if len(home) == 0:
+        raise ValueError("cannot invert win totals against an empty remaining schedule")
+    return backout_market(_remaining_totals(totals, banked), home, away,
+                          hfa=hfa, scale=scale)
+
+
 def _assemble_sources(totals_path, power_path, home, away, kalshi_dist_path,
-                      store=None):
+                      store=None, banked=None):
     """Build the {name: strength} source dict for the mixture, plus a per-team
     Kalshi target-SD array (NaN where the market has no data). Adds a distinct
     'kalshi' voice (backed out of the implied line) when the dist file exists.
-    When `store` is given the ratings come from it and the paths are ignored."""
+    When `store` is given the ratings come from it and the paths are ignored.
+    `home`/`away` are the games the totals voices invert against; live passes
+    remaining games and `banked` so a 1-0 record is not counted twice."""
     from .data import load_power_ratings
-    from .ratings import backout_market
     from .game import HFA, SCALE
     from .teams import TEAM_INDEX, N_TEAMS
     if store is not None:
@@ -23,12 +47,18 @@ def _assemble_sources(totals_path, power_path, home, away, kalshi_dist_path,
             # the loader defers backout_market to here, the only place that
             # knows the schedule; the marker goes no further than this loop
             if isinstance(val, tuple) and val[0] == "__totals__":
-                sources[name] = backout_market(val[1], home, away, hfa=HFA, scale=SCALE)
+                # Season over: no remaining games, so no invert. Zeros are
+                # unused -- compute_live reports banked wins only.
+                sources[name] = (
+                    np.zeros(N_TEAMS) if len(home) == 0
+                    else _invert_totals(val[1], home, away, banked, HFA, SCALE))
             else:
                 sources[name] = val
         return sources, target_sd
     totals = load_win_totals(totals_path)
-    sources = {"vegas": backout_market(totals, home, away, hfa=HFA, scale=SCALE)}
+    sources = {"vegas": (
+        np.zeros(N_TEAMS) if len(home) == 0
+        else _invert_totals(totals, home, away, banked, HFA, SCALE))}
     if power_path:
         pdf = load_power_ratings(power_path)
         for col in pdf.columns:
@@ -47,7 +77,9 @@ def _assemble_sources(totals_path, power_path, home, away, kalshi_dist_path,
                 line[TEAM_INDEX[code]] = pmf_line(row)
                 target_sd[TEAM_INDEX[code]] = pmf_sd(row)
         line[np.isnan(line)] = np.nanmean(line)          # mirror load_win_totals
-        sources["kalshi"] = backout_market(line, home, away, hfa=HFA, scale=SCALE)
+        sources["kalshi"] = (
+            np.zeros(N_TEAMS) if len(home) == 0
+            else _invert_totals(line, home, away, banked, HFA, SCALE))
     return sources, target_sd
 
 

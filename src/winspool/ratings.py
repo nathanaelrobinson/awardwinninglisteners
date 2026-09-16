@@ -43,7 +43,17 @@ def _team_games(home_idx, away_idx, n_teams):
 
 def backout_market(win_totals, home_idx, away_idx, *, hfa=HFA, scale=SCALE,
                    iters=60, tol=1e-4):
+    """Strengths whose expected wins on this slate match `win_totals`.
+
+    The slate is the caller's: live remaining games, or the full season
+    before kickoff. An empty slate is a hard error -- there is no full-season
+    fallback inside the invert.
+    """
     from scipy.stats import norm
+    home_idx = np.asarray(home_idx, dtype=int)
+    away_idx = np.asarray(away_idx, dtype=int)
+    if home_idx.size == 0:
+        raise ValueError("cannot invert win totals against an empty remaining schedule")
     totals = np.asarray(win_totals, dtype=float)
     n_teams = totals.size
     s = np.zeros(n_teams)

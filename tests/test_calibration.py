@@ -17,3 +17,11 @@ def test_backout_reproduces_posted_totals():
     # only teams that actually appear in the fixture schedule are constrained
     played = sorted(set(home.tolist()) | set(away.tolist()))
     assert np.allclose(ew[played], totals[played], atol=0.05)
+
+
+def test_backout_market_refuses_an_empty_remaining_schedule():
+    """An empty invert slate is a hard error. Falling back to the full
+    17-game season is how a 1-0 record got counted twice."""
+    import pytest
+    with pytest.raises(ValueError, match="empty remaining schedule"):
+        backout_market(np.full(32, 8.5), np.array([]), np.array([]))
