@@ -131,47 +131,67 @@ class Ensemble(NamedTuple):
     sigma_calibrated: bool
 
 
-def _ensemble(totals_path, power_path, kalshi_dist_path, full_home, full_away, seed=0,
-              store=None) -> Ensemble:
+def _ensemble(totals_path, power_path, kalshi_dist_path, home, away, seed=0,
+              store=None, banked=None, cal_home=None, cal_away=None) -> Ensemble:
     """The same voices and the same Kalshi-calibrated per-team season sigma that
     Draft Review's pre-season build uses (recommend.build_wins), so the live
     model agrees with it before kickoff.
     Memoised on the ratings' freshness — the backouts and the calibration each
-    take seconds, and only a refresh should invalidate them."""
+    take seconds, and only a refresh should invalidate them.
+
+    `home`/`away` are the invert slate (remaining games in season). Sigma is
+    still calibrated on the full season (`cal_home`/`cal_away`) because Kalshi
+    target SDs are season-total SDs.
+    """
+    cal_home = home if cal_home is None else cal_home
+    cal_away = away if cal_away is None else cal_away
     key = ((ratings_stamp(store),) if store is not None
            else (_mtime(totals_path), _mtime(power_path), _mtime(kalshi_dist_path)))
-    key = (*key, len(full_home))
+    banked_key = None if banked is None else tuple(float(x) for x in banked)
+    key = (*key, tuple(int(x) for x in home), tuple(int(x) for x in away), banked_key)
     if key not in _ENSEMBLE_CACHE:
         from .recommend import _assemble_sources
         power = power_path if power_path and os.path.exists(power_path) else None
-        sources, target_sd = _assemble_sources(totals_path, power, full_home, full_away,
-                                               kalshi_dist_path, store=store)
+        sources, target_sd = _assemble_sources(totals_path, power, home, away,
+                                               kalshi_dist_path, store=store,
+                                               banked=banked)
         strengths, _ = ensemble(sources, base_sigma=BASE_SIGMA, spread_k=SPREAD_K)
         sigma = np.full(N_TEAMS, BASE_SIGMA)
         calibrated = len(sources) > 1 and bool(np.any(~np.isnan(target_sd)))
         if calibrated:
-            sigma = np.asarray(calibrate_sigma(strengths, full_home, full_away, target_sd,
+            sigma = np.asarray(calibrate_sigma(strengths, cal_home, cal_away, target_sd,
                                                sigma_ref=BASE_SIGMA, tie_base=TIE_BASE,
                                                seed=seed), dtype=float)
         _ENSEMBLE_CACHE[key] = Ensemble(sources, sigma, target_sd, calibrated)
     return _ENSEMBLE_CACHE[key]
 
 
-def source_matrix(totals_path, power_path, kalshi_dist_path, full_home, full_away,
-                  store=None):
-    """(matrix, weights, names, sigma_full). Every source is an equal voice, as in
-    the pre-season build.
+def source_matrix(totals_path, power_path, kalshi_dist_path, home, away,
+                  store=None, banked=None, cal_home=None, cal_away=None):
+    """(matrix, weights, names, sigma_full).
 
-    The win-totals voice used to fade to nothing by week 9, on the grounds that
-    pre-season totals stop updating once the season starts. They are now fetched
-    daily from a live futures market, so there is no staleness left to discount
-    and no source outranks another until calibration says otherwise."""
+    Live callers pass remaining `home`/`away` and `banked` so totals invert
+    against games still to play. `cal_home`/`cal_away` stay the full season
+    for Kalshi SD calibration.
+
+    Weight rule: if `market_strength` is present and it is not the only
+    voice, it gets weight equal to the sum of the other live voices (half
+    the mixture; the rest split evenly). The remaining-slate GPF is the
+    identified remaining-season rating. The others are still used -- they
+    are shrunk priors (EPA/FPI) or season-total inverts (Covers/Kalshi) --
+    but after week 1 they must not outvote the market four-to-one. File-path
+    / preseason builds have no `market_strength` and stay equal-weight.
+    """
     ens = _ensemble(totals_path, power_path, kalshi_dist_path,
-                    full_home, full_away, store=store)
+                    home, away, store=store, banked=banked,
+                    cal_home=cal_home, cal_away=cal_away)
     sources, sigma_full = ens.sources, ens.sigma
     names = list(sources)
     matrix = to_common_scale(sources)
     w = np.ones(len(names))
+    # market_strength weight = sum of the others, so it is half the mixture.
+    if "market_strength" in names and len(names) > 1:
+        w[names.index("market_strength")] = len(names) - 1
     return matrix, w / w.sum(), names, sigma_full
 
 
@@ -347,8 +367,10 @@ def compute_live(rosters: dict, sched_df: pd.DataFrame, *, totals_path=None, pow
     reg = _reg(sched_df)
     full_home = reg["home_team"].map(TEAM_INDEX).to_numpy(dtype=int)
     full_away = reg["away_team"].map(TEAM_INDEX).to_numpy(dtype=int)
+    rem_home, rem_away = remaining_matchups(remaining)
     matrix, weights, _names, sigma_full = source_matrix(
-        totals_path, power_path, kalshi_dist_path, full_home, full_away, store=store)
+        totals_path, power_path, kalshi_dist_path, rem_home, rem_away, store=store,
+        banked=banked, cal_home=full_home, cal_away=full_away)
     this_week = games_in_week(remaining, week)
     rest = remaining[remaining["week"] != week].reset_index(drop=True)
     sigma = season_sigma(remaining_games_per_team(rest), base_sigma=sigma_full)

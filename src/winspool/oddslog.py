@@ -21,6 +21,24 @@ def snapshot(source: str, season: int, week: int, odds: list[GameOdds],
             "games": [o.as_dict() for o in odds]}
 
 
+def store_book_week(store, season: int, week: int, odds: list, now=None) -> None:
+    """Append one week's book snapshot on the existing odds-log path."""
+    store.add_odds(snapshot("book", season, week, odds, now=now))
+
+
+def fetch_remaining_book(store, season: int, weeks, fetch_week, now=None) -> None:
+    """Fetch posted book lines for each remaining week and store them.
+
+    A week with no spread is a hard error: the remaining-slate invert must
+    not silently fall back to whatever past closes already sit in the log.
+    """
+    for week in weeks:
+        odds = fetch_week(season, week)
+        if not any(o.spread is not None for o in odds):
+            raise RuntimeError(f"no remaining-slate lines for week {week}")
+        store_book_week(store, season, week, odds, now=now)
+
+
 def default_sources() -> dict:
     """Live sources, keyed by the name they are logged under. Each takes
     (season, week, pairs) so a caller can stub one out in a test."""

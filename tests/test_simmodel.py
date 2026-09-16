@@ -204,6 +204,9 @@ class _StubStore:
     def latest_odds(self, season, week):
         return []
 
+    def get_sim_model(self):
+        return self.saved
+
     def put_sim_model(self, doc):
         self.saved = doc
 
@@ -245,3 +248,40 @@ def test_every_store_round_trips_the_model(tmp_path):
         assert store.get_sim_model() is None
         store.put_sim_model({"week": 7})
         assert store.get_sim_model() == {"week": 7}
+
+
+def test_stale_three_tuple_model_is_rebuilt_not_served(rosters, monkeypatch):
+    """A stored pre-price model (3-tuples) must not reach the Simulations tab.
+    Rebuild it; do not serve the old shape."""
+    from winspool import league as lg
+    monkeypatch.setattr(lg, "view", lambda _doc: {"rosters": rosters})
+    store = _StubStore()
+    store.put_sim_model({"week": 1, "games": [[1, "KC", "BUF"], [1, "PHI", "DAL"]]})
+
+    doc = simmodel.ensure_model(store, sched_df=full_schedule(played_weeks=1))
+    assert all(len(g) >= 4 for g in doc["games"])
+    assert store.get_sim_model() is doc
+
+
+def test_four_tuple_model_is_left_alone(rosters, monkeypatch):
+    """A current-shape model is served as stored; refresh is not a side effect."""
+    store = _StubStore()
+    good = {"week": 2, "games": [[2, "KC", "BUF", 0.61], [3, "PHI", "DAL", None]]}
+    store.put_sim_model(good)
+    monkeypatch.setattr(simmodel, "refresh_model",
+                        lambda *a, **k: (_ for _ in ()).throw(
+                            AssertionError("must not refresh a 4-tuple model")))
+    assert simmodel.ensure_model(store) is good
+
+
+def test_stale_model_is_not_served_when_refresh_fails(rosters, monkeypatch):
+    """Fail fast: a broken rebuild must not fall back to serving 3-tuples."""
+    store = _StubStore()
+    stale = {"week": 1, "games": [[1, "KC", "BUF"]]}
+    store.put_sim_model(stale)
+    monkeypatch.setattr(simmodel, "refresh_model",
+                        lambda *a, **k: (_ for _ in ()).throw(
+                            RuntimeError("no ratings")))
+    with pytest.raises(RuntimeError, match="no ratings"):
+        simmodel.ensure_model(store)
+    assert store.get_sim_model() is stale

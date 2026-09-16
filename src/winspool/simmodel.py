@@ -48,9 +48,11 @@ def build_model(rosters: dict, sched_df: pd.DataFrame, *, totals_path=None, powe
     reg = sched_df[sched_df["game_type"].str.upper() == "REG"]
     full_home = reg["home_team"].map(TEAM_INDEX).to_numpy(dtype=int)
     full_away = reg["away_team"].map(TEAM_INDEX).to_numpy(dtype=int)
+    rem_home, rem_away = live.remaining_matchups(remaining)
 
     matrix, weights, names, sigma_full = live.source_matrix(
-        totals_path, power_path, kalshi_dist_path, full_home, full_away, store=store)
+        totals_path, power_path, kalshi_dist_path, rem_home, rem_away, store=store,
+        banked=banked, cal_home=full_home, cal_away=full_away)
     this_week = live.games_in_week(remaining, week)
     rest = remaining[remaining["week"] != week].reset_index(drop=True)
     sigma = live.season_sigma(live.remaining_games_per_team(rest),
@@ -112,3 +114,31 @@ def refresh_model(store, sched_df: pd.DataFrame | None = None, market=None) -> d
         market=market)
     store.put_sim_model(doc)
     return doc
+
+
+def has_this_week_prices(doc: dict) -> bool:
+    """True when every remaining game is a 4-tuple [week, home, away, p|null].
+
+    Empty `games` is current-shape (season over). A missing `games` key, or any
+    entry without the price field, is the pre-#39 model and must not be served.
+    """
+    games = doc.get("games")
+    if games is None:
+        return False
+    return all(len(g) >= 4 for g in games)
+
+
+def ensure_model(store, sched_df: pd.DataFrame | None = None, market=None) -> dict:
+    """Serve the stored sim-model, or rebuild it when the stored shape is stale.
+
+    The Simulations tab rejects 3-tuples. A stored model from before this-week
+    prices shipped would brick the tab after deploy if we served it as-is.
+    Refresh raises; this does not fall back to the old document.
+    """
+    doc = store.get_sim_model()
+    if doc is not None and has_this_week_prices(doc):
+        return doc
+    built = refresh_model(store, sched_df=sched_df, market=market)
+    if not has_this_week_prices(built):
+        raise RuntimeError("refresh_model built a sim-model without this-week prices")
+    return built

@@ -37,8 +37,12 @@ lint:  ## Lint the front end (same check CI runs)
 build:  ## Build the front end into web/dist
 	cd web && npm run build
 
+.PHONY: webtest
+webtest:  ## Run the front-end unit tests
+	cd web && npm test
+
 .PHONY: check
-check: test build lint  ## Everything CI runs, in one go
+check: test webtest build lint  ## Everything CI runs, in one go
 
 .PHONY: serve
 serve:  ## Run the app locally on :8000 with an in-memory dev league (PINs 1234)

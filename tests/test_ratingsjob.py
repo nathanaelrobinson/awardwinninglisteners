@@ -1,3 +1,5 @@
+import pytest
+
 from winspool.ratingsjob import (MIN_TEAM_COVERAGE, MAX_AGE_S, refresh_ratings,
                                  stale)
 from winspool.store import InMemoryStore
@@ -38,11 +40,83 @@ def test_a_failing_source_is_recorded_without_masking_the_last_good_one():
 
 
 def test_market_strength_is_available_in_week_one():
-    """`_market` reads range(1, week + 1). It used to read range(1, max(1, week)),
-    which is empty at week 1: the source failed on every week-1 run and the
-    health endpoint 503'd from the day it deployed. A health check that is red
-    for a known non-problem is a health check everyone learns to ignore, so
-    guard the cold start explicitly -- week 1, week-1 odds, a real answer."""
+    """Week 1 is a remaining slate (weeks 1..18). Posted week-1 lines must
+    still produce a real answer -- the source used to fail on a cold start
+    and keep the health check red for a known non-problem."""
+    from winspool.gameodds import GameOdds
+    from winspool.oddslog import snapshot
+    from winspool.ratingsjob import default_sources
+
+    store = InMemoryStore({})
+    week1 = [
+        GameOdds(source="book", home="KC", away="BUF", fetched_at=10.0, spread=-3.0),
+        GameOdds(source="book", home="DEN", away="SEA", fetched_at=10.0, spread=1.0),
+    ]
+    store.add_odds(snapshot("book", 2026, 1, week1, now=10.0))
+
+    def fetch_week(season, week):
+        return week1
+
+    doc = default_sources(store, fetch_week=fetch_week)["market_strength"][1](2026, 1)
+    assert set(doc) == {"KC", "BUF", "DEN", "SEA"}
+    assert doc["KC"] > doc["BUF"], "the home favourite is the stronger team"
+
+
+def test_remaining_slate_recovers_a_large_favorite_closer_than_week1_ridge():
+    """Week-1 closes alone are 16 disjoint pairs; sparsity_ridge hands a
+    7-point favourite ~1.75. Baldwin GPF is the remaining slate. Feeding
+    weeks current..18 must recover that favourite closer to the raw spread.
+    """
+    from winspool.game import HFA
+    from winspool.gameodds import GameOdds
+    from winspool.marketstrength import closing_spreads, strength_from_spreads
+    from winspool.oddslog import snapshot
+    from winspool.ratingsjob import default_sources
+
+    store = InMemoryStore({})
+    # Week 1: the under-determined shape the ridge exists to damp.
+    week1 = []
+    for i in range(16):
+        home, away = TEAMS[2 * i], TEAMS[2 * i + 1]
+        week1.append(GameOdds(source="book", home=home, away=away,
+                              fetched_at=1.0, spread=-7.0))
+    store.add_odds(snapshot("book", 2026, 1, week1, now=1.0))
+    week1_solve = strength_from_spreads(
+        closing_spreads(store, 2026, range(1, 2)), current_week=1)
+    favourite = TEAMS[0]
+
+    # Remaining weeks: posted from a 7-point favourite vs the field. That
+    # identifies the graph; week-1 ridge cannot.
+    true = {t: (-7.0 / 31.0) for t in TEAMS}
+    true[favourite] = 7.0
+    mu = sum(true.values()) / len(true)
+    true = {t: v - mu for t, v in true.items()}
+    for week in range(2, 19):
+        order = TEAMS[week % 2:] + TEAMS[:week % 2]
+        games = []
+        for i in range(0, len(TEAMS), 2):
+            home, away = order[i], order[i + 1]
+            games.append(GameOdds(
+                source="book", home=home, away=away, fetched_at=float(week),
+                spread=true[away] - true[home] - HFA))
+        store.add_odds(snapshot("book", 2026, week, games, now=float(week)))
+
+    def replay(season, week):
+        rows = store.odds_for_week(season, week)
+        return [GameOdds(source="book", home=g["home"], away=g["away"],
+                         fetched_at=1.0, spread=g["spread"])
+                for g in rows[-1]["games"]]
+
+    got = default_sources(store, fetch_week=replay)["market_strength"][1](2026, 1)
+    raw = true[favourite]
+    assert abs(got[favourite] - raw) < abs(week1_solve[favourite] - raw), (
+        f"remaining-slate favourite={got[favourite]} "
+        f"week1-ridge={week1_solve[favourite]} raw={raw}")
+
+
+def test_market_strength_fails_when_remaining_lines_are_missing():
+    """No silent fallback to the 1..current-only solve. Week 2 with only
+    week-1 closes in the log must raise, not invert the past slate."""
     from winspool.gameodds import GameOdds
     from winspool.oddslog import snapshot
     from winspool.ratingsjob import default_sources
@@ -50,12 +124,35 @@ def test_market_strength_is_available_in_week_one():
     store = InMemoryStore({})
     store.add_odds(snapshot("book", 2026, 1, [
         GameOdds(source="book", home="KC", away="BUF", fetched_at=10.0, spread=-3.0),
-        GameOdds(source="book", home="DEN", away="SEA", fetched_at=10.0, spread=1.0),
     ], now=10.0))
+    with pytest.raises(RuntimeError, match="remaining-slate"):
+        default_sources(store, fetch_week=lambda s, w: [])["market_strength"][1](2026, 2)
 
-    doc = default_sources(store)["market_strength"][1](2026, 1)
-    assert set(doc) == {"KC", "BUF", "DEN", "SEA"}
-    assert doc["KC"] > doc["BUF"], "the home favourite is the stronger team"
+
+def test_market_strength_fetches_and_stores_remaining_week_lines():
+    """Remaining ESPN weeks are fetched through the existing snapshot path
+    and stored week-keyed. A week with no posted spread fails the source."""
+    from winspool.gameodds import GameOdds
+    from winspool.ratingsjob import default_sources
+
+    store = InMemoryStore({})
+    calls = []
+
+    def fetch_week(season, week):
+        calls.append(week)
+        return [GameOdds(source="book", home="KC", away="BUF",
+                         fetched_at=float(week), spread=-3.0)]
+
+    default_sources(store, fetch_week=fetch_week)["market_strength"][1](2026, 16)
+    assert calls == [16, 17, 18]
+    assert store.odds_for_week(2026, 17)
+
+    def empty_week(season, week):
+        return []
+
+    with pytest.raises(RuntimeError, match="week 3"):
+        default_sources(InMemoryStore({}), fetch_week=empty_week
+                        )["market_strength"][1](2026, 3)
 
 
 def test_a_partially_parsed_source_is_refused_rather_than_stored():

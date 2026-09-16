@@ -263,12 +263,11 @@ def get_sim_model(_: str | None = Depends(viewer)):
     Served from the store, where the live refresh leaves it. Building it means
     pulling the season schedule from nfl_data_py and calibrating the mixture,
     about two seconds; doing that per request put a visible stall in front of
-    the Simulations tab. The on-demand build below is the first-run path only.
+    the Simulations tab. The on-demand build below is the first-run path, and
+    also the path when the stored games are still 3-tuples from before this-week
+    prices shipped — serving that shape bricks the tab.
     """
-    doc = _store_read(get_store().get_sim_model)
-    if doc is None:
-        doc = _run_read(lambda: _simmodel.refresh_model(get_store()))
-    return doc
+    return _run_read(lambda: _simmodel.ensure_model(get_store()))
 
 
 @router.get("/api/league/live")
@@ -443,12 +442,17 @@ def admin_model(_: str = Depends(require_commissioner)):
         df = _live._load_schedule_cached()
     except Exception:
         raise HTTPException(503, "schedule unavailable")
+    played, remaining = _live.split_schedule(df)
+    banked = _live.banked_wins(played)
+    rem_home, rem_away = _live.remaining_matchups(remaining)
     reg = df[df["game_type"].str.upper() == "REG"]
     full_home = reg["home_team"].map(TEAM_INDEX).to_numpy(dtype=int)
     full_away = reg["away_team"].map(TEAM_INDEX).to_numpy(dtype=int)
     matrix, weights, names, sigma = _live.source_matrix(
-        None, None, None, full_home, full_away, store=store)
-    ens = _live._ensemble(None, None, None, full_home, full_away, store=store)
+        None, None, None, rem_home, rem_away, store=store, banked=banked,
+        cal_home=full_home, cal_away=full_away)
+    ens = _live._ensemble(None, None, None, rem_home, rem_away, store=store,
+                          banked=banked, cal_home=full_home, cal_away=full_away)
     strength = _live.consensus(matrix, weights)
 
     views = live_doc.get("views") or {}

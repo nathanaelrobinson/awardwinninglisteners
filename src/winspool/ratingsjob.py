@@ -38,19 +38,27 @@ KIND = {"espn_fpi": "power", "kalshi": "distribution", "covers": "totals",
         "epa_adj": "power", "market_strength": "power"}
 
 
-def default_sources(store) -> dict:
+def default_sources(store, fetch_week=None) -> dict:
     """{name: (kind, fn(season, week) -> {team: value})}. Kept as a function so
     a caller — or a test — can substitute one without touching the others."""
+    from .fetch.odds import fetch_espn
     from .fetch.scrapers import covers_totals, epa_ratings, espn_fpi
     from .fetch.kalshi import kalshi_distributions
     from .marketstrength import closing_spreads, strength_from_spreads
+    from .oddslog import fetch_remaining_book
+
+    fetch_week = fetch_espn if fetch_week is None else fetch_week
 
     def _market(season, week):
-        # Include the current week: a posted-but-not-yet-closed line is still a
-        # valid market estimate, and it's the freshest one we have. Restricting
-        # to completed weeks would make this source fail every week 1, for a
-        # cold start that including the current week removes entirely.
-        games = closing_spreads(store, season, range(1, week + 1))
+        # Remaining-season GPF: posted lines for this week and every week
+        # after it. Past closes are a different object (they already happened)
+        # and a week-1-only solve is crushed by sparsity_ridge. Fetch those
+        # weeks onto the existing odds log; raise if a week has no line.
+        weeks = list(range(week, 19))
+        fetch_remaining_book(store, season, weeks, fetch_week)
+        games = closing_spreads(store, season, weeks)
+        if not games:
+            raise RuntimeError("no remaining-slate spreads to invert")
         return strength_from_spreads(games, current_week=week)
 
     return {

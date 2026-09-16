@@ -120,6 +120,36 @@ def test_consensus_is_weighted_mean():
     assert np.allclose(live.consensus(m, np.array([0.25, 0.75])), 2.5)
 
 
+def test_market_strength_weight_equals_sum_of_the_other_voices():
+    """Remaining-slate GPF is the identified remaining-season rating. The
+    other live voices are shrunk priors or season-total inverts, so
+    market_strength is weighted equal to their sum -- half the mixture --
+    and cannot be outvoted by those four combined after week 1."""
+    from winspool.store import InMemoryStore
+
+    store = InMemoryStore({})
+    flat = {c: 0.0 for c in TEAMS}
+    for name, kind, doc in (
+        ("espn_fpi", "power", flat),
+        ("covers", "totals", {c: 8.5 for c in TEAMS}),
+        ("kalshi", "distribution", {c: [1.0 / 18] * 18 for c in TEAMS}),
+        ("epa_adj", "power", flat),
+        ("market_strength", "power", {c: (1.0 if c == "KC" else 0.0) for c in TEAMS}),
+    ):
+        store.add_rating({"source": name, "kind": kind, "ok": True,
+                          "fetched_at": 1.0, "doc": doc})
+    live._ENSEMBLE_CACHE.clear()
+    home = np.array([TEAM_INDEX["KC"], TEAM_INDEX["BUF"]])
+    away = np.array([TEAM_INDEX["BUF"], TEAM_INDEX["KC"]])
+    _matrix, weights, names, _sigma = live.source_matrix(
+        None, None, None, home, away, store=store)
+    i = names.index("market_strength")
+    others = sum(w for j, w in enumerate(weights) if j != i)
+    assert weights[i] == pytest.approx(others)
+    assert weights[i] == pytest.approx(0.5)
+    assert len(names) == 5
+
+
 ROSTERS = {
     "A": ["KC", "PHI"],
     "B": ["BUF", "DAL"],
@@ -367,3 +397,64 @@ def test_ensemble_cache_key_tracks_the_stores_newest_rating(monkeypatch):
     seed_fixture_ratings(store, fetched_at=2000.0)      # a refresh lands
     live.source_matrix(None, None, None, home, away, store=store)
     assert len(calls) == 2, "a newer rating row must invalidate the cache"
+
+
+def _seventeen_week_schedule(played_weeks=0, winner=None):
+    """Every team plays once a week for 17 weeks. `winner` takes week 1."""
+    rows = []
+    for wk in range(1, 18):
+        order = TEAMS[wk % 2:] + TEAMS[:wk % 2]
+        for i in range(0, len(TEAMS), 2):
+            h, a = order[i], order[i + 1]
+            if wk <= played_weeks:
+                if wk == 1 and winner in (h, a):
+                    hs, aws = (24, 10) if h == winner else (10, 24)
+                else:
+                    hs, aws = 24, 17
+                rows.append((wk, "REG", h, a, hs, aws))
+            else:
+                rows.append((wk, "REG", h, a, None, None))
+    return sched(rows)
+
+
+def test_one_and_oh_low_total_does_not_inflate_remaining_strength():
+    """A 1-0 team with a 6.5 season total has 5.5 wins left to find.
+
+    Full-17 invert of 6.5 then adding the banked win is the identity bug:
+    remaining expected becomes ~6.2 and live season expected ~7.4. Invert the
+    remaining 5.5 against the remaining 16 games instead.
+    """
+    from winspool.game import expected_wins
+    from winspool.store import InMemoryStore
+
+    df = _seventeen_week_schedule(played_weeks=1, winner="NYJ")
+    played, remaining = live.split_schedule(df)
+    banked = live.banked_wins(played)
+    assert banked[TEAM_INDEX["NYJ"]] == 1.0
+
+    # Remaining slate is 16 games/team, 256 wins to allocate. NYJ's remaining
+    # target is 5.5; the field splits the rest so the invert is consistent.
+    rest = (256.0 - 5.5) / 31.0
+    totals = {c: rest + float(banked[TEAM_INDEX[c]]) for c in TEAMS}
+    totals["NYJ"] = 5.5 + float(banked[TEAM_INDEX["NYJ"]])
+    store = InMemoryStore({})
+    store.add_rating({"source": "covers", "kind": "totals", "ok": True,
+                      "fetched_at": 1.0, "doc": totals})
+
+    live._ENSEMBLE_CACHE.clear()
+    rh, ra = live.remaining_matchups(remaining)
+    matrix, weights, names, _sigma = live.source_matrix(
+        None, None, None, rh, ra, store=store, banked=banked)
+    assert names == ["covers"]
+    remaining_ew = expected_wins(live.consensus(matrix, weights), rh, ra)
+    nyj = TEAM_INDEX["NYJ"]
+    assert remaining_ew[nyj] == pytest.approx(5.5, abs=0.2)
+    assert remaining_ew[nyj] + banked[nyj] == pytest.approx(6.5, abs=0.2)
+
+    doc = live.compute_live({"A": ["NYJ"], "B": ["KC"]}, df, store=store,
+                            n_seasons=2500, seed=0)
+    live_nyj = next(t for r in doc["rows"] for t in r["teams"] if t["code"] == "NYJ")
+    assert live_nyj["banked"] == 1.0
+    # Season noise lifts a weak team toward .500, but must not restore the
+    # full-17-invert + banked explosion (~7.4 on this slate).
+    assert live_nyj["exp_wins"] < 7.1

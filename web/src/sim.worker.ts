@@ -28,7 +28,7 @@ self.onmessage = (e: MessageEvent<RollRequest>) => {
     // hand the buffers over rather than cloning ~20 MB of them
     const transfer: Transferable[] = [
       ...rolled.paths.map((p) => p.buffer),
-      rolled.winner.buffer, rolled.source.buffer,
+      rolled.winner.buffer, rolled.source.buffer, rolled.thisWeek.buffer,
     ];
     post({ id, type: 'done', rolled }, transfer);
   } catch (err) {
