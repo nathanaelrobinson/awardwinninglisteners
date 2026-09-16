@@ -356,6 +356,65 @@ def _week_wins(outcomes, wh, wa, n_seasons):
     return w
 
 
+def live_engine(names: list[str]) -> dict:
+    """Identity of this compute_live mixture.
+
+    Standings arrows subtract two P(Win) numbers. That subtraction is only a
+    week-to-week move when both numbers used the same invert slate, the same
+    voices, and the same weights. Week-1 snapshots from the file ensemble
+    (vegas/nfelo/clay/pff, full-17 invert, equal weights) are a different
+    object.
+
+    Week 1 is not rebuilt: the ratings table has no as-of rows for that week,
+    and the odds log has no remaining-slate spreads from then. Inventing
+    either would be a fake baseline. Hide the arrow until two stamped
+    snapshots share this identity.
+    """
+    sources = sorted(names)
+    market_weight = ("half" if "market_strength" in names and len(names) > 1
+                     else "equal")
+    return {"sources": sources, "invert": "remaining",
+            "market_weight": market_weight}
+
+
+def engine_of(doc: dict) -> dict | None:
+    """Stored engine identity, or the source list inferred from `views`.
+
+    A historical week with no `engine` field keeps only the names we can
+    read. Invert and weights are unknown, so that dict will not compare
+    equal to a stamped remaining/half identity even when later names overlap.
+    """
+    if doc.get("engine") is not None:
+        return doc["engine"]
+    views = doc.get("views") or {}
+    sources = sorted(k for k in views if k != "blend")
+    if not sources:
+        return None
+    return {"sources": sources}
+
+
+def engines_comparable(a, b) -> bool:
+    """True only when both identities exist and are exactly the same."""
+    return a is not None and b is not None and a == b
+
+
+def pwin_deltas(current: dict, previous: dict) -> dict | None:
+    """This-week P(Win) minus previous, or None when the engines differ.
+
+    None means the UI omits the triangle -- not a 0.0 fake move. A player
+    present only on one side is omitted, not padded.
+    """
+    if not engines_comparable(engine_of(current), engine_of(previous)):
+        return None
+    prev = {r["player"]: r["pwin"] for r in previous["rows"]}
+    out = {}
+    for r in current["rows"]:
+        if r["player"] not in prev:
+            continue
+        out[r["player"]] = r["pwin"] - prev[r["player"]]
+    return out
+
+
 def compute_live(rosters: dict, sched_df: pd.DataFrame, *, totals_path=None, power_path=None,
                  kalshi_dist_path=None, ratings_fetched_at=None, market: dict | None = None,
                  n_seasons=5000, seed=0, now=None, store=None) -> dict:
@@ -452,6 +511,7 @@ def compute_live(rosters: dict, sched_df: pd.DataFrame, *, totals_path=None, pow
 
     return {"week": week, "computed_at": float(now if now is not None else time.time()),
             "ratings_fetched_at": ratings_fetched_at,
+            "engine": live_engine(_names),
             "rows": rows, "x": xs, "n_sims": int(n_seasons), "this_week": tw_rows,
             "games": games_out, "views": views}
 

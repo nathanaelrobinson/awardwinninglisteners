@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import { fetchTeams } from '../api';
 import { playerColor } from '../colors';
 import type { LeagueView, LiveProjection, LiveViewRow, Me, StandingsResponse, WeekPoint } from '../league';
-import { getLive, getStandings, getWeeks, setOverride } from '../league';
+import { enginesMatch, getLive, getStandings, getWeeks, setOverride } from '../league';
 import Feed from './Feed';
 import MovementChart from './MovementChart';
 import TeamLogo from './TeamLogo';
@@ -85,10 +85,17 @@ export default function Standings({ me, view }: { me: Me | null; view: LeagueVie
   const pwinBy: Record<string, number> = {};
   for (const r of viewRows) { projBy[r.player] = r; pwinBy[r.player] = r.pwin; }
   const deltaBy: Record<string, number> = {};
-  if (weeks.length >= 2) {
-    const pick = (w: WeekPoint) => w.views?.[viewKey] ?? w.rows;
-    const prev = Object.fromEntries(pick(weeks[weeks.length - 2]).map((r) => [r.player, r.pwin]));
-    for (const r of pick(weeks[weeks.length - 1])) deltaBy[r.player] = r.pwin - (prev[r.player] ?? r.pwin);
+  // Live P(Win) minus the latest earlier week that used the same engine.
+  // Different source lists or an unstamped file-era week: omit the triangle.
+  const prior = [...weeks].reverse().find((w) =>
+    w.week !== live?.week && enginesMatch(w.engine, live?.engine));
+  const priorRows = prior?.views?.[viewKey];
+  if (prior && priorRows) {
+    const prev = Object.fromEntries(priorRows.map((r) => [r.player, r.pwin]));
+    for (const r of viewRows) {
+      if (prev[r.player] === undefined) continue;
+      deltaBy[r.player] = r.pwin - prev[r.player];
+    }
   }
   const mover = Object.entries(deltaBy)
     .filter(([, d]) => Math.round(Math.abs(d) * 100) > 0)

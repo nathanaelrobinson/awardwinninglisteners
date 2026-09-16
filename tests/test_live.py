@@ -458,3 +458,89 @@ def test_one_and_oh_low_total_does_not_inflate_remaining_strength():
     # Season noise lifts a weak team toward .500, but must not restore the
     # full-17-invert + banked explosion (~7.4 on this slate).
     assert live_nyj["exp_wins"] < 7.1
+
+
+# --- Engine identity (Standings P(Win) arrows) --------------------------------
+
+def test_compute_live_stamps_remaining_equal_engine_on_file_path(inseason):
+    """File-path live has no market_strength, so the mixture is equal-weight
+    remaining invert. The stamp is what Standings uses to refuse a delta
+    against a week-1 file-era snapshot."""
+    doc = live.compute_live(ROSTERS, inseason,
+                            totals_path=f"{FIX}/win_totals.csv",
+                            power_path=f"{FIX}/power_ratings.csv",
+                            kalshi_dist_path=None, ratings_fetched_at=None,
+                            n_seasons=200, seed=0)
+    assert doc["engine"] == {
+        "sources": ["fpi", "massey", "sagarin", "vegas"],
+        "invert": "remaining",
+        "market_weight": "equal",
+    }
+
+
+def test_compute_live_stamps_remaining_half_engine_when_market_strength_votes():
+    """Live voices plus market_strength: half the mixture, remaining invert."""
+    from winspool.store import InMemoryStore
+
+    store = InMemoryStore({})
+    flat = {c: 0.0 for c in TEAMS}
+    for name, kind, doc in (
+        ("espn_fpi", "power", flat),
+        ("covers", "totals", {c: 8.5 for c in TEAMS}),
+        ("kalshi", "distribution", {c: [1.0 / 18] * 18 for c in TEAMS}),
+        ("epa_adj", "power", flat),
+        ("market_strength", "power", {c: (1.0 if c == "KC" else 0.0) for c in TEAMS}),
+    ):
+        store.add_rating({"source": name, "kind": kind, "ok": True,
+                          "fetched_at": 1.0, "doc": doc})
+    live._ENSEMBLE_CACHE.clear()
+    df = _seventeen_week_schedule(played_weeks=1, winner="KC")
+    out = live.compute_live({"A": ["KC"], "B": ["BUF"]}, df, store=store,
+                            n_seasons=200, seed=0)
+    assert out["engine"] == {
+        "sources": ["covers", "epa_adj", "espn_fpi", "kalshi", "market_strength"],
+        "invert": "remaining",
+        "market_weight": "half",
+    }
+
+
+def test_file_era_week1_is_not_comparable_to_current_engine():
+    """Week 1 was vegas/nfelo/clay/pff, full-17, equal weights. We do not have
+    as-of ratings or remaining-slate odds to rebuild it, so the arrow must
+    stay hidden -- not a 0.0 fake move, not a mix of source lists."""
+    old = {"week": 1, "views": {
+        "blend": [], "vegas": [], "espn_fpi": [], "nfelo": [],
+        "clay": [], "pff": [], "epa": [], "kalshi": [],
+    }}
+    current = {"week": 2, "engine": {
+        "sources": ["covers", "epa_adj", "espn_fpi", "kalshi", "market_strength"],
+        "invert": "remaining",
+        "market_weight": "half",
+    }}
+    assert live.engine_of(old) == {
+        "sources": ["clay", "epa", "espn_fpi", "kalshi", "nfelo", "pff", "vegas"],
+    }
+    assert not live.engines_comparable(live.engine_of(old), live.engine_of(current))
+    assert live.pwin_deltas(current, old) is None
+
+
+def test_pwin_deltas_only_when_engines_match_and_player_exists_in_both():
+    """Same engine: this week minus last week. A player missing from the
+    baseline is omitted, never padded to 0."""
+    engine = {"sources": ["covers"], "invert": "remaining", "market_weight": "equal"}
+    prev = {"engine": engine, "rows": [
+        {"player": "Eric", "pwin": 0.26},
+        {"player": "Nate", "pwin": 0.31},
+    ]}
+    cur = {"engine": engine, "rows": [
+        {"player": "Eric", "pwin": 0.33},
+        {"player": "Nate", "pwin": 0.19},
+        {"player": "New", "pwin": 0.10},
+    ]}
+    assert live.pwin_deltas(cur, prev) == {"Eric": pytest.approx(0.07),
+                                           "Nate": pytest.approx(-0.12)}
+    assert "New" not in live.pwin_deltas(cur, prev)
+    other = {**cur, "engine": {**engine, "invert": "full"}}
+    assert live.pwin_deltas(other, prev) is None
+    assert not live.engines_comparable(None, engine)
+    assert not live.engines_comparable(engine, None)
