@@ -309,7 +309,8 @@ def get_weeks(_: str | None = Depends(viewer)):
     weeks = _store_read(get_store().list_weeks)
     def slim(rows):
         return [{"player": r["player"], "pwin": r["pwin"], "exp_wins": r["exp_wins"]} for r in rows]
-    return [{"week": w["week"], "rows": slim(w["rows"]),
+    return [{"week": w["week"], "engine": _live.engine_of(w),
+             "rows": slim(w["rows"]),
              "views": {name: slim(rows) for name, rows in (w.get("views") or {}).items()}}
             for w in weeks]
 

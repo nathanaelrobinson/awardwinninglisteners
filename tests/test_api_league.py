@@ -642,6 +642,35 @@ def test_weekly_snapshot_written_once_per_week(api, store, live_env):
     assert list(weeks[0]["views"]) == ["blend", "covers", "fpi", "sagarin", "massey"]
     assert set(weeks[0]["views"]["fpi"][0]) == {"player", "pwin", "exp_wins"}
     assert weeks[0]["views"]["blend"] == weeks[0]["rows"]
+    # Stamped on the snapshot so Standings can refuse a delta against a
+    # week built from a different invert / source list / weights.
+    assert weeks[0]["engine"] == store.list_weeks()[0]["engine"]
+    assert weeks[0]["engine"]["invert"] == "remaining"
+    assert weeks[0]["engine"]["market_weight"] == "equal"
+    assert weeks[0]["engine"]["sources"] == ["covers", "fpi", "massey", "sagarin"]
+
+
+def test_weeks_infer_engine_from_file_era_views_and_do_not_compare(api, store, live_env):
+    """A stored week-1 snapshot has no engine field. The card must see its
+    source list and treat it as incomparable to the current remaining-slate
+    mixture -- not a 0% fake arrow."""
+    from winspool import live as live_mod
+    store.put_week(1, {"week": 1, "computed_at": 1.0,
+                       "rows": [{"player": PLAYERS[0], "pwin": 0.31, "exp_wins": 54.3}],
+                       "views": {"blend": [], "vegas": [], "espn_fpi": [],
+                                 "nfelo": [], "clay": [], "pff": [],
+                                 "epa": [], "kalshi": []}})
+    _complete_draft(api, store)
+    assert api.post("/internal/refresh-live",
+                    headers={"X-Refresh-Token": "tok"}).status_code == 200
+    weeks = api.get("/api/league/weeks").json()
+    by_week = {w["week"]: w for w in weeks}
+    assert by_week[1]["engine"] == {
+        "sources": ["clay", "epa", "espn_fpi", "kalshi", "nfelo", "pff", "vegas"],
+    }
+    assert by_week[2]["engine"]["invert"] == "remaining"
+    assert not live_mod.engines_comparable(by_week[1]["engine"], by_week[2]["engine"])
+    assert live_mod.pwin_deltas(by_week[2], by_week[1]) is None
 
 
 def test_refresh_live_reuses_last_schedule_on_fetch_failure(api, store, live_env, monkeypatch):
