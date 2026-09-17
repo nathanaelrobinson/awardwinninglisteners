@@ -14,8 +14,9 @@ import Review from './components/Review';
 import Simulations from './components/Simulations';
 import Week from './components/Week';
 import Admin from './components/Admin';
+import ModelPage from './components/Model';
 
-type Tab = 'draft' | 'review' | 'week' | 'standings' | 'simulations' | 'practice' | 'admin';
+type Tab = 'draft' | 'review' | 'week' | 'standings' | 'simulations' | 'model' | 'practice' | 'admin';
 
 export default function App() {
   const [me, setMe] = useState<Me | null | undefined>(undefined); // undefined = checking, null = anonymous
@@ -85,9 +86,10 @@ export default function App() {
   tabs.push('week');
   tabs.push('standings');
   if (view.status === 'done') tabs.push('simulations');
+  if (view.status === 'done') tabs.push('model');
   if (me?.is_commissioner) tabs.push('practice');
   if (me?.is_commissioner) tabs.push('admin');
-  const LABEL: Record<Tab, string> = { draft: 'Draft', review: 'Draft Review', week: 'Week', standings: 'Standings', simulations: 'Simulations', practice: 'Practice', admin: 'Admin' };
+  const LABEL: Record<Tab, string> = { draft: 'Draft', review: 'Draft Review', week: 'Week', standings: 'Standings', simulations: 'Simulations', model: 'Model', practice: 'Practice', admin: 'Admin' };
 
   return (
     <div className="app">
@@ -112,6 +114,7 @@ export default function App() {
           {tab === 'week' && <Week myName={me?.name ?? ''} />}
           {tab === 'standings' && <Standings me={me} view={view} />}
           {tab === 'simulations' && <Simulations myName={me?.name ?? ''} />}
+          {tab === 'model' && <ModelPage />}
           {tab === 'admin' && <Admin myName={me?.name ?? ''} />}
         </main>
       )}

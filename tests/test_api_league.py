@@ -613,6 +613,14 @@ def test_live_404_until_refreshed_and_public_after_draft(api, store, live_env):
     model = [r for r in store.all_odds() if r["source"] == "model"]
     assert model and model[-1]["games"]
     assert all(g["p_home"] is not None for g in model[-1]["games"])
+    assert "posterior" in body and "weights" in body
+    assert body["games"][0]["p_voices"]
+    assert body["prior"] and body["hfa"] == 2.0
+    assert body["n_played"] >= 0 and body["loglik"]
+    m = anon.get("/api/league/model")
+    assert m.status_code == 200
+    assert m.json()["weights"]
+    assert m.json()["teams"][0]["lo80"] <= m.json()["teams"][0]["hi80"]
 
 
 def test_live_and_weeks_401_before_draft_done(api, store, live_env):
@@ -671,6 +679,29 @@ def test_weeks_infer_engine_from_file_era_views_and_do_not_compare(api, store, l
     assert by_week[2]["engine"]["invert"] == "remaining"
     assert not live_mod.engines_comparable(by_week[1]["engine"], by_week[2]["engine"])
     assert live_mod.pwin_deltas(by_week[2], by_week[1]) is None
+
+
+def test_model_endpoint_reads_the_stored_projection_without_the_schedule(
+        api, store, live_env, monkeypatch):
+    """The Model tab is a read of what compute_live already wrote. Re-fetching
+    nflverse on every click is how that tab sits on 'not ready' while
+    Standings, which already has the live doc, is fine."""
+    from winspool import standings
+    _complete_draft(api, store)
+    h = {"X-Refresh-Token": "tok"}
+    assert api.post("/internal/refresh-live", headers=h).status_code == 200
+
+    def boom():
+        raise RuntimeError("network down")
+    monkeypatch.setattr(standings, "_load_schedule", boom)
+    monkeypatch.setattr(live_env, "_LAST_SCHEDULE", None)
+    monkeypatch.setattr(live_env, "_LAST_SCHEDULE_AT", None)
+    m = api.get("/api/league/model")
+    assert m.status_code == 200, m.text
+    body = m.json()
+    assert body["weights"]
+    assert body["teams"][0]["lo80"] <= body["teams"][0]["hi80"]
+    assert body["teams"][0]["strength"]
 
 
 def test_refresh_live_reuses_last_schedule_on_fetch_failure(api, store, live_env, monkeypatch):
@@ -890,6 +921,8 @@ def test_admin_model_sigma_calibration_follows_the_market_source(api, store, liv
     pmf[6], pmf[8], pmf[10] = 0.25, 0.5, 0.25
     store.add_rating({"source": "kalshi", "kind": "distribution", "ok": True,
                       "fetched_at": 1_800_000_000.0, "doc": {t: pmf for t in TEAMS}})
+    assert api.post("/internal/refresh-live",
+                    headers={"X-Refresh-Token": "tok"}).status_code == 200
 
     body = c.get("/api/admin/model").json()
     assert body["sigma_calibrated"] is True

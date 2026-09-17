@@ -19,7 +19,7 @@ from . import week as _week
 from .auth import current_user, require_commissioner, set_cookie, viewer
 from .league import LeagueError
 from .store import get_store
-from .teams import TEAM_INDEX, TEAMS, resolve
+from .teams import TEAMS, resolve
 from .throttle import Throttle
 
 router = APIRouter()
@@ -419,44 +419,31 @@ def admin_health(_: str = Depends(require_commissioner)):
     return {"sources": sources, "jobs": jobs}
 
 
-@router.get("/api/admin/model")
-def admin_model(_: str = Depends(require_commissioner)):
-    """What the ensemble computed on its way to the projection: each voice's
-    team strengths on the common scale, the consensus, per-team season sigma,
-    and whether that sigma was calibrated against the market.
+def _model_payload(store) -> dict:
+    """Team-strength posterior, BMA weights, and per-voice diagnostics.
 
-    Nothing here is recomputed — the ensemble is memoised on ratings freshness,
-    so this reads back the very objects the live doc was built from. When a
-    source fails to store, sigma silently falls back to BASE_SIGMA and the
-    projection goes wrong in its spread rather than its centre; the
-    `sigma_calibrated` flag comes out of the branch that makes that decision,
-    so this view cannot disagree with what the model actually did."""
-    from .ratings import to_common_scale
-    store = get_store()
+    A read of the live document compute_live already wrote. Shared by the
+    commissioner Admin tab and the public Model tab so they cannot disagree
+    about what the live projection used.
+    """
     live_doc = _store_read(store.get_live)
     if not live_doc:
+        raise HTTPException(503, "no live projection yet")
+    strengths = live_doc.get("voice_strength")
+    posterior = live_doc.get("posterior")
+    weights = live_doc.get("weights")
+    sigma = live_doc.get("sigma")
+    target_sd = live_doc.get("target_sd")
+    if (not strengths or posterior is None or not weights
+            or sigma is None or target_sd is None
+            or "sigma_calibrated" not in live_doc):
         raise HTTPException(503, "no live projection yet")
     latest = _store_read(store.latest_ratings)
     if not latest:
         raise HTTPException(503, "no ratings stored")
-    try:
-        df = _live._load_schedule_cached()
-    except Exception:
-        raise HTTPException(503, "schedule unavailable")
-    played, remaining = _live.split_schedule(df)
-    banked = _live.banked_wins(played)
-    rem_home, rem_away = _live.remaining_matchups(remaining)
-    reg = df[df["game_type"].str.upper() == "REG"]
-    full_home = reg["home_team"].map(TEAM_INDEX).to_numpy(dtype=int)
-    full_away = reg["away_team"].map(TEAM_INDEX).to_numpy(dtype=int)
-    matrix, weights, names, sigma = _live.source_matrix(
-        None, None, None, rem_home, rem_away, store=store, banked=banked,
-        cal_home=full_home, cal_away=full_away)
-    ens = _live._ensemble(None, None, None, rem_home, rem_away, store=store,
-                          banked=banked, cal_home=full_home, cal_away=full_away)
-    strength = _live.consensus(matrix, weights)
-
+    z80 = 1.2815515655446004
     views = live_doc.get("views") or {}
+    names = list(weights)
 
     def pwin_of(view_name):
         return {r["player"]: r["pwin"] for r in views.get(view_name) or []}
@@ -469,23 +456,49 @@ def admin_model(_: str = Depends(require_commissioner)):
                         "fetched_at": None if row is None else float(row["fetched_at"]),
                         "n_teams": len(_ratingsjob.team_entries(doc)),
                         "pwin": pwin_of(name),
+                        "weight": round(float(weights[name]), 6),
                         "meta": doc.get("__meta__")})
-    teams = [{"code": code,
-              "consensus": round(float(strength[i]), 3),
-              "sigma": round(float(sigma[i]), 3),
-              # NaN is "the market never quoted this team", which JSON cannot
-              # carry and the UI must be able to tell from a real zero.
-              "target_sd": (None if math.isnan(float(ens.target_sd[i]))
-                            else round(float(ens.target_sd[i]), 3)),
-              "strength": {n: round(float(matrix[j][i]), 3) for j, n in enumerate(names)}}
-             for i, code in enumerate(TEAMS)]
+    post_mean = posterior["mean"]
+    post_sd = posterior["sd"]
+    teams = []
+    for i, code in enumerate(TEAMS):
+        mean = float(post_mean[i])
+        sd = float(post_sd[i])
+        teams.append({
+            "code": code,
+            "consensus": round(mean, 3),
+            "sigma": round(float(sigma[i]), 3),
+            "lo80": round(mean - z80 * sd, 3),
+            "hi80": round(mean + z80 * sd, 3),
+            "target_sd": target_sd[i],
+            "strength": {n: round(float(strengths[n][i]), 3) for n in names},
+            "residual": {n: round(float(strengths[n][i]) - mean, 3) for n in names},
+        })
     teams.sort(key=lambda t: t["consensus"], reverse=True)
+    weeks = []
+    for w in _store_read(store.list_weeks):
+        weeks.append({"week": w["week"], "weights": w.get("weights") or {}})
     return {"week": live_doc.get("week"),
             "sources": sources,
             "blend_pwin": pwin_of("blend"),
             "teams": teams,
-            "sigma_calibrated": bool(ens.sigma_calibrated),
+            "weights": {n: round(float(weights[n]), 6) for n in names},
+            "brier": live_doc.get("brier"),
+            "weight_weeks": weeks,
+            "sigma_calibrated": bool(live_doc["sigma_calibrated"]),
             "sigma_base": _live.BASE_SIGMA}
+
+
+@router.get("/api/admin/model")
+def admin_model(_: str = Depends(require_commissioner)):
+    """What the ensemble computed on its way to the projection."""
+    return _model_payload(get_store())
+
+
+@router.get("/api/league/model")
+def get_model(_: str | None = Depends(viewer)):
+    """Public model tab: posterior strengths and BMA weights."""
+    return _model_payload(get_store())
 
 
 HISTORY_POINTS_CAP = 50

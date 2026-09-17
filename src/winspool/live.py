@@ -13,7 +13,7 @@ from typing import NamedTuple
 import numpy as np
 import pandas as pd
 
-from .game import win_prob
+from .game import win_prob, HFA, SCALE
 from .market import load_distributions, sample_independent
 from .ratings import calibrate_sigma, ensemble, to_common_scale
 from .sim import simulate_mixture
@@ -37,7 +37,7 @@ def split_schedule(df: pd.DataFrame):
 
 
 def banked_wins(played: pd.DataFrame) -> np.ndarray:
-    """Real wins so far per team index; a tie is 0.5 to each side."""
+    """Real wins so far per team index. An NFL tie is 0 wins for both."""
     b = np.zeros(N_TEAMS)
     for r in played.itertuples(index=False):
         h, a = TEAM_INDEX[r.home_team], TEAM_INDEX[r.away_team]
@@ -45,10 +45,20 @@ def banked_wins(played: pd.DataFrame) -> np.ndarray:
             b[h] += 1
         elif r.away_score > r.home_score:
             b[a] += 1
-        else:
-            b[h] += 0.5
-            b[a] += 0.5
     return b
+
+
+def played_outcomes(played: pd.DataFrame):
+    """Decisive completed games as (home_idx, away_idx, home_won). Ties omitted."""
+    if played.empty:
+        return (np.array([], dtype=int), np.array([], dtype=int),
+                np.array([], dtype=bool))
+    decisive = played["home_score"] != played["away_score"]
+    sl = played.loc[decisive]
+    home = sl["home_team"].map(TEAM_INDEX).to_numpy(dtype=int)
+    away = sl["away_team"].map(TEAM_INDEX).to_numpy(dtype=int)
+    won = (sl["home_score"] > sl["away_score"]).to_numpy(dtype=bool)
+    return home, away, won
 
 
 def week_of(df: pd.DataFrame) -> int:
@@ -166,21 +176,124 @@ def _ensemble(totals_path, power_path, kalshi_dist_path, home, away, seed=0,
     return _ENSEMBLE_CACHE[key]
 
 
+def prior_weights(names) -> np.ndarray:
+    """Dirichlet-mean prior over voices before any 2026 games are observed.
+
+    If `market_strength` is present and it is not the only voice, it gets
+    weight equal to the sum of the others (half the mixture). File-path
+    / preseason builds have no `market_strength` and stay equal-weight.
+    """
+    names = list(names)
+    w = np.ones(len(names))
+    if "market_strength" in names and len(names) > 1:
+        w[names.index("market_strength")] = len(names) - 1
+    return w / w.sum()
+
+
+def bma_loglik(matrix, home_idx, away_idx, home_won) -> np.ndarray:
+    """Log P(completed games | voice) for each row of `matrix`.
+
+    Empty games is a zero vector: the likelihood is 1 and does not move
+    the prior.
+    """
+    matrix = np.asarray(matrix, dtype=float)
+    n = matrix.shape[0]
+    if len(home_idx) == 0:
+        return np.zeros(n)
+    y = np.asarray(home_won, dtype=float)
+    ll = np.zeros(n)
+    for k in range(n):
+        p = np.clip(win_prob(matrix[k, home_idx], matrix[k, away_idx]), 1e-12, 1 - 1e-12)
+        ll[k] = float(np.sum(y * np.log(p) + (1.0 - y) * np.log(1.0 - p)))
+    return ll
+
+
+def bma_weights(matrix, prior, home_idx, away_idx, home_won) -> np.ndarray:
+    """Posterior mean over voices: P(k | games) ∝ prior_k * P(games | s_k).
+
+    Each completed game is a Bernoulli observation under that voice's
+    probit. No games leaves the prior unchanged. Weights always sum to 1.
+    """
+    prior = np.asarray(prior, dtype=float)
+    if prior.size == 0:
+        raise ValueError("bma_weights requires a prior")
+    prior = prior / prior.sum()
+    ll = bma_loglik(matrix, home_idx, away_idx, home_won)
+    logw = np.log(np.clip(prior, 1e-12, 1.0)) + ll
+    logw -= logw.max()
+    w = np.exp(logw)
+    return w / w.sum()
+
+
+def posterior_strength(matrix, weights, home_idx, away_idx, home_won, *,
+                       n_teams=None, prior_sd=8.0, voice_tau=None, hfa=None,
+                       scale=None):
+    """Gaussian posterior for team strengths given voices and completed games.
+
+    Starts from N(0, prior_sd^2 I), treats each voice as an observation of
+    s with noise voice_tau (scalar or per-voice), then extended-Kalman
+    updates for each decisive game. Returns (mean, sd) on the 32-team
+    (or n_teams) scale, mean-centred so the all-ones direction stays pinned.
+    """
+    from scipy.stats import norm as _norm
+    matrix = np.asarray(matrix, dtype=float)
+    n_src, n_obs = matrix.shape
+    n_teams = n_obs if n_teams is None else int(n_teams)
+    if n_obs != n_teams:
+        raise ValueError(f"matrix has {n_obs} teams, n_teams={n_teams}")
+    hfa = HFA if hfa is None else hfa
+    scale = SCALE if scale is None else scale
+    if scale == 0:
+        raise ValueError("scale is 0")
+    mu = np.zeros(n_teams)
+    P = np.eye(n_teams) * (prior_sd ** 2)
+    if voice_tau is None:
+        cons = consensus(matrix, weights)
+        resid = matrix - cons
+        tau = resid.std() if n_src > 1 else 3.0
+        tau = float(tau) if tau > 0.1 else 3.0
+        taus = np.full(n_src, tau)
+    else:
+        taus = np.broadcast_to(np.asarray(voice_tau, dtype=float), (n_src,))
+
+    eye = np.eye(n_teams)
+    for k in range(n_src):
+        K = P @ np.linalg.inv(P + (taus[k] ** 2) * eye)
+        mu = mu + K @ (matrix[k] - mu)
+        P = (eye - K) @ P
+
+    pdf = _norm.pdf
+    cdf = _norm.cdf
+    for h, a, won in zip(home_idx, away_idx, home_won):
+        z = (mu[h] - mu[a] + hfa) / scale
+        hx = float(cdf(z))
+        H = np.zeros(n_teams)
+        dens = float(pdf(z)) / scale
+        H[h] = dens
+        H[a] = -dens
+        S = float(H @ P @ H + max(hx * (1.0 - hx), 1e-4))
+        Kvec = (P @ H) / S
+        y = 1.0 if won else 0.0
+        mu = mu + Kvec * (y - hx)
+        P = (eye - np.outer(Kvec, H)) @ P
+
+    mu = mu - mu.mean()
+    sd = np.sqrt(np.clip(np.diag(P), 1e-8, None))
+    return mu, sd
+
+
 def source_matrix(totals_path, power_path, kalshi_dist_path, home, away,
-                  store=None, banked=None, cal_home=None, cal_away=None):
+                  store=None, banked=None, cal_home=None, cal_away=None,
+                  played_home=None, played_away=None, played_won=None):
     """(matrix, weights, names, sigma_full).
 
     Live callers pass remaining `home`/`away` and `banked` so totals invert
     against games still to play. `cal_home`/`cal_away` stay the full season
     for Kalshi SD calibration.
 
-    Weight rule: if `market_strength` is present and it is not the only
-    voice, it gets weight equal to the sum of the other live voices (half
-    the mixture; the rest split evenly). The remaining-slate GPF is the
-    identified remaining-season rating. The others are still used -- they
-    are shrunk priors (EPA/FPI) or season-total inverts (Covers/Kalshi) --
-    but after week 1 they must not outvote the market four-to-one. File-path
-    / preseason builds have no `market_strength` and stay equal-weight.
+    Weights start at `prior_weights` (market_strength half the mixture when
+    present) and, when completed games are passed, become the BMA posterior
+    over voices.
     """
     ens = _ensemble(totals_path, power_path, kalshi_dist_path,
                     home, away, store=store, banked=banked,
@@ -188,11 +301,10 @@ def source_matrix(totals_path, power_path, kalshi_dist_path, home, away,
     sources, sigma_full = ens.sources, ens.sigma
     names = list(sources)
     matrix = to_common_scale(sources)
-    w = np.ones(len(names))
-    # market_strength weight = sum of the others, so it is half the mixture.
-    if "market_strength" in names and len(names) > 1:
-        w[names.index("market_strength")] = len(names) - 1
-    return matrix, w / w.sum(), names, sigma_full
+    w = prior_weights(names)
+    if played_home is not None:
+        w = bma_weights(matrix, w, played_home, played_away, played_won)
+    return matrix, w, names, sigma_full
 
 
 def season_sigma(remaining_per_team, base_sigma=4.5) -> np.ndarray:
@@ -309,6 +421,38 @@ def market_probs(odds_rows: list[dict]) -> dict:
     return out
 
 
+def market_lines(odds_rows: list[dict]) -> dict:
+    """(home, away) -> {spread, ml_home, ml_away} from the posted book, else nflverse.
+
+    Same source preference the Week tab uses for the line column.
+    """
+    from .gameodds import GameOdds
+    by_game: dict[tuple, dict] = {}
+    for row in sorted(odds_rows, key=lambda r: float(r.get("fetched_at") or 0.0)):
+        source = row["source"]
+        if source == "model":
+            continue
+        for g in row.get("games") or []:
+            key = (g["home"], g["away"])
+            by_game.setdefault(key, {})[source] = GameOdds(
+                source=source, home=g["home"], away=g["away"],
+                fetched_at=float(row.get("fetched_at") or 0.0),
+                spread=g.get("spread"), total=g.get("total"),
+                ml_home=g.get("ml_home"), ml_away=g.get("ml_away"),
+                yes_home=g.get("yes_home"), yes_away=g.get("yes_away"))
+    out = {}
+    for key, srcs in by_game.items():
+        line = srcs.get("book") or srcs.get("nflverse")
+        if line is None:
+            continue
+        out[key] = {
+            "spread": line.spread,
+            "ml_home": line.ml_home,
+            "ml_away": line.ml_away,
+        }
+    return out
+
+
 def _project(rosters, banked, matrix, weights, sigma, rest, wh, wa, n_seasons, rng,
              p_override=None):
     """One season projection under one set of source weights.
@@ -354,6 +498,24 @@ def _week_wins(outcomes, wh, wa, n_seasons):
         w[:, wh[g]] += outcomes[:, g]
         w[:, wa[g]] += ~outcomes[:, g]
     return w
+
+
+def _voice_snapshot(matrix, names, sigma, ens) -> dict:
+    """Per-voice strengths and Kalshi-calibration flags the Model tab reads
+    back. Written once at compute_live so GET /api/league/model does not
+    re-fetch the schedule or re-run the ensemble."""
+    return {
+        "voice_strength": {
+            n: [round(float(matrix[j][i]), 3) for i in range(N_TEAMS)]
+            for j, n in enumerate(names)
+        },
+        "sigma": [round(float(x), 3) for x in np.asarray(sigma, dtype=float)],
+        "target_sd": [
+            None if np.isnan(float(x)) else round(float(x), 3)
+            for x in ens.target_sd
+        ],
+        "sigma_calibrated": bool(ens.sigma_calibrated),
+    }
 
 
 def live_engine(names: list[str]) -> dict:
@@ -415,41 +577,52 @@ def pwin_deltas(current: dict, previous: dict) -> dict | None:
     return out
 
 
+
 def compute_live(rosters: dict, sched_df: pd.DataFrame, *, totals_path=None, power_path=None,
                  kalshi_dist_path=None, ratings_fetched_at=None, market: dict | None = None,
+                 lines: dict | None = None,
                  n_seasons=5000, seed=0, now=None, store=None) -> dict:
     """The live projection document. See the spec for the field list."""
     rng = np.random.default_rng(seed)
     played, remaining = split_schedule(sched_df)
     week = week_of(sched_df)
     banked = banked_wins(played)
+    ph, pa, pw = played_outcomes(played)
     reg = _reg(sched_df)
     full_home = reg["home_team"].map(TEAM_INDEX).to_numpy(dtype=int)
     full_away = reg["away_team"].map(TEAM_INDEX).to_numpy(dtype=int)
     rem_home, rem_away = remaining_matchups(remaining)
     matrix, weights, _names, sigma_full = source_matrix(
         totals_path, power_path, kalshi_dist_path, rem_home, rem_away, store=store,
-        banked=banked, cal_home=full_home, cal_away=full_away)
+        banked=banked, cal_home=full_home, cal_away=full_away,
+        played_home=ph, played_away=pa, played_won=pw)
+    ens = _ensemble(totals_path, power_path, kalshi_dist_path, rem_home, rem_away,
+                    store=store, banked=banked, cal_home=full_home, cal_away=full_away)
+    snap = _voice_snapshot(matrix, _names, sigma_full, ens)
+    post_mean, post_sd = posterior_strength(matrix, weights, ph, pa, pw)
     this_week = games_in_week(remaining, week)
     rest = remaining[remaining["week"] != week].reset_index(drop=True)
-    sigma = season_sigma(remaining_games_per_team(rest), base_sigma=sigma_full)
+    sigma = season_sigma(remaining_games_per_team(rest), base_sigma=post_sd)
     wh, wa = remaining_matchups(this_week)
 
     # Current-week games are simulated from the market where we have one:
-    # fresher information wins.
-    override, game_source = week_home_p(matrix, weights, wh, wa, market)
+    # fresher information wins. Blend uses the posterior mean as the model.
+    post_matrix = post_mean[None, :]
+    post_w = np.array([1.0])
+    override, game_source = week_home_p(post_matrix, post_w, wh, wa, market)
 
     blend, _team_totals, totals, future_rest, p_home, week_outcomes = _project(
-        rosters, banked, matrix, weights, sigma, rest, wh, wa, n_seasons, rng,
+        rosters, banked, post_matrix, post_w, sigma, rest, wh, wa, n_seasons, rng,
         p_override=override)
 
     # One extra view per source, that voice at 100%: the "score lens" on the
     # Standings card. Same method as the blend so the numbers are comparable.
     views = {"blend": blend}
+    voice_sigma = season_sigma(remaining_games_per_team(rest), base_sigma=sigma_full)
     for i, name in enumerate(_names):
         one_hot = np.zeros(len(_names))
         one_hot[i] = 1.0
-        views[name] = _project(rosters, banked, matrix, one_hot, sigma, rest, wh, wa,
+        views[name] = _project(rosters, banked, matrix, one_hot, voice_sigma, rest, wh, wa,
                                n_seasons, rng, p_override=override)[0]
 
     def totals_for(outcomes):
@@ -464,8 +637,17 @@ def compute_live(rosters: dict, sched_df: pd.DataFrame, *, totals_path=None, pow
 
     # Each game, forced both ways once: every player's swing comes off the same
     # pair of runs, so a game costs two projections however many owners it has.
-    strength_blend = consensus(matrix, weights)
+    strength_blend = post_mean
     p_model_only = win_prob(strength_blend[wh], strength_blend[wa]) if len(wh) else np.zeros(0)
+    p_by_voice = {
+        name: (win_prob(matrix[j, wh], matrix[j, wa]) if len(wh) else np.zeros(0))
+        for j, name in enumerate(_names)
+    }
+    prior = prior_weights(_names)
+    p_prior_arr = (
+        win_prob(consensus(matrix, prior)[wh], consensus(matrix, prior)[wa])
+        if len(wh) else np.zeros(0)
+    )
     games_out = []
     for g in range(len(wh)):
         forced = week_outcomes.copy()
@@ -473,11 +655,20 @@ def compute_live(rosters: dict, sched_df: pd.DataFrame, *, totals_path=None, pow
         win_pw = pool_pwin(_player_totals(rosters, totals_for(forced)))
         forced[:, g] = False
         los_pw = pool_pwin(_player_totals(rosters, totals_for(forced)))
+        key = (TEAMS[wh[g]], TEAMS[wa[g]])
+        line = (lines or {}).get(key) or {}
+        mp = None if not market else market.get(key)
         games_out.append({
-            "home": TEAMS[wh[g]], "away": TEAMS[wa[g]],
+            "home": key[0], "away": key[1],
             "p_model": round(float(p_model_only[g]), 4),
             "p_used": round(float(p_home[g]), 4),
             "source": game_source[g],
+            "p_voices": {n: round(float(p_by_voice[n][g]), 4) for n in _names},
+            "p_prior": round(float(p_prior_arr[g]), 4),
+            "p_market": None if mp is None else round(float(mp), 4),
+            "spread": line.get("spread"),
+            "ml_home": line.get("ml_home"),
+            "ml_away": line.get("ml_away"),
             "swing": {p: round(win_pw[p] - los_pw[p], 4) for p in rosters},
         })
 
@@ -509,11 +700,31 @@ def compute_live(rosters: dict, sched_df: pd.DataFrame, *, totals_path=None, pow
                         "max_wins": len(games)})
     tw_rows.sort(key=lambda r: r["leverage"], reverse=True)
 
-    return {"week": week, "computed_at": float(now if now is not None else time.time()),
+    computed_at = float(now if now is not None else time.time())
+    brier = None
+    if len(ph):
+        pp = np.clip(win_prob(post_mean[ph], post_mean[pa]), 0.0, 1.0)
+        brier = round(float(np.mean((pp - pw.astype(float)) ** 2)), 4)
+    ll = bma_loglik(matrix, ph, pa, pw)
+    return {"week": week, "computed_at": computed_at,
             "ratings_fetched_at": ratings_fetched_at,
             "engine": live_engine(_names),
             "rows": rows, "x": xs, "n_sims": int(n_seasons), "this_week": tw_rows,
-            "games": games_out, "views": views}
+            "games": games_out, "views": views,
+            "weights": {n: round(float(w), 6) for n, w in zip(_names, weights)},
+            "prior": {n: round(float(w), 6) for n, w in zip(_names, prior)},
+            "loglik": {n: round(float(ll[j]), 4) for j, n in enumerate(_names)},
+            "n_played": int(len(ph)),
+            "hfa": HFA, "scale": SCALE,
+            "posterior": {
+                "mean": [round(float(v), 4) for v in post_mean],
+                "sd": [round(float(v), 4) for v in post_sd],
+            },
+            "brier": brier,
+            "ticks": [{"at": computed_at, "week": week,
+                       "rows": [{"player": r["player"], "pwin": r["pwin"]} for r in rows]}],
+            **snap,
+            }
 
 
 _LAST_SCHEDULE: pd.DataFrame | None = None
@@ -563,16 +774,23 @@ def refresh_live(store, *, n_seasons=5000) -> dict:
     rosters = _league.view(store.get())["rosters"]
     df = _load_schedule_cached()
     try:
-        market = market_probs(store.latest_odds(SEASON, week_of(df)))
+        odds_rows = store.latest_odds(SEASON, week_of(df))
+        market = market_probs(odds_rows)
+        lines = market_lines(odds_rows)
     except Exception as e:        # noqa: BLE001 - logged, not raised
         # Non-fatal: model-only still projects. But silently reverting to the
         # model for the rest of the season is invisible in the UI, so say so.
         market = {}
+        lines = {}
         print(f"  WARNING: market odds unavailable, using model only: {e}",
               file=sys.stderr)
     doc = compute_live(rosters, df, store=store,
                        ratings_fetched_at=ratings_fetched_at(store),
-                       market=market, n_seasons=n_seasons)
+                       market=market, lines=lines, n_seasons=n_seasons)
+    prev = store.get_live() or {}
+    ticks = [t for t in (prev.get("ticks") or []) if t.get("week") == doc["week"]]
+    ticks.extend(doc["ticks"])
+    doc["ticks"] = ticks[-64:]
     store.put_live(doc)
     # The model's own voice, logged alongside the market's, so a completed week
     # can score the two against each other. Imported here: oddslog imports us.

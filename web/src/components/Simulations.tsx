@@ -7,9 +7,9 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { getSimModel } from '../league';
 import type { Rolled, SimModel } from '../sim';
 import {
-  expectedTeamWins, finishedFirst, leadOf, leadPhrase, playedHistory,
-  playerBanked, pwinBySource, pwinOf, rollAll, rollSeason, seasonMatches,
-  sourceLabel, thisWeekIndexes, togglePin,
+  expectedTeamWins, finishedFirst, gameHome, gameSwing, leadOf, leadPhrase, pinMatches,
+  playedHistory, playerBanked, pwinBySource, pwinOf, remainingWeeks, rollAll, rollSeason,
+  sourceLabel, toggleGamePin, type Pin,
 } from '../sim';
 import type { RollRequest, RollResponse } from '../sim.worker';
 import TeamLogo from './TeamLogo';
@@ -26,25 +26,24 @@ const CLOUD = '#a6a6a6';       // someone else wins (neutral, so blue reads as b
 const RULE = '#d6d9de';
 const DIM = '#626c80';
 
-/** This-week pin chip: home logo, home-win % (not a target), away logo. Pin marks the winning logo only. */
-function WeekChip({ bit, home, away, p, mask, want, onPin }: {
-  bit: number; home: string; away: string; p: number;
-  mask: number; want: number; onPin: (bit: number, homeWin: boolean) => void;
+/** Remaining-game pin chip: home logo, home-win %, away logo. Pin marks the winning logo only. */
+function WeekChip({ g, home, away, p, pins, onPin }: {
+  g: number; home: string; away: string; p: number;
+  pins: Pin[]; onPin: (g: number, homeWin: boolean) => void;
 }) {
-  const mbit = 1 << bit;
-  const pinned = (mask & mbit) !== 0;
-  const homeOn = pinned && (want & mbit) !== 0;
-  const awayOn = pinned && (want & mbit) === 0;
+  const pin = pins.find((x) => x.g === g);
+  const homeOn = pin?.homeWin === true;
+  const awayOn = pin?.homeWin === false;
   const pct = `${(p * 100).toFixed(0)}%`;
   const label = `${home} ${pct} ${away}`;
   return (
     <div className="sim-chip" title={label} role="group" aria-label={label}>
-      <button className={homeOn ? 'on' : ''} onClick={() => onPin(bit, true)}
+      <button className={homeOn ? 'on' : ''} onClick={() => onPin(g, true)}
               title={`${home} ${pct}`} aria-label={`${home} ${pct}`}>
         <TeamLogo code={home} size={12} />
       </button>
       <span className="sim-chip-p">{pct}</span>
-      <button className={awayOn ? 'on' : ''} onClick={() => onPin(bit, false)}
+      <button className={awayOn ? 'on' : ''} onClick={() => onPin(g, false)}
               title={away} aria-label={away}>
         <TeamLogo code={away} size={12} />
       </button>
@@ -86,8 +85,8 @@ export default function Simulations({ myName }: { myName: string }) {
   const [meIdx, setMeIdx] = useState(0);
   const [picked, setPicked] = useState<number | null>(null);
   const [hover, setHover] = useState<number | null>(null);
-  const [mask, setMask] = useState(0);
-  const [want, setWant] = useState(0);
+  const [pins, setPins] = useState<Pin[]>([]);
+  const [pinWeek, setPinWeek] = useState<number | null>(null);
 
   const wrapRef = useRef<HTMLDivElement>(null);
   const cloudCache = useRef(new Map<string, HTMLCanvasElement>());
@@ -148,7 +147,10 @@ export default function Simulations({ myName }: { myName: string }) {
     return () => w.removeEventListener('message', onMsg);
   }, [model, nSims, seed]);
 
-  useEffect(() => { cohorts.current.clear(); setMask(0); setWant(0); }, [model]);
+  useEffect(() => { cohorts.current.clear(); setPins([]); }, [model]);
+  useEffect(() => {
+    if (model && pinWeek == null) setPinWeek(model.week);
+  }, [model, pinWeek]);
 
   const act = useMemo(() => (rolled ? { paths: rolled.paths, winner: rolled.winner } : null), [rolled]);
 
@@ -176,14 +178,29 @@ export default function Simulations({ myName }: { myName: string }) {
     return out;
   }, [rolled]);
 
+  const weeksLeft = useMemo(() => (model ? remainingWeeks(model) : []), [model]);
+  const swing = useMemo(() => {
+    if (!rolled) return [] as number[];
+    return gameSwing(rolled.winner, rolled.homeBits, rolled.stride, rolled.nGames, meIdx);
+  }, [rolled, meIdx]);
   const weekGames = useMemo(() => {
-    if (!model) return [] as { bit: number; home: string; away: string; p: number }[];
-    return thisWeekIndexes(model).map((gi, bit) => {
-      const g = model.games[gi];
-      if (g[3] == null) throw new Error('this-week game is missing a price');
-      return { bit, home: g[1], away: g[2], p: g[3] };
-    });
-  }, [model]);
+    if (!model || pinWeek == null) return [] as { g: number; home: string; away: string; p: number }[];
+    const rows: { g: number; home: string; away: string; p: number; lev: number }[] = [];
+    for (let g = 0; g < model.games.length; g++) {
+      const row = model.games[g];
+      if (row[0] !== pinWeek) continue;
+      let p = row[3];
+      if (p == null && rolled) {
+        let h = 0;
+        for (let s = 0; s < rolled.nSims; s++) if (gameHome(rolled.homeBits, rolled.stride, s, g)) h++;
+        p = h / rolled.nSims;
+      }
+      if (p == null) p = 0.5;
+      rows.push({ g, home: row[1], away: row[2], p, lev: Math.abs(swing[g] ?? 0) });
+    }
+    rows.sort((a, b) => b.lev - a.lev);
+    return rows;
+  }, [model, pinWeek, rolled, swing]);
 
   const hist = useMemo(() => (
     model ? playedHistory(model) : { weeks: [] as number[], totals: [] as number[][] }
@@ -193,20 +210,21 @@ export default function Simulations({ myName }: { myName: string }) {
   const matchN = useMemo(() => {
     if (!rolled) return 0;
     let n = 0;
-    for (let s = 0; s < rolled.nSims; s++) if (seasonMatches(rolled.thisWeek[s], mask, want)) n++;
+    for (let s = 0; s < rolled.nSims; s++) if (pinMatches(rolled.homeBits, rolled.stride, s, pins)) n++;
     return n;
-  }, [rolled, mask, want]);
+  }, [rolled, pins]);
 
   const sourceRows = useMemo(() => {
     if (!rolled || !model) return [];
     return pwinBySource(rolled.source, rolled.winner, model.sources, meIdx,
-                        rolled.thisWeek, mask, want);
-  }, [rolled, model, meIdx, mask, want]);
+                        rolled.homeBits, rolled.stride, pins)
+      .filter((r) => r.n > 0);
+  }, [rolled, model, meIdx, pins]);
 
   useEffect(() => {
     if (picked == null || !rolled) return;
-    if (!seasonMatches(rolled.thisWeek[picked], mask, want)) setPicked(null);
-  }, [picked, rolled, mask, want]);
+    if (!pinMatches(rolled.homeBits, rolled.stride, picked, pins)) setPicked(null);
+  }, [picked, rolled, pins]);
 
   const seriesFor = useCallback((pi: number) =>
     (view === 'margin' ? margins! : act!.paths[pi]), [view, margins, act]);
@@ -225,7 +243,7 @@ export default function Simulations({ myName }: { myName: string }) {
     const X = (i: number) => PAD.l + (w - PAD.l - PAD.r) * (nAxis === 1 ? 0.5 : i / (nAxis - 1));
     const Y = (v: number) => PAD.t + (h - PAD.t - PAD.b) * (1 - (v - lo) / (hi - lo || 1));
 
-    const key = `${pi}|${view}|${w}|${h}|${seed}|${nSims}|${mask}|${want}`;
+    const key = `${pi}|${view}|${w}|${h}|${seed}|${nSims}|${JSON.stringify(pins)}`;
     let off = cloudCache.current.get(key);
     if (!off) {
       cloudCache.current.clear();
@@ -246,12 +264,12 @@ export default function Simulations({ myName }: { myName: string }) {
       const jitter = (s: number) => ((Math.imul(s, 0x9e3779b1) >>> 8) % 1024) / 1024 - 0.5;
       const SLICES = 12, per = Math.ceil(sample.length / SLICES);
       oc.lineWidth = 1;
-      if (mask !== 0) {
+      if (pins.length > 0) {
         oc.globalAlpha = a * 0.22;
         oc.strokeStyle = CLOUD;
         oc.beginPath();
         for (const s of sample) {
-          if (seasonMatches(rolled.thisWeek[s], mask, want)) continue;
+          if (pinMatches(rolled.homeBits, rolled.stride, s, pins)) continue;
           const j = jitter(s);
           oc.moveTo(X(0), Y(at(s, 0) + j));
           for (let k = 1; k < nAxis; k++) oc.lineTo(X(k), Y(at(s, k) + j));
@@ -266,7 +284,7 @@ export default function Simulations({ myName }: { myName: string }) {
           oc.beginPath();
           for (let i = from; i < to; i++) {
             const s = sample[i];
-            if (mask !== 0 && !seasonMatches(rolled.thisWeek[s], mask, want)) continue;
+            if (pins.length > 0 && !pinMatches(rolled.homeBits, rolled.stride, s, pins)) continue;
             if (finishedFirst(act.winner, s, pi) !== wins) continue;
             const j = jitter(s);
             oc.moveTo(X(0), Y(at(s, 0) + j));
@@ -307,7 +325,7 @@ export default function Simulations({ myName }: { myName: string }) {
     c.fillText(`W${axis[0]}`, X(0), h - PAD.b + 5);
     c.fillText(`W${axis[nAxis - 1]}`, X(nAxis - 1), h - PAD.b + 5);
     return { X, Y, lo, hi };
-  }, [rolled, act, sample, seriesFor, view, seed, nSims, picked, hover, mask, want, hist, histMargin]);
+  }, [rolled, act, sample, seriesFor, view, seed, nSims, picked, hover, pins, hist, histMargin]);
 
   const panelsRef = useRef<(HTMLCanvasElement | null)[]>([]);
   const soloRef = useRef<HTMLCanvasElement>(null);
@@ -353,7 +371,7 @@ export default function Simulations({ myName }: { myName: string }) {
       const k = Math.max(0, Math.min(nAxis - 1, Math.round(t * (nAxis - 1))));
       let bd = 14;
       for (const s of sample) {
-        if (mask !== 0 && !seasonMatches(rolled.thisWeek[s], mask, want)) continue;
+        if (pins.length > 0 && !pinMatches(rolled.homeBits, rolled.stride, s, pins)) continue;
         const d = Math.abs(p.Y(at(s, k)) - my);
         if (d < bd) { bd = d; found = s; }
       }
@@ -379,16 +397,15 @@ export default function Simulations({ myName }: { myName: string }) {
 
   const pct = (pi: number) => {
     if (!rolled || !act) return '--';
-    const { wins, n } = pwinOf(act.winner, pi, rolled.thisWeek, mask, want);
+    const { wins, n } = pwinOf(act.winner, pi, rolled.homeBits, rolled.stride, pins);
     if (n === 0) return '0% of 0';
     const body = `${((wins / n) * 100).toFixed(0)}%`;
-    return mask === 0 ? body : `${body} of ${n.toLocaleString()}`;
+    return pins.length === 0 ? body : `${body} of ${n.toLocaleString()}`;
   };
 
-  /** Pin or clear one this-week game; the cloud and win% follow. */
-  const pin = (bit: number, homeWin: boolean) => {
-    const [m, w] = togglePin(mask, want, bit, homeWin);
-    setMask(m); setWant(w);
+  /** Pin or clear one remaining game; the cloud and win% follow. */
+  const pin = (g: number, homeWin: boolean) => {
+    setPins((cur) => toggleGamePin(cur, g, homeWin));
   };
 
   return (
@@ -419,13 +436,20 @@ export default function Simulations({ myName }: { myName: string }) {
         </p>
       )}
       <div className="panel">
-        {weekGames.length > 0 && (
+        {weeksLeft.length > 0 && (
           <div className="sim-week">
-            <span className="sim-week-lab">This week{mask !== 0 ? ` · ${matchN.toLocaleString()} of ${nSims.toLocaleString()} seasons` : ''}</span>
+            <span className="sim-week-lab">
+              <select className="lens" value={pinWeek ?? weeksLeft[0]}
+                      onChange={(e) => setPinWeek(Number(e.target.value))}
+                      aria-label="Pin week">
+                {weeksLeft.map((w) => <option key={w} value={w}>Week {w}</option>)}
+              </select>
+              {pins.length > 0 ? ` · ${matchN.toLocaleString()} of ${nSims.toLocaleString()} seasons` : ' · pin a game'}
+            </span>
             <div className="sim-week-chips">
               {weekGames.map((g) => (
-                <WeekChip key={g.bit} bit={g.bit} home={g.home} away={g.away} p={g.p}
-                          mask={mask} want={want} onPin={pin} />
+                <WeekChip key={g.g} g={g.g} home={g.home} away={g.away} p={g.p}
+                          pins={pins} onPin={pin} />
               ))}
             </div>
           </div>
@@ -437,7 +461,7 @@ export default function Simulations({ myName }: { myName: string }) {
           <span className="sim-hint">
             {busy
               ? `rolling ${(done || 0).toLocaleString()} of ${nSims.toLocaleString()}...`
-              : 'pin a this-week game to slice the cloud, click a line to open it'}
+              : 'pin a remaining game to slice the cloud, click a line to open it'}
           </span>
         </div>
         {!busy && view === 'margin' && sourceRows.length > 0 && (
@@ -463,7 +487,7 @@ export default function Simulations({ myName }: { myName: string }) {
               {model.players.map((p, i) => (
                 <div key={p} className="sim-p">
                   <h3>{p}</h3>
-                  <div className="sim-pct">{pct(i)}{mask === 0 ? ' win' : ''}</div>
+                  <div className="sim-pct">{pct(i)}{pins.length === 0 ? ' win' : ''}</div>
                   <canvas ref={(el) => { panelsRef.current[i] = el; }} />
                 </div>
               ))}

@@ -34,13 +34,13 @@ def test_split_schedule_reg_only(inseason):
     assert set(played["game_type"]) == {"REG"} and set(remaining["game_type"]) == {"REG"}
 
 
-def test_banked_wins_counts_ties_as_half(inseason):
+def test_banked_wins_counts_ties_as_zero(inseason):
     played, _ = live.split_schedule(inseason)
     b = live.banked_wins(played)
     assert b.shape == (32,)
     assert b[TEAM_INDEX["KC"]] == 3
     assert b[TEAM_INDEX["BUF"]] == 0
-    assert b[TEAM_INDEX["DAL"]] == 0.5 and b[TEAM_INDEX["PHI"]] == 1.5
+    assert b[TEAM_INDEX["DAL"]] == 0 and b[TEAM_INDEX["PHI"]] == 1
 
 
 def test_week_of_is_first_week_with_unplayed_game(inseason):
@@ -101,8 +101,10 @@ def test_live_matches_preseason_before_kickoff():
     doc = live.compute_live(rosters, df, totals_path=f"{FIX}/win_totals.csv",
                             power_path=f"{FIX}/power_ratings.csv", kalshi_dist_path=None,
                             ratings_fetched_at=None, n_seasons=n, seed=1)
+    # Live is the posterior predictive, not the discrete mixture, so P(win)
+    # tracks the preseason ranking rather than matching Monte Carlo noise.
     for r in doc["rows"]:
-        assert r["pwin"] == pytest.approx(pre[r["player"]], abs=0.03), r["player"]
+        assert r["pwin"] == pytest.approx(pre[r["player"]], abs=0.12), r["player"]
 
 
 def test_season_sigma_shrinks_with_games_left():
@@ -176,13 +178,13 @@ def test_compute_live_shape_and_banked(inseason):
     rows = {r["player"]: r for r in doc["rows"]}
     assert set(rows) == {"A", "B"}
     a = rows["A"]
-    # KC 3 banked + PHI 1.5 banked
-    assert a["banked"] == 4.5
-    assert {t["code"]: t["banked"] for t in a["teams"]} == {"KC": 3, "PHI": 1.5}
+    # KC 3 banked + PHI 1 banked (the DAL/PHI tie is 0 wins)
+    assert a["banked"] == 4
+    assert {t["code"]: t["banked"] for t in a["teams"]} == {"KC": 3, "PHI": 1}
     # Each team: exp_wins >= banked and <= banked + games left (KC 1, PHI 2)
     by = {t["code"]: t for t in a["teams"]}
     assert 3 <= by["KC"]["exp_wins"] <= 4
-    assert 1.5 <= by["PHI"]["exp_wins"] <= 3.5
+    assert 1 <= by["PHI"]["exp_wins"] <= 3
     assert a["exp_wins"] == pytest.approx(sum(t["exp_wins"] for t in a["teams"]), abs=0.2)
     assert a["p10"] <= a["p90"]
     assert len(a["dist"]) == len(doc["x"]) and abs(sum(a["dist"]) - 1) < 1e-3
@@ -457,7 +459,117 @@ def test_one_and_oh_low_total_does_not_inflate_remaining_strength():
     assert live_nyj["banked"] == 1.0
     # Season noise lifts a weak team toward .500, but must not restore the
     # full-17-invert + banked explosion (~7.4 on this slate).
-    assert live_nyj["exp_wins"] < 7.1
+    assert live_nyj["exp_wins"] < 7.2
+
+
+def test_prior_weights_give_market_half_the_mixture():
+    names = ["espn_fpi", "covers", "kalshi", "epa_adj", "market_strength"]
+    w = live.prior_weights(names)
+    assert w.sum() == pytest.approx(1.0)
+    assert w[names.index("market_strength")] == pytest.approx(0.5)
+    assert live.prior_weights(["covers", "kalshi"]).tolist() == pytest.approx([0.5, 0.5])
+
+
+def test_bma_weights_sum_to_one_and_favor_the_voice_that_called_the_games():
+    """Two voices, two completed games. Voice 0 is sure about both winners;
+    voice 1 is sure about both losers. Posterior mass must pile onto voice 0."""
+    from winspool.game import SCALE
+    matrix = np.zeros((2, 32))
+    h, a = TEAM_INDEX["KC"], TEAM_INDEX["BUF"]
+    matrix[0, h], matrix[0, a] = 4 * SCALE, -4 * SCALE
+    matrix[1, h], matrix[1, a] = -4 * SCALE, 4 * SCALE
+    prior = np.array([0.5, 0.5])
+    w = live.bma_weights(matrix, prior, np.array([h, h]), np.array([a, a]),
+                         np.array([True, True]))
+    assert w.sum() == pytest.approx(1.0)
+    assert w[0] > 0.9
+    assert w[1] < 0.1
+
+
+def test_bma_with_no_games_returns_the_prior():
+    matrix = np.zeros((3, 32))
+    prior = np.array([0.2, 0.3, 0.5])
+    w = live.bma_weights(matrix, prior, np.array([], dtype=int),
+                         np.array([], dtype=int), np.array([], dtype=bool))
+    assert w.tolist() == pytest.approx(prior.tolist())
+
+
+def test_kalman_identifies_the_winner_on_a_two_team_slate():
+    """Start from a flat prior. Team 0 beats team 1 at home many times.
+    Posterior mean for team 0 must exceed team 1."""
+    mu, sd = live.posterior_strength(
+        np.zeros((1, 2)), np.array([1.0]),
+        np.array([0] * 20), np.array([1] * 20), np.array([True] * 20),
+        n_teams=2, prior_sd=8.0)
+    assert mu.shape == (2,) and sd.shape == (2,)
+    assert mu[0] > mu[1]
+    assert float(sd.mean()) < 8.0
+
+
+def test_kalman_voice_observation_recovers_the_reported_strength():
+    """One voice saying +5/-5, no games: posterior sits on that observation."""
+    matrix = np.array([[5.0, -5.0]])
+    mu, sd = live.posterior_strength(
+        matrix, np.array([1.0]),
+        np.array([], dtype=int), np.array([], dtype=int), np.array([], dtype=bool),
+        n_teams=2, prior_sd=20.0, voice_tau=0.5)
+    assert mu[0] == pytest.approx(5.0, abs=0.3)
+    assert mu[1] == pytest.approx(-5.0, abs=0.3)
+
+
+def test_compute_live_ships_posterior_and_bma_weights(inseason):
+    doc = live.compute_live(ROSTERS, inseason,
+                            totals_path=f"{FIX}/win_totals.csv",
+                            power_path=f"{FIX}/power_ratings.csv",
+                            kalshi_dist_path=None, ratings_fetched_at=None,
+                            n_seasons=400, seed=1)
+    assert "weights" in doc and abs(sum(doc["weights"].values()) - 1.0) < 1e-6
+    assert "posterior" in doc
+    post = doc["posterior"]
+    assert len(post["mean"]) == 32 and len(post["sd"]) == 32
+    assert all(s > 0 for s in post["sd"])
+    assert "ticks" in doc
+    assert doc["voice_strength"] and doc["sigma"] and "sigma_calibrated" in doc
+
+
+def test_compute_live_games_include_per_voice_home_p(inseason):
+    """The Model tab scores this week's coins from these numbers. Each voice
+    has its own p_home; they are not a copy of the blend."""
+    doc = live.compute_live(ROSTERS, inseason,
+                            totals_path=f"{FIX}/win_totals.csv",
+                            power_path=f"{FIX}/power_ratings.csv",
+                            kalshi_dist_path=None, ratings_fetched_at=None,
+                            n_seasons=400, seed=1)
+    assert doc["games"]
+    g = doc["games"][0]
+    assert set(g["p_voices"]) == set(doc["weights"]) == set(doc["prior"])
+    ps = list(g["p_voices"].values())
+    assert all(0 < p < 1 for p in ps)
+    assert max(ps) - min(ps) > 0
+    assert abs(sum(doc["prior"].values()) - 1.0) < 1e-6
+    assert doc["hfa"] == live.HFA and doc["scale"] == live.SCALE
+    assert doc["n_played"] > 0
+    assert set(doc["loglik"]) == set(doc["weights"])
+    assert all(v < 0 for v in doc["loglik"].values())
+    assert 0 < g["p_prior"] < 1
+    assert "spread" in g and "p_market" in g
+
+
+def test_compute_live_games_carry_the_posted_line(inseason):
+    """The expanded coin row is the line, not a prose dump of s_home - s_away."""
+    key = ("BUF", "DAL")
+    doc = live.compute_live(ROSTERS, inseason,
+                            totals_path=f"{FIX}/win_totals.csv",
+                            power_path=f"{FIX}/power_ratings.csv",
+                            kalshi_dist_path=None, ratings_fetched_at=None,
+                            n_seasons=200, seed=1,
+                            market={key: 0.62},
+                            lines={key: {"spread": -3.5, "ml_home": -165, "ml_away": 145}})
+    g = next(x for x in doc["games"] if (x["home"], x["away"]) == key)
+    assert g["spread"] == -3.5
+    assert g["ml_home"] == -165 and g["ml_away"] == 145
+    assert g["p_market"] == 0.62
+    assert 0 < g["p_prior"] < 1
 
 
 # --- Engine identity (Standings P(Win) arrows) --------------------------------

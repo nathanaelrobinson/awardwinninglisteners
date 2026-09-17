@@ -43,9 +43,12 @@ season win-total distributions, covers.com win totals, an opponent-adjusted
 in-season EPA rating, and a market-strength vector inverted from posted remaining-slate
 spreads (this week through week 18). Totals voices invert remaining expected
 wins (season line minus banked) against the remaining schedule, so a 1-0
-record is not counted twice. `market_strength` is weighted equal to the sum
-of the other live voices (half the mixture) because it is the identified
-remaining-season rating; the others still share the rest. A source that
+record is not counted twice. Voice weights start with `market_strength` at
+half the mixture and are then reweighted by Bayesian model averaging on
+completed 2026 games. A 32-team Kalman posterior (voices as observations,
+games as probit likelihoods) is the data-generating world the live
+projection and Simulations tab roll. The public Model tab walks through
+this week's remaining games, the BMA mix, and the posterior forest. A source that
 cannot be kept current does not get a vote —
 PFF, Clay, betmgm and nfelo were dropped for exactly that reason (nfelo also needed
 a headless browser we won't run on the Pi).
