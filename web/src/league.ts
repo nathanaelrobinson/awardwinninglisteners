@@ -108,8 +108,15 @@ export interface LiveRow {
   pwin: number; market_pwin: number | null; p10: number; p90: number; dist: number[];
 }
 export type LiveViewRow = Omit<LiveRow, 'dist' | 'market_pwin'>;
+/** Invert slate + voices + weights. Arrows only compare equal identities. */
+export interface LiveEngine {
+  sources: string[];
+  invert?: string;
+  market_weight?: string;
+}
 export interface LiveProjection {
   week: number; computed_at: number; ratings_fetched_at: string | null;
+  engine?: LiveEngine | null;
   rows: LiveRow[]; x: number[]; n_sims: number; this_week: LiveWeekRow[];
   /** Same projection under one source at 100%: keys 'blend' plus each source name. */
   views: Record<string, LiveViewRow[]>;
@@ -136,7 +143,18 @@ export interface LiveCoin {
   swing: Record<string, number>;
 }
 export interface WeekSlim { player: string; pwin: number; exp_wins: number }
-export interface WeekPoint { week: number; rows: WeekSlim[]; views: Record<string, WeekSlim[]> }
+export interface WeekPoint {
+  week: number; engine?: LiveEngine | null;
+  rows: WeekSlim[]; views: Record<string, WeekSlim[]>;
+}
+
+/** True only when both engine identities exist and match field-for-field. */
+export function enginesMatch(a?: LiveEngine | null, b?: LiveEngine | null): boolean {
+  if (!a || !b) return false;
+  if (a.invert !== b.invert || a.market_weight !== b.market_weight) return false;
+  if (a.sources.length !== b.sources.length) return false;
+  return a.sources.every((s, i) => s === b.sources[i]);
+}
 export const getLive = () => call<LiveProjection>('/api/league/live');
 export const getWeeks = () => call<WeekPoint[]>('/api/league/weeks');
 
