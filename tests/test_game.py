@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 from winspool.game import win_prob, expected_wins, HFA, SCALE
 
 def test_even_matchup_on_neutral_is_half():
@@ -16,3 +17,12 @@ def test_expected_wins_sums_to_total_games():
     home = np.array([0, 1]); away = np.array([1, 0])
     ew = expected_wins(np.zeros(2), home, away, hfa=0.0)
     assert abs(ew.sum() - 2.0) < 1e-9
+
+
+def test_fit_hfa_scale_recovers_known_margin_moments():
+    from winspool.game import fit_hfa_scale
+    rng = np.random.default_rng(0)
+    margins = rng.normal(2.0, 13.5, size=8000)
+    hfa, scale = fit_hfa_scale(margins)
+    assert hfa == pytest.approx(2.0, abs=0.4)
+    assert scale == pytest.approx(13.5, abs=0.4)

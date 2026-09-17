@@ -65,6 +65,7 @@ function ModelSection(
     label: t.code,
     values: t.strength,
     ref: t.consensus,
+    interval: (t.lo80 != null && t.hi80 != null) ? { lo: t.lo80, hi: t.hi80 } : undefined,
   }));
   // Strengths are mean-centred, so the axis is centred on zero: a symmetric
   // domain keeps "left of centre" meaning "below average" for every row.
@@ -102,9 +103,18 @@ function ModelSection(
         </div>
         <p className={`admin-sigma${m.sigma_calibrated ? '' : ' admin-sigma-bad'}`}>
           {m.sigma_calibrated
-            ? 'Season variance: calibrated against Kalshi.'
+            ? 'Season variance: calibrated against Kalshi, then updated by the posterior.'
             : `Season variance: NOT calibrated — falling back to base ${m.sigma_base}.`}
+          {m.brier != null ? ` Brier on completed games: ${m.brier}.` : ''}
         </p>
+        {m.weights && (
+          <p className="admin-sigma">
+            BMA weights:
+            {' '}
+            {Object.entries(m.weights).map(([k, v]) => `${k} ${(v * 100).toFixed(0)}%`).join(' · ')}
+          </p>
+        )}
+        <WeightRiver weeks={m.weight_weeks ?? []} voices={chartVoices} colors={colors} current={m.weights} />
         <VoiceLegend voices={chartVoices} colors={colors} refName="Blend" />
         <RowChart
           label="Chance of winning the pool, one dot per rating source"
@@ -381,6 +391,54 @@ export default function Admin({ myName }: { myName: string }) {
       </div>
       {model && <ModelSection m={model} chartVoices={chartVoices} colors={colors} />}
       {history && <HistorySection h={history} myName={myName} chartVoices={chartVoices} colors={colors} />}
+    </div>
+  );
+}
+
+/** Stacked BMA weights by week. A voice with no weight that week is absent. */
+function WeightRiver({ weeks, voices, colors, current }: {
+  weeks: { week: number; weights: Record<string, number> }[];
+  voices: string[];
+  colors: Record<string, string>;
+  current?: Record<string, number>;
+}) {
+  const rows = weeks.filter((w) => Object.keys(w.weights).length > 0);
+  const data = rows.length ? rows : (current ? [{ week: 0, weights: current }] : []);
+  if (!data.length || !voices.length) return null;
+  const W = 380, H = 140, ML = 8, MR = 8, MT = 8, MB = 22;
+  const n = data.length;
+  const xPx = (i: number) => ML + (n === 1 ? (W - ML - MR) / 2 : (i / (n - 1)) * (W - ML - MR));
+  const yPx = (p: number) => MT + (1 - p) * (H - MT - MB);
+  const bands = voices.map((v) => data.map((row) => row.weights[v] ?? 0));
+  const paths = voices.map((_v, vi) => {
+    const lo: number[] = [];
+    const hi: number[] = [];
+    data.forEach((_, i) => {
+      let base = 0;
+      for (let k = 0; k < vi; k++) base += bands[k][i];
+      lo.push(base);
+      hi.push(base + bands[vi][i]);
+    });
+    const top = hi.map((p, i) => `${i ? 'L' : 'M'}${xPx(i).toFixed(1)},${yPx(p).toFixed(1)}`).join('');
+    const bot = [...lo].reverse().map((p, i) =>
+      `${xPx(data.length - 1 - i).toFixed(1)},${yPx(p).toFixed(1)}`).join(' L');
+    return `${top}L${bot}Z`;
+  });
+  return (
+    <div className="viz-block">
+      <div className="viz-sub">Voice weights by week</div>
+      <svg viewBox={`0 0 ${W} ${H}`} width="100%" height={H} role="img" aria-label="BMA voice weights by week">
+        {voices.map((v, i) => (
+          bands[i].some((x) => x > 0)
+            ? <path key={v} d={paths[i]} fill={colors[v]} opacity={0.85} />
+            : null
+        ))}
+        {data.map((row, i) => (
+          <text key={row.week} x={xPx(i)} y={H - 6} textAnchor="middle" fontSize={10} fill="var(--text-dim)">
+            {row.week === 0 ? 'now' : `Wk ${row.week}`}
+          </text>
+        ))}
+      </svg>
     </div>
   );
 }

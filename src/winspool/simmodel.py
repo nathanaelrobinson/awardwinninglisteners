@@ -44,6 +44,7 @@ def build_model(rosters: dict, sched_df: pd.DataFrame, *, totals_path=None, powe
     played, remaining = live.split_schedule(sched_df)
     week = live.week_of(sched_df)
     banked = live.banked_wins(played)
+    ph, pa, pw = live.played_outcomes(played)
 
     reg = sched_df[sched_df["game_type"].str.upper() == "REG"]
     full_home = reg["home_team"].map(TEAM_INDEX).to_numpy(dtype=int)
@@ -52,11 +53,13 @@ def build_model(rosters: dict, sched_df: pd.DataFrame, *, totals_path=None, powe
 
     matrix, weights, names, sigma_full = live.source_matrix(
         totals_path, power_path, kalshi_dist_path, rem_home, rem_away, store=store,
-        banked=banked, cal_home=full_home, cal_away=full_away)
+        banked=banked, cal_home=full_home, cal_away=full_away,
+        played_home=ph, played_away=pa, played_won=pw)
+    post_mean, post_sd = live.posterior_strength(matrix, weights, ph, pa, pw)
     this_week = live.games_in_week(remaining, week)
     rest = remaining[remaining["week"] != week].reset_index(drop=True)
     sigma = live.season_sigma(live.remaining_games_per_team(rest),
-                              base_sigma=sigma_full)
+                              base_sigma=post_sd)
     wh, wa = live.remaining_matchups(this_week)
     p_week, _src = live.week_home_p(matrix, weights, wh, wa, market)
     priced = {(TEAMS[wh[g]], TEAMS[wa[g]]): round(float(p_week[g]), 4)
@@ -77,7 +80,12 @@ def build_model(rosters: dict, sched_df: pd.DataFrame, *, totals_path=None, powe
 
     # Round, then put the rounding residual back so a client can sample the
     # source with a plain cumulative comparison and never fall off the end.
-    w = [round(float(x), 6) for x in weights]
+    # Posterior is the data-generating world (weight 1). Voices ride along at
+    # weight 0 so the Simulations source table can still name them.
+    out_names = ["posterior", *names]
+    out_strength = np.vstack([post_mean, matrix])
+    out_w = [1.0] + [0.0] * len(names)
+    w = [round(float(x), 6) for x in out_w]
     w[-1] = round(w[-1] + (1.0 - sum(w)), 6)
 
     return {
@@ -87,14 +95,15 @@ def build_model(rosters: dict, sched_df: pd.DataFrame, *, totals_path=None, powe
         "hfa": float(HFA), "scale": float(SCALE),
         "players": list(rosters), "rosters": {p: list(t) for p, t in rosters.items()},
         "teams": list(TEAMS),
-        "sources": list(names),
+        "sources": out_names,
         "weights": w,
-        "strength": [[round(float(v), 4) for v in row] for row in matrix],
+        "strength": [[round(float(v), 4) for v in row] for row in out_strength],
         "sigma": [round(float(v), 4) for v in np.asarray(sigma, dtype=float)],
         "banked": [float(banked[TEAM_INDEX[c]]) for c in TEAMS],
         "weeks": sorted({g[0] for g in games}),
         "played": final,
         "games": games,
+        "voice_weights": {n: round(float(x), 6) for n, x in zip(names, weights)},
     }
 
 

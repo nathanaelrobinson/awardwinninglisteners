@@ -7,18 +7,27 @@ import assert from 'node:assert/strict';
 import { test } from 'node:test';
 import {
   expectedTeamWins,
+  gameHome,
+  gameSwing,
   leadOf,
   leadPhrase,
   packThisWeek,
+  pinMatches,
   playedHistory,
   playerBanked,
   pwinBySource,
   pwinOf,
+  rangeLabel,
+  remainingWeeks,
   rollAll,
   rollSeason,
   seasonMatches,
+  sparkArea,
+  sparkDomain,
   thisWeekIndexes,
+  toggleGamePin,
   togglePin,
+  type Pin,
   type SimModel,
 } from './sim.ts';
 
@@ -99,10 +108,10 @@ test('togglePin cycles a game through home, away, and clear', () => {
 
 test('pwinOf counts only seasons that match the pin', () => {
   const winner = Uint8Array.of(1, 0, 1, 1); // player 0 wins 0,2,3
-  const thisWeek = Uint32Array.of(0b01, 0b00, 0b01, 0b10);
-  const all = pwinOf(winner, 0, thisWeek, 0, 0);
+  const bits = new Uint8Array([1, 0, 1, 2]);
+  const all = pwinOf(winner, 0, bits, 1, []);
   assert.deepEqual(all, { wins: 3, n: 4 });
-  const pinned = pwinOf(winner, 0, thisWeek, 0b01, 0b01);
+  const pinned = pwinOf(winner, 0, bits, 1, [{ g: 0, homeWin: true }]);
   assert.deepEqual(pinned, { wins: 2, n: 2 });
 });
 
@@ -112,8 +121,9 @@ test('pwinBySource splits the same count per rating world', () => {
     Uint8Array.of(1, 0, 1, 1),
     ['kalshi', 'epa'],
     0,
-    Uint32Array.of(0, 0, 0, 0),
-    0, 0,
+    new Uint8Array([0, 0, 0, 0]),
+    1,
+    [],
   );
   assert.deepEqual(rows, [
     { source: 'kalshi', wins: 1, n: 2 },
@@ -204,13 +214,13 @@ test('playedHistory accumulates each fully-played week before the remaining sche
   assert.deepEqual(h.totals, [[1, 1], [0, 1]]);
 });
 
-test('playedHistory counts a tie as a half win for each side', () => {
+test('playedHistory counts a tie as zero wins for each side', () => {
   const h = playedHistory(toy({
     weeks: [2],
     games: [[2, 'BUF', 'NYJ', null]],
     played: [[1, 'BUF', 'NYJ', -1, 17, 17]],
   }));
-  assert.deepEqual(h.totals, [[0.5], [0.5]]);
+  assert.deepEqual(h.totals, [[0], [0]]);
 });
 
 test('playedHistory ignores current-week finals already in the remaining path', () => {
@@ -245,4 +255,113 @@ test('playedHistory throws when games have been played but week 1 is missing', (
     games: [[2, 'BUF', 'NYJ', null]],
     played: [[2, 'BUF', 'NYJ', 1, 21, 10]],
   })), /week 1/);
+});
+
+test('rangeLabel is the p10-p90 combined-wins interval', () => {
+  assert.equal(rangeLabel(48, 61), '48-61');
+});
+
+test('sparkArea is null when dist is empty or all zero', () => {
+  assert.equal(sparkArea([], [], 40, 16), null);
+  assert.equal(sparkArea([1, 2], [0, 0], 40, 16), null);
+});
+
+test('sparkArea traces the density and closes on the baseline', () => {
+  const d = sparkArea([10, 11, 12], [0, 1, 0], 40, 16);
+  assert.ok(d && d.startsWith('M'));
+  assert.ok(d.endsWith('Z'));
+});
+
+test('sparkDomain is the union of where any density has mass', () => {
+  const x = [10, 11, 12, 13];
+  assert.deepEqual(
+    sparkDomain(x, [[0, 1, 0, 0], [0, 0, 0.5, 0.2]]),
+    { lo: 11, hi: 13, maxP: 1 },
+  );
+});
+
+test('sparkArea on a shared scale puts left mass on the left of the plot', () => {
+  const x = [10, 11, 12];
+  const scale = { lo: 10, hi: 12, maxP: 1 };
+  const left = sparkArea(x, [1, 0, 0], 40, 16, scale);
+  const right = sparkArea(x, [0, 0, 1], 40, 16, scale);
+  assert.ok(left && left.startsWith('M0.0,0.0'));
+  assert.ok(right && right.includes('40.0,0.0'));
+});
+
+test('sparkArea on a shared maxP draws a half-mass peak at half height', () => {
+  const d = sparkArea([0, 1, 2], [0, 0.5, 0], 40, 16, { lo: 0, hi: 2, maxP: 1 });
+  assert.ok(d && d.includes('20.0,8.0'));
+});
+
+test('remainingWeeks lists unique remaining weeks in order', () => {
+  const m = toy({
+    weeks: [2, 3],
+    games: [
+      [2, 'BUF', 'NYJ', 0.6],
+      [3, 'NYJ', 'BUF', null],
+      [3, 'BUF', 'NYJ', null],
+    ],
+  });
+  assert.deepEqual(remainingWeeks(m), [2, 3]);
+});
+
+test('toggleGamePin cycles a remaining game through home, away, and clear', () => {
+  let pins: Pin[] = [];
+  pins = toggleGamePin(pins, 4, true);
+  assert.deepEqual(pins, [{ g: 4, homeWin: true }]);
+  pins = toggleGamePin(pins, 4, true);
+  assert.deepEqual(pins, []);
+  pins = toggleGamePin(pins, 4, false);
+  assert.deepEqual(pins, [{ g: 4, homeWin: false }]);
+  pins = toggleGamePin(pins, 4, true);
+  assert.deepEqual(pins, [{ g: 4, homeWin: true }]);
+});
+
+test('rollAll packs every remaining game so a later-week pin can filter', () => {
+  const m = toy({
+    weeks: [1, 2],
+    games: [
+      [1, 'BUF', 'NYJ', 0.8],
+      [2, 'NYJ', 'BUF', null],
+    ],
+  });
+  const rolled = rollAll(m, 20, 3);
+  assert.ok(rolled.homeBits);
+  assert.equal(rolled.nGames, 2);
+  for (let s = 0; s < rolled.nSims; s++) {
+    const detail = new Uint8Array(m.games.length);
+    rollSeason(m, 3, s, detail);
+    assert.equal(gameHome(rolled.homeBits, rolled.stride, s, 0), detail[0] === 1);
+    assert.equal(gameHome(rolled.homeBits, rolled.stride, s, 1), detail[1] === 1);
+  }
+});
+
+test('pinMatches keeps only seasons whose packed bits match every pin', () => {
+  const bits = new Uint8Array(4); // 2 seasons, stride 2
+  // season 0: game 0 home, game 1 away
+  bits[0] = 0b01;
+  // season 1: both home
+  bits[2] = 0b11;
+  assert.equal(pinMatches(bits, 2, 0, [{ g: 0, homeWin: true }]), true);
+  assert.equal(pinMatches(bits, 2, 0, [{ g: 1, homeWin: true }]), false);
+  assert.equal(pinMatches(bits, 2, 1, [{ g: 0, homeWin: true }, { g: 1, homeWin: true }]), true);
+  assert.equal(pinMatches(bits, 2, 0, []), true);
+});
+
+test('pwinOf counts seasons matching remaining-game pins', () => {
+  const winner = Uint8Array.of(1, 0, 1, 1);
+  const bits = new Uint8Array([1, 0, 1, 2]);
+  const pinned = pwinOf(winner, 0, bits, 1, [{ g: 0, homeWin: true }]);
+  assert.deepEqual(pinned, { wins: 2, n: 2 });
+  const away = pwinOf(winner, 0, bits, 1, [{ g: 0, homeWin: false }]);
+  assert.deepEqual(away, { wins: 1, n: 2 });
+});
+
+test('gameSwing is P(win|home) minus P(win|away) for each remaining game', () => {
+  const winner = Uint8Array.of(1, 1, 0, 0); // player 0 wins first two
+  const bits = new Uint8Array([1, 1, 0, 0]);
+  const swing = gameSwing(winner, bits, 1, 1, 0);
+  assert.equal(swing.length, 1);
+  assert.equal(swing[0], 1);
 });

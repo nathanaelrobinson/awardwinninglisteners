@@ -1,5 +1,5 @@
 // web/src/components/Standings.tsx
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { fetchTeams } from '../api';
 import { playerColor } from '../colors';
 import type { LeagueView, LiveProjection, LiveViewRow, Me, StandingsResponse, WeekPoint } from '../league';
@@ -7,6 +7,7 @@ import { getLive, getStandings, getWeeks, setOverride } from '../league';
 import Feed from './Feed';
 import MovementChart from './MovementChart';
 import TeamLogo from './TeamLogo';
+import { rangeLabel, sparkArea, sparkDomain } from '../sim';
 
 const ROWS = 6;
 
@@ -95,6 +96,7 @@ export default function Standings({ me, view }: { me: Me | null; view: LeagueVie
     .sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]))[0]?.[0];
   const ratingsStale = !!live?.ratings_fetched_at
     && Date.now() - new Date(live.ratings_fetched_at).getTime() > 8 * 24 * 3600_000;
+  const sparkScale = live ? sparkDomain(live.x, live.rows.map((row) => row.dist)) : null;
 
   return (
     <div className="standings">
@@ -140,8 +142,34 @@ export default function Standings({ me, view }: { me: Me | null; view: LeagueVie
                 </div>
                 <div className="standings-foot">
                   <span>{proj ? 'Proj' : 'Total'}</span>
-                  <b>{proj ? proj.exp_wins.toFixed(1) : r.total}</b>
+                  <b>
+                    {proj ? proj.exp_wins.toFixed(1) : r.total}
+                    {proj && (
+                      <span className="standings-range">{rangeLabel(proj.p10, proj.p90)}</span>
+                    )}
+                  </b>
                 </div>
+                {sparkScale && live && (
+                  <svg className="standings-spark" viewBox="0 0 72 22" width="72" height="22"
+                       role="img" aria-label={`${first} combined-wins density`}>
+                    {live.rows
+                      .slice()
+                      .sort((a, b) => Number(a.player === r.player) - Number(b.player === r.player))
+                      .map((row) => {
+                      const d = sparkArea(live.x, row.dist, 72, 22, sparkScale);
+                      if (!d) throw new Error(`missing density for ${row.player}`);
+                      const mine = row.player === r.player;
+                      return (
+                        <path
+                          key={row.player}
+                          d={d}
+                          fill={playerColor(row.player).bg}
+                          opacity={mine ? 0.55 : 0.12}
+                        />
+                      );
+                    })}
+                  </svg>
+                )}
                 {pwinBy[r.player] !== undefined && (
                   <div className="standings-foot standings-win">
                     <span>Win</span>
@@ -165,7 +193,109 @@ export default function Standings({ me, view }: { me: Me | null; view: LeagueVie
         </div>
       </div>
       <MovementChart weeks={weeks} me={me?.name ?? ''} />
+      <TickSpark ticks={live?.ticks ?? []} me={me?.name ?? ''} />
       <Feed view={view} myName={me?.name ?? null} />
+    </div>
+  );
+}
+
+/** Keep first and last; keep a middle tick only when it has `minPx` of air on both sides. */
+function thinAxis(xs: number[], minPx: number): boolean[] {
+  const n = xs.length;
+  const keep = Array(n).fill(false);
+  if (n === 0) return keep;
+  keep[0] = true;
+  keep[n - 1] = true;
+  let last = xs[0];
+  for (let i = 1; i < n - 1; i++) {
+    if (xs[i] - last >= minPx && xs[n - 1] - xs[i] >= minPx) {
+      keep[i] = true;
+      last = xs[i];
+    }
+  }
+  return keep;
+}
+
+/** Spread y positions so consecutive labels sit `gap` apart, inside [lo, hi]. */
+function dodgeY(ys: number[], gap: number, lo: number, hi: number): number[] {
+  if (ys.length === 0) return [];
+  if (hi - lo < (ys.length - 1) * gap) throw new Error('label lane is too short');
+  const order = ys.map((_, i) => i).sort((a, b) => ys[a] - ys[b] || a - b);
+  const out = ys.slice();
+  for (let k = 1; k < order.length; k++) {
+    const i = order[k];
+    const prev = order[k - 1];
+    if (out[i] < out[prev] + gap) out[i] = out[prev] + gap;
+  }
+  const last = order[order.length - 1];
+  if (out[last] > hi) {
+    const shift = out[last] - hi;
+    for (const i of order) out[i] -= shift;
+  }
+  if (out[order[0]] < lo) {
+    const shift = lo - out[order[0]];
+    for (const i of order) out[i] += shift;
+  }
+  return out;
+}
+
+/** Intra-week P(win) as games go final. Hidden until two ticks exist. */
+function TickSpark({ ticks, me }: { ticks: NonNullable<LiveProjection['ticks']>; me: string }) {
+  const box = useRef<HTMLDivElement>(null);
+  const [W, setW] = useState(380);
+  const shown = ticks.length >= 2;
+  useEffect(() => {
+    const el = box.current;
+    if (!el) return;
+    const ro = new ResizeObserver(() => setW(Math.max(240, el.clientWidth)));
+    ro.observe(el);
+    setW(Math.max(240, el.clientWidth));
+    return () => ro.disconnect();
+  }, [shown]);
+  if (!shown) return null;
+
+  const players = ticks[ticks.length - 1].rows.map((r) => r.player);
+  const H = 140, ML = 8, MR = 88, MT = 10, MB = 22;
+  const t0 = ticks[0].at, t1 = ticks[ticks.length - 1].at, span = Math.max(1, t1 - t0);
+  const series = players.map((p) => ticks.map((tk) => tk.rows.find((r) => r.player === p)?.pwin ?? 0));
+  const maxP = Math.max(0.2, ...series.flat());
+  const pw = W - ML - MR, ph = H - MT - MB;
+  const xPx = (at: number) => ML + ((at - t0) / span) * pw;
+  const yPx = (p: number) => MT + ph - (p / maxP) * ph;
+  const xs = ticks.map((tk) => xPx(tk.at));
+  const showTime = thinAxis(xs, 64);
+  const lastYs = series.map((s) => yPx(s[s.length - 1]));
+  const labelYs = dodgeY(lastYs, 18, MT + 4, MT + ph);
+  return (
+    <div className="card">
+      <span className="eyebrow">Win probability today</span>
+      <div ref={box} className="move-chart">
+        <svg viewBox={`0 0 ${W} ${H}`} width={W} height={H} role="img"
+             aria-label="Each player's probability of winning the pool as games finished today">
+          {ticks.map((tk, i) => (
+            <line key={`g${tk.at}`} x1={xs[i]} y1={MT} x2={xs[i]} y2={MT + ph}
+                  stroke="var(--border)" strokeWidth={1} />
+          ))}
+          {ticks.map((tk, i) => showTime[i] && (
+            <text key={tk.at} x={xs[i]} y={H - 6} fill="var(--text-dim)" fontSize={10}
+                  textAnchor={i === 0 ? 'start' : i === ticks.length - 1 ? 'end' : 'middle'}>
+              {new Date(tk.at * 1000).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}
+            </text>
+          ))}
+          {players.map((p, i) => {
+            const c = playerColor(p).bg;
+            const d = series[i].map((v, k) => `${k ? 'L' : 'M'}${xs[k].toFixed(1)},${yPx(v).toFixed(1)}`).join('');
+            return (
+              <g key={p}>
+                <path d={d} fill="none" stroke={c} strokeWidth={p === me ? 3 : 2} />
+                <text x={xs[xs.length - 1] + 8} y={labelYs[i] + 3} fill={c} fontSize={11} fontWeight={700}>
+                  {p.trim().split(/\s+/)[0]} {Math.round(series[i][series[i].length - 1] * 100)}%
+                </text>
+              </g>
+            );
+          })}
+        </svg>
+      </div>
     </div>
   );
 }

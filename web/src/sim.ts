@@ -50,6 +50,10 @@ export interface Rolled {
   source: Uint8Array;
   /** bit i set when this-week remaining game i was a home win */
   thisWeek: Uint32Array;
+  /** packed home-win bits for every remaining game, nSims * stride bytes */
+  homeBits: Uint8Array;
+  stride: number;
+  nGames: number;
 }
 
 interface Shape {
@@ -145,7 +149,112 @@ export function finishedFirst(winner: Uint8Array, s: number, pi: number): boolea
   return (winner[s] & (1 << pi)) !== 0;
 }
 
-/** Remaining games priced as this-week coins, in schedule order. */
+/** Combined-wins percentile range shown next to projected totals. */
+export function rangeLabel(p10: number, p90: number): string {
+  return `${p10}-${p90}`;
+}
+
+/** Shared wins-axis and height so several densities can be compared. */
+export type SparkScale = { lo: number; hi: number; maxP: number };
+
+/** Union of bins where any density is positive, plus the tallest peak. */
+export function sparkDomain(x: number[], dists: number[][]): SparkScale {
+  if (!x.length) throw new Error('spark domain with empty x');
+  let maxP = 0;
+  let lo = Infinity;
+  let hi = -Infinity;
+  for (const dist of dists) {
+    if (dist.length !== x.length) throw new Error('spark dist length');
+    for (let i = 0; i < x.length; i++) {
+      if (dist[i] > 0) {
+        maxP = Math.max(maxP, dist[i]);
+        lo = Math.min(lo, x[i]);
+        hi = Math.max(hi, x[i]);
+      }
+    }
+  }
+  if (!(maxP > 0)) throw new Error('spark domain all zero');
+  return { lo, hi, maxP };
+}
+
+/** SVG area path for a small combined-wins density. Null when there is nothing to draw. */
+export function sparkArea(
+  x: number[], dist: number[], w: number, h: number, scale?: SparkScale,
+): string | null {
+  if (!x.length || dist.length !== x.length) return null;
+  const maxP = scale ? scale.maxP : Math.max(...dist);
+  if (!(maxP > 0)) return null;
+  const lo = scale ? scale.lo : x[0];
+  const hi = scale ? scale.hi : x[x.length - 1];
+  const span = Math.max(1, hi - lo);
+  const xPx = (v: number) => ((v - lo) / span) * w;
+  const yPx = (p: number) => h - (p / maxP) * h;
+  const line = dist.map((p, i) => `${i ? 'L' : 'M'}${xPx(x[i]).toFixed(1)},${yPx(p).toFixed(1)}`).join('');
+  return `${line}L${xPx(hi).toFixed(1)},${yPx(0).toFixed(1)}L${xPx(lo).toFixed(1)},${yPx(0).toFixed(1)}Z`;
+}
+
+export type Pin = { g: number; homeWin: boolean };
+
+/** Unique remaining weeks, in schedule order. */
+export function remainingWeeks(m: SimModel): number[] {
+  const seen: number[] = [];
+  for (const g of m.games) if (seen[seen.length - 1] !== g[0]) seen.push(g[0]);
+  return seen;
+}
+
+export function bitStride(nGames: number): number {
+  return Math.max(1, Math.ceil(nGames / 8));
+}
+
+/** Packed home-win bit for remaining game `g` in season `s`. */
+export function gameHome(bits: Uint8Array, stride: number, s: number, g: number): boolean {
+  return (bits[s * stride + (g >> 3)] & (1 << (g & 7))) !== 0;
+}
+
+function setGameHome(bits: Uint8Array, stride: number, s: number, g: number): void {
+  bits[s * stride + (g >> 3)] |= 1 << (g & 7);
+}
+
+/** True when season `s` matches every pin. An empty pin list matches everyone. */
+export function pinMatches(bits: Uint8Array, stride: number, s: number, pins: Pin[]): boolean {
+  for (const p of pins) {
+    if (gameHome(bits, stride, s, p.g) !== p.homeWin) return false;
+  }
+  return true;
+}
+
+/**
+ * Pin remaining game `g` to a home win or an away win. Clicking the side
+ * that is already pinned clears it; clicking the other side switches.
+ */
+export function toggleGamePin(pins: Pin[], g: number, homeWin: boolean): Pin[] {
+  const i = pins.findIndex((p) => p.g === g);
+  if (i < 0) return [...pins, { g, homeWin }];
+  if (pins[i].homeWin === homeWin) return pins.filter((_, j) => j !== i);
+  return pins.map((p, j) => (j === i ? { g, homeWin } : p));
+}
+
+/** P(player pi finishes first | home) minus P(... | away) for each remaining game. */
+export function gameSwing(
+  winner: Uint8Array, homeBits: Uint8Array, stride: number, nGames: number, pi: number,
+): number[] {
+  const homeW = new Float64Array(nGames), homeN = new Float64Array(nGames);
+  const awayW = new Float64Array(nGames), awayN = new Float64Array(nGames);
+  for (let s = 0; s < winner.length; s++) {
+    const won = finishedFirst(winner, s, pi) ? 1 : 0;
+    for (let g = 0; g < nGames; g++) {
+      if (gameHome(homeBits, stride, s, g)) { homeN[g]++; homeW[g] += won; }
+      else { awayN[g]++; awayW[g] += won; }
+    }
+  }
+  const out = new Array<number>(nGames);
+  for (let g = 0; g < nGames; g++) {
+    const hp = homeN[g] ? homeW[g] / homeN[g] : 0;
+    const ap = awayN[g] ? awayW[g] / awayN[g] : 0;
+    out[g] = hp - ap;
+  }
+  return out;
+}
 export function thisWeekIndexes(m: SimModel): number[] {
   const idx: number[] = [];
   for (let i = 0; i < m.games.length; i++) if (m.games[i][3] != null) idx.push(i);
@@ -180,13 +289,13 @@ export function togglePin(mask: number, want: number, bit: number, homeWin: bool
   return [mask | m, homeWin ? want | m : want];
 }
 
-/** Wins and season count for player `pi` among seasons matching the pin. */
+/** Wins and season count for player `pi` among seasons matching the pins. */
 export function pwinOf(
-  winner: Uint8Array, pi: number, thisWeek: Uint32Array, mask: number, want: number,
+  winner: Uint8Array, pi: number, homeBits: Uint8Array, stride: number, pins: Pin[],
 ): { wins: number; n: number } {
   let wins = 0, n = 0;
   for (let s = 0; s < winner.length; s++) {
-    if (!seasonMatches(thisWeek[s], mask, want)) continue;
+    if (!pinMatches(homeBits, stride, s, pins)) continue;
     n++;
     if (finishedFirst(winner, s, pi)) wins++;
   }
@@ -196,11 +305,11 @@ export function pwinOf(
 /** Same count as `pwinOf`, split by which rating world the season sampled. */
 export function pwinBySource(
   source: Uint8Array, winner: Uint8Array, sources: string[], pi: number,
-  thisWeek: Uint32Array, mask: number, want: number,
+  homeBits: Uint8Array, stride: number, pins: Pin[],
 ): { source: string; wins: number; n: number }[] {
   const wins = new Int32Array(sources.length), n = new Int32Array(sources.length);
   for (let s = 0; s < winner.length; s++) {
-    if (!seasonMatches(thisWeek[s], mask, want)) continue;
+    if (!pinMatches(homeBits, stride, s, pins)) continue;
     const src = source[s];
     n[src]++;
     if (finishedFirst(winner, s, pi)) wins[src]++;
@@ -257,7 +366,7 @@ export function playedHistory(m: SimModel): { weeks: number[]; totals: number[][
     };
     if (hw === 1) add(home, 1);
     else if (hw === 0) add(away, 1);
-    else if (hw === -1) { add(home, 0.5); add(away, 0.5); }
+    else if (hw === -1) { /* NFL tie: 0 wins */ }
     else throw new Error(`bad played result ${hw}`);
   }
 
@@ -352,6 +461,8 @@ export function rollAll(m: SimModel, nSims: number, seed: number,
   const winner = new Uint8Array(nSims);
   const source = new Uint8Array(nSims);
   const thisWeek = new Uint32Array(nSims);
+  const stride = bitStride(nG);
+  const homeBits = new Uint8Array(nSims * stride);
   const st = new Float64Array(nT), acc = new Float64Array(nT), ptot = new Float64Array(nP);
   const { hfa, scale } = m;
   thisWeekIndexes(m);
@@ -367,6 +478,7 @@ export function rollAll(m: SimModel, nSims: number, seed: number,
       const h = gh[g], b = ga[g];
       const p = gp[g];
       const home = p === p ? rand() < p : (st[h] - st[b] + hfa) > scale * gauss();
+      if (home) setGameHome(homeBits, stride, s, g);
       if (p === p) { if (home) bits |= 1 << bit; bit++; }
       const wt = home ? h : b;
       acc[wt]++;
@@ -386,10 +498,12 @@ export function rollAll(m: SimModel, nSims: number, seed: number,
     thisWeek[s] = bits;
   }
 
-  return { nSims, nWeeks: nW, nPlayers: nP, nTeams: nT, weeks: m.weeks, paths, winner, source, thisWeek };
+  return { nSims, nWeeks: nW, nPlayers: nP, nTeams: nT, weeks: m.weeks, paths, winner, source, thisWeek,
+           homeBits, stride, nGames: nG };
 }
 
 export const SOURCE_LABEL: Record<string, string> = {
+  posterior: 'Posterior',
   vegas: 'Vegas', kalshi: 'Kalshi', espn_fpi: 'ESPN FPI',
   nfelo: 'nfelo', clay: 'Clay', pff: 'PFF', epa: 'EPA',
   covers: 'Covers', epa_adj: 'EPA', market_strength: 'Market',

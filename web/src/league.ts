@@ -113,6 +113,27 @@ export interface LiveProjection {
   rows: LiveRow[]; x: number[]; n_sims: number; this_week: LiveWeekRow[];
   /** Same projection under one source at 100%: keys 'blend' plus each source name. */
   views: Record<string, LiveViewRow[]>;
+  weights?: Record<string, number>;
+  prior?: Record<string, number>;
+  loglik?: Record<string, number>;
+  n_played?: number;
+  hfa?: number;
+  scale?: number;
+  games?: LiveCoin[];
+  posterior?: { mean: number[]; sd: number[] };
+  brier?: number | null;
+  ticks?: { at: number; week: number; rows: { player: string; pwin: number }[] }[];
+}
+export interface LiveCoin {
+  home: string; away: string;
+  p_model: number; p_used: number; source: string;
+  p_voices: Record<string, number>;
+  p_prior: number;
+  p_market: number | null;
+  spread: number | null;
+  ml_home: number | null;
+  ml_away: number | null;
+  swing: Record<string, number>;
 }
 export interface WeekSlim { player: string; pwin: number; exp_wins: number }
 export interface WeekPoint { week: number; rows: WeekSlim[]; views: Record<string, WeekSlim[]> }
@@ -152,20 +173,27 @@ export interface AdminModelSource {
   name: string; fetched_at: number | null; n_teams: number;
   /** P(win pool) per player under this voice alone; empty if the live doc predates it. */
   pwin: Record<string, number>;
+  weight?: number;
   meta: Record<string, number | string> | null;
 }
 export interface AdminModelTeam {
   code: string; consensus: number; sigma: number;
+  lo80?: number; hi80?: number;
   /** Kalshi's implied per-team win SD; null where the market has no line. */
   target_sd: number | null;
   strength: Record<string, number>;
+  residual?: Record<string, number>;
 }
 export interface AdminModel {
   week: number | null; sources: AdminModelSource[];
   blend_pwin: Record<string, number>; teams: AdminModelTeam[];
+  weights?: Record<string, number>;
+  brier?: number | null;
+  weight_weeks?: { week: number; weights: Record<string, number> }[];
   sigma_calibrated: boolean; sigma_base: number;
 }
 export const getAdminModel = () => call<AdminModel>('/api/admin/model');
+export const getModel = () => call<AdminModel>('/api/league/model');
 
 export interface AdminHistoryWeek {
   week: number; blend: Record<string, number>;

@@ -29,6 +29,7 @@ self.onmessage = (e: MessageEvent<RollRequest>) => {
     const transfer: Transferable[] = [
       ...rolled.paths.map((p) => p.buffer),
       rolled.winner.buffer, rolled.source.buffer, rolled.thisWeek.buffer,
+      rolled.homeBits.buffer,
     ];
     post({ id, type: 'done', rolled }, transfer);
   } catch (err) {

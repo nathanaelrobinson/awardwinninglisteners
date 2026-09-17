@@ -181,7 +181,7 @@ def test_a_tie_is_reported_and_split(rosters):
     df.loc[first, ["home_score", "away_score"]] = [17, 17]
     m = build(df, rosters)
     assert m["played"][0][3:] == [-1, 17, 17]
-    assert sum(m["banked"]) == 1.0            # half a win each side
+    assert sum(m["banked"]) == 0.0            # a tie is 0 wins for both
 
 
 class _StubStore:

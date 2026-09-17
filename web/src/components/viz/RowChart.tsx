@@ -32,6 +32,8 @@ export interface RowDatum {
   /** Only the voices that actually have a value for this row. */
   values: Record<string, number>;
   ref: number | null;
+  /** Optional 80% posterior interval; omitted when the row has no posterior. */
+  interval?: { lo: number; hi: number };
 }
 
 interface RowChartProps {
@@ -46,14 +48,18 @@ interface RowChartProps {
   refName: string;
   labelW: number;
   maxHeight?: number;
-  label: string;
+  label?: string;
   variant?: 'dots' | 'forest';
+  /** Model tab: click a row to pin voice dots on that team. */
+  onRowClick?: (key: string) => void;
+  selectedKey?: string;
 }
 
 interface Hover { id: string; x: number; y: number; title: string; text: string; color: string }
 
 export default function RowChart(
-  { rows, voices, colors, lo, hi, ticks, fmt, refName, labelW, maxHeight, label, variant = 'dots' }: RowChartProps,
+  { rows, voices, colors, lo, hi, ticks, fmt, refName, labelW, maxHeight, label, variant = 'dots',
+    onRowClick, selectedKey }: RowChartProps,
 ) {
   const [box, w] = useWidth<HTMLDivElement>();
   const [hover, setHover] = useState<Hover | null>(null);
@@ -66,13 +72,13 @@ export default function RowChart(
 
   return (
     <div className="viz-block">
-      <div className="viz-sub">{label}</div>
+      {label != null && label !== '' && <div className="viz-sub">{label}</div>}
       {/* The axis sits outside the scroller so 32 team rows can scroll under
           it. Its tick text is the only scale readout on the chart, so it is
           labelled rather than hidden from assistive tech. */}
       <div style={{ width: w || undefined }}>
         <svg width={w || '100%'} height={AXIS_H} className="viz-axis" role="img"
-             aria-label={`Scale for ${label}: ${ticks.map(fmt).join(', ')}`}>
+             aria-label={`Scale for ${label ?? 'team strength'}: ${ticks.map(fmt).join(', ')}`}>
           <line x1={labelW} y1={AXIS_H - 1} x2={labelW + plotW} y2={AXIS_H - 1} stroke="var(--border-2)" strokeWidth={1} />
           {w > 0 && ticks.map((t) => (
             <text key={t} x={xPx(t)} y={AXIS_H - 6} textAnchor="middle" fontSize={10} fill="var(--text-dim)">
@@ -83,7 +89,7 @@ export default function RowChart(
       </div>
       <div ref={box} className="viz-scroll" style={maxHeight ? { maxHeight, overflowY: 'auto' } : undefined}>
         <div style={{ position: 'relative' }}>
-          <svg width={w || '100%'} height={bodyH} role="img" aria-label={label} onMouseLeave={() => setHover(null)}>
+          <svg width={w || '100%'} height={bodyH} role="img" aria-label={label ?? 'team strength'} onMouseLeave={() => setHover(null)}>
             {/* Strengths are mean-centred, so one rule down the whole plot makes
                 above and below league average readable at a glance. */}
             {w > 0 && forest && lo < 0 && hi > 0 && (
@@ -94,8 +100,13 @@ export default function RowChart(
               const present = voices.map((v) => r.values[v]).filter((v): v is number => v != null);
               const min = present.length ? Math.min(...present) : 0;
               const max = present.length ? Math.max(...present) : 0;
+              const dim = selectedKey != null && selectedKey !== r.key;
               return (
-                <g key={r.key}>
+                <g key={r.key} onClick={onRowClick ? () => onRowClick(r.key) : undefined}
+                   style={onRowClick ? { cursor: 'pointer' } : undefined}>
+                  {selectedKey === r.key && (
+                    <rect x={0} y={i * ROW_H} width={Math.max(w, 1)} height={ROW_H} fill="var(--bg)" />
+                  )}
                   <line x1={labelW} y1={cy} x2={labelW + plotW} y2={cy} stroke="var(--border)" strokeWidth={1} opacity={0.5} />
                   {ticks.map((t) => (
                     <line key={t} x1={xPx(t)} y1={cy - ROW_H / 2} x2={xPx(t)} y2={cy + ROW_H / 2}
@@ -104,9 +115,14 @@ export default function RowChart(
                   {/* One voice, or perfect agreement, has no spread to show. A
                       zero-length range would read as a tick that means
                       something, so it is left undrawn and the dot stands alone. */}
+                  {r.interval && r.interval.hi > r.interval.lo && (
+                    <line x1={xPx(r.interval.lo)} y1={cy} x2={xPx(r.interval.hi)} y2={cy}
+                          stroke="var(--text)" strokeWidth={5} strokeLinecap="round" opacity={0.2} />
+                  )}
                   {forest && max > min && (
                     <line x1={xPx(min)} y1={cy} x2={xPx(max)} y2={cy}
-                          stroke="var(--text)" strokeWidth={3} strokeLinecap="round" opacity={0.35} />
+                          stroke="var(--text)" strokeWidth={3} strokeLinecap="round"
+                          opacity={dim ? 0.12 : 0.35} />
                   )}
                   <text x={labelW - LABEL_GAP} y={cy + 4} textAnchor="end" fontSize={12} fill="var(--text)" className="viz-rowlabel">
                     {r.label}
@@ -118,9 +134,11 @@ export default function RowChart(
                     const val = r.values[v];
                     // Absent voice: draw nothing at all. No zero, no placeholder.
                     if (val == null) return null;
+                    const dim = selectedKey != null && selectedKey !== r.key;
                     return (
                       <circle key={v} cx={xPx(val)} cy={cy} r={DOT_R}
-                              fill={colors[v]} stroke="var(--bg-panel)" strokeWidth={2} />
+                              fill={colors[v]} stroke="var(--bg-panel)" strokeWidth={2}
+                              opacity={dim ? 0.22 : 1} />
                     );
                   })}
                   {/* Hit targets last and oversized, so the smallest mark is still easy to hit.
