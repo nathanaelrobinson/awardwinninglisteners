@@ -810,6 +810,10 @@
 @media (max-width: 900px) {
   .sim-panels, .sim-owners { grid-template-columns: repeat(2, 1fr); }
 }
+@media (max-width: 700px) {
+  .sim-panels, .sim-owners { grid-template-columns: minmax(0, 1fr); }
+  .sim-week-chips { flex-wrap: wrap; }
+}
 .sim-bar {
   display: inline-block; width: 140px; height: 4px; border-radius: 2px;
   background: var(--border); overflow: hidden;
