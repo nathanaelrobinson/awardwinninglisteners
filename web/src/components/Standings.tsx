@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import { fetchTeams } from '../api';
 import { playerColor } from '../colors';
 import type { LeagueView, LiveProjection, LiveViewRow, Me, StandingsResponse, WeekPoint } from '../league';
-import { enginesMatch, getLive, getStandings, getWeeks, setOverride } from '../league';
+import { enginesMatch, getLive, getStandings, getWeeks, overlayLiveWeek, setOverride } from '../league';
 import Feed from './Feed';
 import MovementChart from './MovementChart';
 import TeamLogo from './TeamLogo';
@@ -199,7 +199,13 @@ export default function Standings({ me, view }: { me: Me | null; view: LeagueVie
           {(data.stale || ratingsStale) && ' · stale'}
         </div>
       </div>
-      <MovementChart weeks={weeks} me={me?.name ?? ''} />
+      <MovementChart
+        weeks={overlayLiveWeek(weeks, live && {
+          week: live.week,
+          rows: viewRows.map((r) => ({ player: r.player, pwin: r.pwin, exp_wins: r.exp_wins })),
+        })}
+        me={me?.name ?? ''}
+      />
       <TickSpark ticks={live?.ticks ?? []} me={me?.name ?? ''} />
       <Feed view={view} myName={me?.name ?? null} />
     </div>
