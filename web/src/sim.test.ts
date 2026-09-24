@@ -5,6 +5,7 @@
 // on the roll; this file pins that arithmetic before the UI wires it up.
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
+import { overlayLiveWeek, type WeekPoint } from './league.ts';
 import {
   expectedTeamWins,
   gameHome,
@@ -364,4 +365,44 @@ test('gameSwing is P(win|home) minus P(win|away) for each remaining game', () =>
   const swing = gameSwing(winner, bits, 1, 1, 0);
   assert.equal(swing.length, 1);
   assert.equal(swing[0], 1);
+});
+
+/** Frozen week snapshot for overlayLiveWeek tests. */
+function weekPoint(week: number, pwin: Record<string, number>): WeekPoint {
+  return {
+    week,
+    rows: Object.entries(pwin).map(([player, p]) => ({ player, pwin: p, exp_wins: 0 })),
+    views: {},
+  };
+}
+
+test('overlayLiveWeek puts live P(Win) on the current week only', () => {
+  const weeks = [
+    weekPoint(1, { A: 0.3, B: 0.2 }),
+    weekPoint(2, { A: 0.4, B: 0.25 }),
+    weekPoint(3, { A: 0.42, B: 0.14 }),
+  ];
+  const out = overlayLiveWeek(weeks, {
+    week: 3,
+    rows: [
+      { player: 'A', pwin: 0.44, exp_wins: 9 },
+      { player: 'B', pwin: 0.24, exp_wins: 6 },
+    ],
+  });
+  assert.equal(out[0], weeks[0]);
+  assert.equal(out[1], weeks[1]);
+  assert.deepEqual(out[2].rows.map((r) => r.pwin), [0.44, 0.24]);
+  assert.deepEqual(weeks[2].rows.map((r) => r.pwin), [0.42, 0.14]);
+});
+
+test('overlayLiveWeek leaves snapshots alone when live has not loaded', () => {
+  const weeks = [weekPoint(1, { A: 0.3 })];
+  assert.equal(overlayLiveWeek(weeks, null), weeks);
+});
+
+test('overlayLiveWeek throws when live week has no snapshot', () => {
+  assert.throws(
+    () => overlayLiveWeek([weekPoint(1, { A: 0.3 })], { week: 3, rows: [] }),
+    /live week 3/,
+  );
 });

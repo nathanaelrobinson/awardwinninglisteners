@@ -158,6 +158,17 @@ export function enginesMatch(a?: LiveEngine | null, b?: LiveEngine | null): bool
 export const getLive = () => call<LiveProjection>('/api/league/live');
 export const getWeeks = () => call<WeekPoint[]>('/api/league/weeks');
 
+/** Current-week P(Win) from live; older weeks stay the frozen open. */
+export function overlayLiveWeek(
+  weeks: WeekPoint[],
+  live: { week: number; rows: WeekSlim[] } | null,
+): WeekPoint[] {
+  if (live == null) return weeks;
+  const i = weeks.findIndex((w) => w.week === live.week);
+  if (i < 0) throw new Error(`live week ${live.week} has no snapshot`);
+  return weeks.map((w, j) => (j === i ? { ...w, rows: live.rows } : w));
+}
+
 export interface WeekGame {
   home: string; away: string; kickoff: string | null; state: 'pre' | 'final';
   spread: number | null; total: number | null;
