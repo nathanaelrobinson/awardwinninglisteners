@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, Header, HTTPException, Response
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+from . import gameprobs as _gameprobs
 from . import league
 from . import live as _live
 from . import oddslog as _oddslog
@@ -383,6 +384,69 @@ def internal_refresh_ratings(x_refresh_token: str | None = Header(default=None))
         return JSONResponse(status_code=503, content={
             "ok": False, **out, "stale": {k: round(v) for k, v in aged.items()}})
     return {"ok": True, **out}
+
+
+def _check_internal_read_token(x_refresh_token: str | None) -> None:
+    """The refresh routes' guard, for the read-only feed routes: same header,
+    same secret, but a missing or wrong token is 401 (503 when unconfigured)."""
+    expected = os.environ.get("REFRESH_TOKEN")
+    if not expected:
+        raise HTTPException(503, "refresh token not configured")
+    if not x_refresh_token or not hmac.compare_digest(x_refresh_token, expected):
+        raise HTTPException(401, "unauthorized")
+
+
+def _feed_season(season: int) -> None:
+    if int(season) != SEASON:
+        raise HTTPException(404, f"season {season} not served (this app serves {SEASON})")
+
+
+def _feed_schedule():
+    try:
+        return _live._load_schedule_cached()
+    except Exception as e:  # noqa: BLE001 - no schedule, nothing to serve
+        raise HTTPException(503, f"schedule unavailable: {str(e)[:160]}")
+
+
+@router.get("/internal/game-probs", include_in_schema=False)
+def internal_game_probs(season: int = SEASON,
+                        x_refresh_token: str | None = Header(default=None)):
+    """Model home-win P for every unplayed game, from the current store."""
+    _check_internal_read_token(x_refresh_token)
+    _feed_season(season)
+    df = _feed_schedule()
+    try:
+        return _store_read(lambda: _gameprobs.game_probs(get_store(), df, season=season))
+    except _gameprobs.NoRatings as e:
+        raise HTTPException(503, str(e))
+
+
+@router.get("/internal/game-probs/history", include_in_schema=False)
+def internal_game_probs_history(as_of: str, season: int = SEASON,
+                                x_refresh_token: str | None = Header(default=None)):
+    """Same shape as /internal/game-probs, rebuilt from rows fetched at or
+    before `as_of` and results known by then (kickoff + 4 h)."""
+    _check_internal_read_token(x_refresh_token)
+    _feed_season(season)
+    try:
+        ts = _gameprobs.parse_as_of(as_of)
+    except ValueError:
+        raise HTTPException(422, "as_of must be ISO-8601")
+    df = _feed_schedule()
+    try:
+        return _store_read(lambda: _gameprobs.game_probs(get_store(), df, season=season,
+                                                         as_of=ts))
+    except _gameprobs.NoRatings:
+        raise HTTPException(404, "no ratings recorded at or before as_of")
+
+
+@router.get("/internal/games", include_in_schema=False)
+def internal_games(season: int = SEASON,
+                   x_refresh_token: str | None = Header(default=None)):
+    """Every regular-season game with its score and whether it is final."""
+    _check_internal_read_token(x_refresh_token)
+    _feed_season(season)
+    return _gameprobs.games(_feed_schedule(), season=season)
 
 
 @router.get("/api/admin/health")
