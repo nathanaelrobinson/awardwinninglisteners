@@ -129,6 +129,25 @@ commissioner-only Admin tab in the UI shows per-source freshness and the last
 recorded error. On the Pi, systemd timers call these — see
 `docs/pi-runbook.md`.
 
+**Strategy feed (read-only, for tradebot).** Three `GET` routes take the same
+`X-Refresh-Token: $REFRESH_TOKEN` header (missing or wrong token: **401**; token
+not configured: 503). Full contract: `docs/game-probs-endpoints.md`.
+
+- `GET /internal/game-probs?season=2026` — model home-win probability for every
+  unplayed regular-season game: `p_home` is the Kalman posterior mean over the
+  BMA-weighted voices (the live doc's `p_model`, never the market override),
+  `sources` is each voice alone, `p_market` the odds-log consensus or null.
+- `GET /internal/game-probs/history?season=2026&as_of=<iso>` — the same document
+  rebuilt from `ratings`/`odds` rows with `fetched_at <= as_of` and only the
+  results known by then (kickoff + 4 h). Deterministic per `as_of`; 404 before
+  the first rating row.
+- `GET /internal/games?season=2026` — every regular-season game with scores and
+  `played`.
+
+`game_id` is `<season>-<week>-<AWAY>@<HOME>` using the app's nflverse team codes
+(note `LA` = Rams, `LAC`, `LV`, `WAS`); each probs response carries a `teams`
+list of `{code, name}`.
+
 `STORE=sqlite` selects the SQLite store; the database path comes from
 `WINSPOOL_DB` (default `data/league.db`). `WINSPOOL_BEHIND_PROXY=1` marks the
 session cookie `Secure` when the browser reaches the app over HTTPS through the
